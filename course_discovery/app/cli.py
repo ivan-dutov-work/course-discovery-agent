@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from langchain_core.runnables import RunnableConfig
 
-from course_discovery.domain.models import RoutingAction
+from course_discovery.domain.models import ResearchRunMetrics, RoutingAction
 from course_discovery.domain.state import AgentState
 from course_discovery.observability.logging import (
     classify_feedback,
@@ -22,19 +22,34 @@ from course_discovery.workflows.outer_graph import build_graph
 def _initial_state(query: str, run_id: str) -> AgentState:
     return {
         "user_query": query,
+        "user_id": "cli-user",
         "search_filters": None,
+        "user_memory": None,
+        "cache_candidates": [],
+        "research_plan": None,
+        "tavily_results": [],
+        "extracted_candidates": [],
         "scraped_courses": [],
         "deduplicated_courses": [],
+        "valid_courses": [],
+        "rejected_courses": [],
+        "uncertain_courses": [],
+        "validation_results": [],
         "digest": None,
         "manager_feedback": None,
         "rewrite_instructions": None,
         "routing_decision": None,
         "iteration_count": 0,
         "max_iterations": 3,
+        "research_iteration": 0,
+        "max_research_iterations": 2,
+        "completed_queries": [],
+        "research_notes": [],
+        "cache_hits": 0,
+        "tavily_calls": 0,
+        "metrics": ResearchRunMetrics(),
         "run_id": run_id,
-        "worker_a_courses": [],
-        "worker_b_courses": [],
-        "worker_c_courses": [],
+        "active_search_query": None,
         "error": None,
         "published": False,
         "discard_reason": None,
@@ -101,6 +116,12 @@ async def main() -> None:
         print("\n=== DIGEST READY FOR REVIEW ===")
         print(digest)
         print("=== END DIGEST ===\n")
+        print(
+            f"Cache hits: {result.get('cache_hits', 0)} | "
+            f"Tavily calls: {result.get('tavily_calls', 0)} | "
+            f"Valid: {len(result.get('valid_courses', []))} | "
+            f"Uncertain: {len(result.get('uncertain_courses', []))}"
+        )
 
         pm_feedback = input(
             "PM feedback (approve | rewrite: ... | augment: ... | reset: ... | discard): "

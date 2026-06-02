@@ -1,1 +1,1 @@
-"""Human review and routing."""
+"""Human review and publication routing."""

@@ -94,6 +94,25 @@ def router_node(state: AgentState) -> dict:
             "iteration_count": state.get("iteration_count", 0) + 1,
             "rewrite_instructions": None,
         }
+    if not os.getenv("GOOGLE_API_KEY"):
+        if lower_feedback.startswith("rewrite"):
+            action = RoutingAction.REWRITE
+            rewrite_instructions = feedback
+        elif lower_feedback.startswith("augment") or "more" in lower_feedback:
+            action = RoutingAction.AUGMENT
+            rewrite_instructions = None
+        elif lower_feedback.startswith("reset"):
+            action = RoutingAction.RESET
+            rewrite_instructions = None
+        else:
+            action = RoutingAction.DISCARD
+            rewrite_instructions = None
+        return {
+            "routing_decision": action,
+            "rewrite_instructions": rewrite_instructions,
+            "iteration_count": state.get("iteration_count", 0) + 1,
+            "discard_reason": "Discarded by manager" if action == RoutingAction.DISCARD else None,
+        }
 
     try:
         start_ts = time.perf_counter()

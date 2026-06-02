@@ -43,9 +43,10 @@ def _rank_courses(courses: list[CourseCandidate]) -> list[CourseCandidate]:
     return sorted(
         courses,
         key=lambda c: (
-            c.price > 0,
-            -c.rating,
-            -_parse_date(c.last_updated).timestamp(),
+            c.is_free is not True,
+            -(c.rating or 0),
+            -_parse_date(c.published_or_updated or "").timestamp(),
+            -c.confidence,
         ),
     )
 
@@ -63,11 +64,12 @@ def _highlight_with_retry(
         "provider": course.provider,
         "rating": course.rating,
         "price": course.price,
-        "certificate_type": course.certificate_type,
+        "is_free": course.is_free,
+        "has_certificate": course.has_certificate,
         "description": course.description,
         "language": course.language,
-        "last_updated": course.last_updated,
-        "enrollment_count": course.enrollment_count,
+        "published_or_updated": course.published_or_updated,
+        "evidence": [item.model_dump() for item in course.evidence],
     }
 
     rewrite_clause = ""
@@ -78,6 +80,14 @@ def _highlight_with_retry(
         SystemMessage(content=f"{SYNTHESIZER_SYSTEM_PROMPT}{rewrite_clause}"),
         HumanMessage(content=f"Summarize this course:\n{payload}"),
     ]
+
+    if not os.getenv("GOOGLE_API_KEY"):
+        evidence = "; ".join(item.quote_or_summary for item in course.evidence[:2])
+        return (
+            f"Fits the request based on validated evidence for "
+            f"{', '.join(course.evidence[0].supports) if course.evidence else 'course facts'}. "
+            f"{evidence}"
+        ).strip()
 
     call_start = time.perf_counter()
     try:
@@ -135,15 +145,15 @@ def _highlight_with_retry(
                 },
             )
             return (
-                f"{course.title} by {course.provider}. Rating {course.rating}/5, "
-                f"price ${course.price:.2f}, certificate: {course.certificate_type}."
+                f"{course.title} by {course.provider or 'unknown provider'}. "
+                f"Price: {course.price or 'unknown'}, certificate evidence: {course.has_certificate}."
             )
 
 
 def synthesizer_node(state: AgentState) -> dict:
     start_ts = time.perf_counter()
     run_id = state.get("run_id", "unknown")
-    courses = _rank_courses(state.get("deduplicated_courses", []))
+    courses = _rank_courses(state.get("valid_courses", []))
     top_courses = courses[:15]
     rewrite_instructions = state.get("rewrite_instructions")
 
@@ -157,12 +167,13 @@ def synthesizer_node(state: AgentState) -> dict:
         },
     )
 
-    llm = _build_synthesizer_llm()
+    llm = _build_synthesizer_llm() if os.getenv("GOOGLE_API_KEY") else None
     lines: list[str] = []
+    validation_by_url = {item.url: item for item in state.get("validation_results", [])}
 
     for idx, course in enumerate(top_courses, start=1):
         highlight = _highlight_with_retry(
-            llm,
+            llm,  # type: ignore[arg-type]
             course,
             rewrite_instructions,
             run_id=run_id,
@@ -173,7 +184,8 @@ def synthesizer_node(state: AgentState) -> dict:
                 [
                     f"{idx}. *{course.title}* ({course.provider})",
                     f"   - URL: {course.url}",
-                    f"   - Price: ${course.price:.2f} | Rating: {course.rating}/5 | Certificate: {course.certificate_type}",
+                    f"   - Price: {course.price or 'unknown'} | Rating: {course.rating or 'unknown'} | Certificate: {course.has_certificate}",
+                    f"   - Evidence: {validation_by_url.get(course.url).reasons[0] if validation_by_url.get(course.url) else 'validated'}",
                     f"   - {highlight}",
                 ]
             )
@@ -184,12 +196,25 @@ def synthesizer_node(state: AgentState) -> dict:
     if omitted > 0:
         footer = f"\n\n_Omitted {omitted} additional courses beyond the top 15 cap._"
 
-    digest = (
-        "\n\n".join(lines)
-        if lines
-        else "No suitable courses found for the selected filters."
-    )
-    digest = f"# Course Digest\n\n{digest}{footer}"
+    notes = state.get("research_notes", [])
+    metrics = state.get("metrics")
+    limitation = ""
+    if len(courses) < (state.get("research_plan").min_valid_candidates if state.get("research_plan") else 3):
+        limitation = (
+            "\n\n_Limitation: fewer validated courses were found than requested. "
+            "Uncertain candidates were excluded from the ranked list._"
+        )
+    if notes:
+        limitation += "\n\n_Research notes:_\n" + "\n".join(f"- {note}" for note in notes[-5:])
+
+    digest = "\n\n".join(lines) if lines else "No validated courses found for the selected filters."
+    metric_line = ""
+    if metrics:
+        metric_line = (
+            f"\n\n_Metrics: cache hits {metrics.cache_hits}, Tavily calls {metrics.tavily_calls}, "
+            f"valid {metrics.valid_count}, rejected {metrics.rejected_count}, uncertain {metrics.uncertain_count}._"
+        )
+    digest = f"# Personalized Course Digest\n\n{digest}{footer}{limitation}{metric_line}"
 
     logger.info(
         "synthesizer_complete",

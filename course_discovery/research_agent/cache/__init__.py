@@ -1,1 +1,1 @@
-"""Cache and deduplication helpers."""
+"""Course cache and deduplication capability."""

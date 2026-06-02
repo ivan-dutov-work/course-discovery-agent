@@ -1,1 +1,1 @@
-"""Digest synthesis."""
+"""Recommendation synthesis capability."""

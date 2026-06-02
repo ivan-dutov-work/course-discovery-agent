@@ -26,7 +26,28 @@ def _build_gateway_llm() -> ChatGoogleGenerativeAI:
     return ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", temperature=0)
 
 
+def _fallback_parse_filters(query: str) -> SearchFilters:
+    lower = query.lower()
+    level = "any"
+    for candidate in ["beginner", "intermediate", "advanced"]:
+        if candidate in lower:
+            level = candidate
+            break
+    topic = query
+    for marker in ["courses", "course", "with", "for"]:
+        topic = topic.replace(marker, " ")
+    return SearchFilters(
+        topic=" ".join(topic.split()) or "general programming",
+        max_price=0.0 if "free" in lower else 999.0,
+        include_certificate="certificate" in lower or "certification" in lower,
+        level=level,
+        content_languages=["en"],
+    )
+
+
 def _parse_filters(query: str) -> SearchFilters:
+    if not os.getenv("GOOGLE_API_KEY"):
+        return _fallback_parse_filters(query)
     llm = _build_gateway_llm().with_structured_output(SearchFilters)
     result = llm.invoke(
         [

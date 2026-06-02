@@ -1,1 +1,1 @@
-"""Domain contracts and state."""
+"""Domain contracts and pure business rules."""

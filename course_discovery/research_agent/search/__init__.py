@@ -1,1 +1,1 @@
-"""Search worker implementations."""
+"""External search capability."""

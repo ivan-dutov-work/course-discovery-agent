@@ -1,57 +1,89 @@
-# Course Discovery Agent (M1)
+# Course Discovery Agent
 
-LangGraph-based, stateful Course Discovery pipeline with:
+This repository implements a personalized, cache-first course research agent controlled by LangGraph.
 
-- structured LLM gateway parsing
-- parallel mock discovery workers
-- deterministic dedup layer
-- LLM digest synthesis
-- mandatory human-in-the-loop pause before publish
-- conditional routing for `PUBLISH | REWRITE | AUGMENT | RESET | DISCARD`
+The agent:
+
+- parses a learner query into structured filters;
+- loads durable user preferences;
+- checks a shared course cache before web search;
+- plans Tavily searches only for missing or stale evidence;
+- extracts course candidates with evidence;
+- deduplicates and validates candidates;
+- replans when too few valid courses exist;
+- synthesizes an evidence-backed digest;
+- interrupts before publication for human review;
+- records useful courses and feedback through the persistence layer.
+
+## Architecture
+
+```text
+gateway
+  -> research_agent subgraph
+  -> [interrupt_before: review_gate]
+  -> router
+      -> PUBLISH -> publish_node -> user_memory_update -> END
+      -> REWRITE -> research_agent subgraph
+      -> AUGMENT -> research_agent subgraph
+      -> RESET   -> gateway
+      -> DISCARD -> discard_node -> END
+```
+
+The research subgraph owns the complex agent loop:
+
+```text
+research_entry
+  -> user_memory_lookup
+  -> course_cache_lookup
+  -> research_planner
+  -> tavily_search_worker(s) via Send when needed
+  -> candidate_extractor
+  -> aggregate
+  -> dedup
+  -> evidence_validator
+  -> replanner when validation is insufficient
+  -> course_cache_upsert
+  -> synthesizer
+```
+
+The graph uses in-memory checkpointing for the local demo. The durable course cache and user memory are designed for Postgres plus pgvector; see `migrations/001_postgres_pgvector.sql`.
+
+## Environment
+
+Optional keys:
+
+```powershell
+$env:GOOGLE_API_KEY="your-key"   # structured LLM parsing/synthesis/router
+$env:TAVILY_API_KEY="your-key"   # web search
+$env:DATABASE_URL="postgresql://..." # durable memory/cache
+```
+
+If `GOOGLE_API_KEY` is absent, the gateway, synthesis, and router use deterministic fallbacks. If `TAVILY_API_KEY` is absent, Tavily workers record research notes and the digest reports the limitation. If `DATABASE_URL` is absent, the cache lookup uses a small local seed cache.
 
 ## Run
 
-1. Install dependencies:
-
 ```bash
 uv sync
+uv run python main.py
 ```
 
-2. Set your API key:
+At review time the CLI prints the digest plus cache/search/validation counts. Feedback commands:
 
-```bash
-# PowerShell
-$env:GOOGLE_API_KEY="your-key"
-```
+- `approve` or `publish`
+- `rewrite: ...`
+- `augment: ...`
+- `reset: ...`
+- `discard`
 
-3. Start the demo:
+## Key Files
 
-```bash
-python main.py
-```
-
-The app now auto-loads `.env` at startup, so setting `GOOGLE_API_KEY` in `.env` is enough.
-
-The run pauses before `telegram_gate` (via `interrupt_before`), prints the digest for PM review, accepts feedback in terminal, then resumes from checkpoint with the same `thread_id`.
-
-## Structured Logs
-
-The app emits JSON structured logs to stdout.
-
-- Configure level with `LOG_LEVEL` (default: `INFO`).
-- Each log includes an `event` and `run_id` for correlation.
-- Sensitive values are sanitized/truncated in log helpers.
-
-## Project Layout
-
-- `main.py` - thin CLI runner
-- `course_discovery/app/cli.py` - CLI demo entrypoint and interrupt/resume loop
-- `course_discovery/domain/state.py` - `AgentState` contract
-- `course_discovery/domain/models.py` - Pydantic models (`SearchFilters`, `CourseCandidate`, `RoutingDecision`)
-- `course_discovery/workflows/outer_graph.py` - full graph definition and compile settings
-- `course_discovery/app/gateway.py` - LLM structured filter parsing
-- `course_discovery/research_agent/search/mock_workers.py` - mock workers and aggregation
-- `course_discovery/research_agent/cache/dedup.py` - URL + fuzzy + hash dedup
-- `course_discovery/research_agent/synthesis/nodes.py` - LLM digest generation with graceful fallback
-- `course_discovery/review/nodes.py` - interrupt target node
-- `course_discovery/review/router.py` - feedback router + publish/discard stubs
+- `course_discovery/workflows/outer_graph.py`: review/publish control shell.
+- `course_discovery/workflows/research_graph.py`: the complex research-agent subgraph.
+- `course_discovery/domain/`: state and Pydantic contracts.
+- `course_discovery/research_agent/`: memory, cache, planning, search, extraction, validation, and synthesis capabilities.
+- `course_discovery/review/`: human gate and feedback router.
+- `course_discovery/persistence/`: Postgres connection adapter.
+- `course_discovery/observability/`: logging helpers.
+- `course_discovery/app/`: CLI, prompts, and gateway parsing.
+- `ARTICLE.md`: article-style explanation of the implementation.
+- `PLAN.md`: original implementation plan.

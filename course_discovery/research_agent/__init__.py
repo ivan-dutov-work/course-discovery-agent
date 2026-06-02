@@ -1,1 +1,1 @@
-"""Course research capabilities."""
+"""Personalized course research agent capabilities."""
