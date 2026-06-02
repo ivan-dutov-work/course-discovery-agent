@@ -4,9 +4,9 @@ import asyncio
 import time
 from urllib.parse import urlparse
 
-from agent.logging_utils import get_logger
-from agent.models import CourseCandidate
-from agent.state import AgentState
+from course_discovery.domain.models import CourseCandidate
+from course_discovery.domain.state import AgentState
+from course_discovery.observability.logging import get_logger
 
 
 logger = get_logger(__name__)

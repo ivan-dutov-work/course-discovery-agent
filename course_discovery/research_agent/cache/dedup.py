@@ -6,9 +6,9 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from rapidfuzz import fuzz
 
-from agent.logging_utils import get_logger
-from agent.models import CourseCandidate
-from agent.state import AgentState
+from course_discovery.domain.models import CourseCandidate
+from course_discovery.domain.state import AgentState
+from course_discovery.observability.logging import get_logger
 
 
 logger = get_logger(__name__)

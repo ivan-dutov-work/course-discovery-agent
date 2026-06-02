@@ -6,25 +6,25 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import Send
 
-from agent.logging_utils import get_logger
-from agent.models import RoutingAction
-from agent.nodes.dedup import dedup_node
-from agent.nodes.gateway import gateway_node
-from agent.nodes.hil import telegram_gate_node
-from agent.nodes.router import (
-    augment_dispatch_node,
-    discard_node,
-    publish_node,
-    router_node,
-)
-from agent.nodes.synthesizer import synthesizer_node
-from agent.nodes.workers import (
+from course_discovery.app.gateway import gateway_node
+from course_discovery.domain.models import RoutingAction
+from course_discovery.domain.state import AgentState
+from course_discovery.observability.logging import get_logger
+from course_discovery.research_agent.cache.dedup import dedup_node
+from course_discovery.research_agent.search.mock_workers import (
     aggregate_node,
     worker_a_node,
     worker_b_node,
     worker_c_node,
 )
-from agent.state import AgentState
+from course_discovery.research_agent.synthesis.nodes import synthesizer_node
+from course_discovery.review.nodes import telegram_gate_node
+from course_discovery.review.router import (
+    augment_dispatch_node,
+    discard_node,
+    publish_node,
+    router_node,
+)
 
 
 logger = get_logger(__name__)

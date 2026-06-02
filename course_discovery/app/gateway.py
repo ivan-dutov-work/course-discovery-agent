@@ -7,10 +7,14 @@ from typing import cast
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-from agent.logging_utils import get_logger, sanitize_error, truncate_text
-from agent.models import RoutingAction, SearchFilters
-from agent.prompts import GATEWAY_SYSTEM_PROMPT
-from agent.state import AgentState
+from course_discovery.app.prompts import GATEWAY_SYSTEM_PROMPT
+from course_discovery.domain.models import RoutingAction, SearchFilters
+from course_discovery.domain.state import AgentState
+from course_discovery.observability.logging import (
+    get_logger,
+    sanitize_error,
+    truncate_text,
+)
 
 
 logger = get_logger(__name__)

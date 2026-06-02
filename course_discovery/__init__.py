@@ -1,0 +1,1 @@
+"""Course discovery agent package."""

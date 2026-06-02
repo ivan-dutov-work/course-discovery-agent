@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TypedDict
 
-from agent.models import CourseCandidate, RoutingAction, SearchFilters
+from course_discovery.domain.models import CourseCandidate, RoutingAction, SearchFilters
 
 
 class AgentState(TypedDict):

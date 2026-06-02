@@ -8,10 +8,10 @@ from datetime import datetime
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-from agent.logging_utils import get_logger, sanitize_error
-from agent.models import CourseCandidate, RoutingAction
-from agent.prompts import SYNTHESIZER_SYSTEM_PROMPT
-from agent.state import AgentState
+from course_discovery.app.prompts import SYNTHESIZER_SYSTEM_PROMPT
+from course_discovery.domain.models import CourseCandidate, RoutingAction
+from course_discovery.domain.state import AgentState
+from course_discovery.observability.logging import get_logger, sanitize_error
 
 
 logger = get_logger(__name__)

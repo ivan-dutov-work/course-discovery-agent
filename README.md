@@ -44,13 +44,14 @@ The app emits JSON structured logs to stdout.
 
 ## Project Layout
 
-- `main.py` - CLI demo entrypoint and interrupt/resume loop
-- `agent/state.py` - `AgentState` contract
-- `agent/models.py` - Pydantic models (`SearchFilters`, `CourseCandidate`, `RoutingDecision`)
-- `agent/graph.py` - full graph definition and compile settings
-- `agent/nodes/gateway.py` - LLM structured filter parsing
-- `agent/nodes/workers.py` - mock workers and aggregation
-- `agent/nodes/dedup.py` - URL + fuzzy + hash dedup
-- `agent/nodes/synthesizer.py` - LLM digest generation with graceful fallback
-- `agent/nodes/hil.py` - interrupt target node
-- `agent/nodes/router.py` - feedback router + publish/discard stubs
+- `main.py` - thin CLI runner
+- `course_discovery/app/cli.py` - CLI demo entrypoint and interrupt/resume loop
+- `course_discovery/domain/state.py` - `AgentState` contract
+- `course_discovery/domain/models.py` - Pydantic models (`SearchFilters`, `CourseCandidate`, `RoutingDecision`)
+- `course_discovery/workflows/outer_graph.py` - full graph definition and compile settings
+- `course_discovery/app/gateway.py` - LLM structured filter parsing
+- `course_discovery/research_agent/search/mock_workers.py` - mock workers and aggregation
+- `course_discovery/research_agent/cache/dedup.py` - URL + fuzzy + hash dedup
+- `course_discovery/research_agent/synthesis/nodes.py` - LLM digest generation with graceful fallback
+- `course_discovery/review/nodes.py` - interrupt target node
+- `course_discovery/review/router.py` - feedback router + publish/discard stubs
