@@ -79,17 +79,11 @@ At review time the CLI prints the digest plus cache/search/validation counts. Fe
 
 ## Roadmap
 
-This repo delivers **Milestone 1** of a larger planned system. The full milestone breakdown lives in [`specs/IMPLEMENTATION_PLAN.md`](specs/IMPLEMENTATION_PLAN.md).
+The current implementation covers the full complex research agent (memory, cache,
+planning, search, extraction, validation, replanning, synthesis). The full
+implementation order lives in [`specs/IMPLEMENTATION_PLAN.md`](specs/IMPLEMENTATION_PLAN.md).
 
-| # | Milestone | Status |
-|---|-----------|--------|
-| M1 | **Article-Ready Core** — LangGraph patterns, mock workers, CLI human-in-the-loop | ✅ complete |
-| M2 | Telegram Integration — real bot, live status, inline approval buttons | planned |
-| M3 | Real Discovery Workers — API-backed and crawler-based workers with `SearchFilters` | planned |
-| M4 | Embedding Dedup + Postgres — pgvector, LangGraph Postgres checkpointer | planned |
-| M5 | Production Hardening — scheduling, multilingual support, monitoring dashboards | planned |
-
-See [`MAYBE_LATER.md`](MAYBE_LATER.md) for the current backlog of future ideas.
+Deferred work and future ideas live in [`specs/FUTURE_IDEAS.md`](specs/FUTURE_IDEAS.md).
 
 ## Key Files
 

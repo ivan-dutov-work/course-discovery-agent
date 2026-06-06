@@ -1,118 +1,185 @@
-**Course Discovery Agent --- Future Ideas & Deferred Decisions**
+# Course Discovery Agent — Future Ideas and Deferred Decisions
 
-Items that are recognized as valuable but deferred from the current
-architecture scope. Revisit as the system matures.
-
----
-
-**1. API Availability Risks + Fallback Strategies**
-
-Several external APIs assumed in the architecture carry access or
-rate-limit risks:
-
-- **Coursera API:** Has been severely restricted / effectively
-  deprecated for public use. Primary risk: Worker B may be partially
-  blocked on day 1.
-  - _Fallback:_ Scrape Coursera's public catalog pages with
-    rate-limited requests (respect robots.txt, add 2-5s delay between
-    requests). Parse course cards for title, URL, price, rating.
-  - _Alternative:_ Use SerpAPI or similar to search
-    `site:coursera.org` and parse structured data from results.
-
-- **Udemy Affiliate API:** Requires affiliate program approval, which
-  is not guaranteed and may take weeks.
-  - _Fallback:_ Scrape Udemy's public browse/search pages with rate
-    limiting. Udemy renders course metadata in structured JSON-LD on
-    product pages.
-  - _Alternative:_ Use Udemy's public GraphQL endpoint (undocumented
-    but widely used by third-party tools). Fragile --- may break
-    without notice.
-
-- **Google Custom Search API:** Free tier = 100 queries/day. At scale
-  (multiple communities, multiple topics), this is a hard wall.
-  - _Fallback:_ SerpAPI (\$50/mo for 5,000 searches) as a drop-in
-    replacement for Google Custom Search.
-  - _Alternative:_ Bing Search API (higher free tier: 1,000
-    transactions/month) with similar query structure.
-
-- **Reddit API:** Rate-limited to 100 requests/minute for OAuth apps.
-  Sufficient for typical usage but may bottleneck during batch runs.
-  - _Fallback:_ Use Pushshift API (if available) for historical
-    search, or cache Reddit results aggressively (course
-    recommendations don't change hourly).
-
-**Recommendation:** Before any production deployment, conduct an API
-access audit --- verify that all required API keys are obtainable and
-test actual rate limits under expected load.
+Items that are recognized as valuable but deferred from the current architecture
+scope. Revisit as the system matures.
 
 ---
 
-**2. Multi-Language Dedup**
+## 1. Tavily Cost and Rate-Limit Management
 
-The current dedup pipeline uses text-embedding-3-small, which is
-English-optimized. Cross-lingual embedding similarity
-(e.g., detecting that "Introducción a Python" and "Introduction to
-Python" are the same course) is not well-characterized for this model.
+Tavily is the agent's only web search provider. At scale (many users, many topics,
+frequent replanning), Tavily call count drives operating cost.
 
-**Options (ordered by implementation effort):**
+**Current controls already in place:**
 
-- **a) Scope dedup to single language per run.** Simplest. If
-  `language: "en"`, only embed/compare English-language courses. Courses
-  in other languages returned by workers are either filtered out by the
-  Gateway or treated as distinct. No cross-lingual dedup needed.
+- Cache-first behavior: Tavily is only called for gaps.
+- `max_results` per query is bounded.
+- `completed_queries` prevents repeat searches within a run.
+- Replanning is bounded by `max_research_iterations`.
 
-- **b) Translate titles to English before dedup.** Add a lightweight
-  translation step (e.g., Google Translate API or a local model like
-  NLLB-200) that normalizes all titles to English before embedding.
-  Increases latency and cost but enables cross-lingual dedup with the
-  existing embedding model.
+**Potential improvements:**
 
-- **c) Use a multilingual embedding model.** Replace
-  text-embedding-3-small with a multilingual model (e.g.,
-  multilingual-e5-large, or Cohere's multilingual embed). Better
-  semantic quality across languages but higher cost per embedding
-  and different similarity threshold requirements.
-
-**Status update:** This is no longer deferred. Multilingual embedding and translation are now part of the active architecture (Sections 9 and 10 of FINAL_VERSION.md). Option (c) with `multilingual-e5-large` is the chosen approach. Option (b) (translate-then-embed) remains available as a fallback if cross-lingual dedup quality proves insufficient in practice.
+- Per-user or per-topic Tavily call budget tracked in `research_runs`.
+- Alerting when daily Tavily usage exceeds a configurable threshold.
+- Fallback to cache-only synthesis with a limitation note when budget is exhausted.
+- Evaluate whether a secondary search provider (e.g., Brave Search API) reduces
+  Tavily dependence for general queries.
 
 ---
 
-**3. Multilingual LLM Quality Research**
+## 2. pgvector Similarity Threshold Calibration
 
-When generating digests and parsing queries in Ukrainian, LLM output quality varies across providers. Gemini 2.0 Flash supports Ukrainian but has not been extensively benchmarked for educational domain tasks in Slavic languages.
+The course cache lookup uses cosine similarity over `course_embedding` to retrieve
+semantically relevant courses. The similarity threshold that balances recall vs.
+noise has not been formally calibrated.
 
-**Suggested research (not blocking initial launch):**
+**Suggested experiment:**
 
-- Benchmark Gemini 2.0 Flash vs. Claude 3.5 Sonnet vs. a locally hosted Ukrainian-tuned model on 50 sample course summaries in Ukrainian.
-- Evaluate: grammatical correctness, appropriate formal register, preservation of domain terminology, handling of noun declension.
-- Ukrainian has grammatical gender, complex declension, and field-specific terminology that English-first models occasionally mistranslate or use in the wrong case.
+- Collect ≥100 (query, course) pairs from production runs.
+- Manually label each pair: relevant or irrelevant.
+- Sweep cosine similarity threshold from 0.70 to 0.95 in 0.05 increments.
+- Compute precision and recall at each threshold. Identify the threshold that
+  maximizes F1.
+- Calibrate separately for: general topic queries, provider-specific queries,
+  certificate-focused queries.
 
-**Action when needed:** Choose provider based on benchmark results and document the quality bar as a regression test. Not required for initial launch at low volume with PM reviewing all digests before publishing.
-
----
-
-**4. CAPTCHA Handling Strategy**
-
-Worker D skips domains that return CAPTCHA challenges or persistent 403 responses. This is the correct default: CAPTCHA bypass services add cost, maintenance burden, and potential ToS violations.
-
-**Recommendation:** Do not integrate a CAPTCHA-solving service unless a high-value educational site is consistently blocked and its content cannot be retrieved via other means. If that case arises:
-
-- First: contact the site operator for API access or a data partnership.
-- Second: check for an official API, RSS feed, or sitemap that bypasses the scraping requirement entirely.
-- Last resort: evaluate bypass service cost vs. content value on a per-site basis.
-
-Log all CAPTCHA-blocked domains per run. If the same domain is blocked in more than 50% of runs over 30 days, escalate to PM for a manual coverage decision.
+**Current approach:** threshold is set conservatively to avoid noise. Update this
+document when calibration data is available.
 
 ---
 
-**5. Legal & Compliance Review for Web Scraping**
+## 3. Memory Privacy and Data Retention
 
-General web scraping introduces legal considerations that should be reviewed before production deployment:
+The agent stores user preferences, completed course history, and recommendation
+events in Postgres. This creates data retention obligations that should be reviewed
+before production deployment.
 
-- **robots.txt:** Mandatory compliance is already enforced by Worker D. This is a technical minimum, not a substitute for legal review.
-- **Terms of Service:** Many platforms prohibit automated scraping in their ToS. Review the ToS for every whitelisted domain before adding it.
-- **Copyright:** Course descriptions and syllabus content are copyright of the provider. The digest stores excerpts (title, short description, URL) --- generally fair use / informational linking, but a legal opinion under Ukrainian law is advisable.
-- **Ukrainian data protection law:** The system stores user search history and course metadata. If operating under the Law of Ukraine "On Personal Data Protection," ensure data retention policies, user consent mechanisms, and right-to-erasure procedures are in place.
-- **Third-party API terms:** Verify that Brave Search, DeepL, and any other APIs used permit the intended use case (automated search, commercial use if applicable).
+**Questions to resolve:**
 
-**Action:** Before production launch, conduct a ToS and legal review for the top 20 whitelisted domains and all third-party API agreements.
+- What is the data retention period for `recommendation_events` and
+  `user_preferences`?
+- How does a user request deletion of their memory?
+- Should `profile_embedding` vectors be stored separately from preference text
+  to allow deletion of source data while keeping anonymized signals?
+- If operating under GDPR, Ukrainian data protection law, or similar: is a
+  privacy notice required? Is there a lawful basis for processing?
+
+**Action:** conduct a data protection review before production launch. The schema
+already separates `user_preferences` from `recommendation_events`, which makes
+targeted deletion easier to implement.
+
+---
+
+## 4. Evidence Quality for Aggregator and Blog Pages
+
+Tavily results frequently include blog posts, "best courses" aggregators, and
+review pages alongside direct course landing pages. The `candidate_extractor` node
+attempts to distinguish course pages from non-course pages, but this is imperfect.
+
+**Symptoms of the problem:**
+
+- A blog post titled "10 Best Free Python Courses" surfaces as a Tavily result.
+- The extractor pulls 10 course candidates from it, each with low-quality evidence
+  (scraped blog text rather than first-party course page content).
+- These candidates pass extraction but often fail validation due to missing evidence
+  for critical fields.
+
+**Potential improvements:**
+
+- Domain heuristics: prefer results from known course providers (Coursera, edX,
+  Udemy, YouTube, Khan Academy, etc.) and penalize aggregator domains.
+- Evidence source classification: tag each `EvidenceItem` with `source_type`
+  (`course_page`, `aggregator`, `review`, `social`). Weight validation confidence
+  by source type.
+- Post-extraction URL check: for candidates extracted from non-course pages, fetch
+  the candidate URL directly and re-extract evidence from the course page itself.
+  This adds latency but improves evidence quality significantly.
+
+---
+
+## 5. Multilingual LLM Quality
+
+When generating digests or parsing queries in languages other than English, LLM
+output quality varies. Gemini 2.0 Flash supports multiple languages but has not
+been benchmarked for educational domain tasks in non-English contexts.
+
+**Suggested research (not blocking current launch):**
+
+- Benchmark Gemini 2.0 Flash on 50 sample course summaries in Ukrainian.
+- Evaluate: grammatical correctness, formal register, domain terminology handling.
+- Compare against Claude 3.5 Sonnet and a locally hosted Ukrainian-tuned model if
+  available.
+- Choose provider based on benchmark results and document the quality bar as a
+  regression test.
+
+**Status:** not required for initial launch while review is CLI-based and all content
+is English. Revisit when non-English digest generation is added.
+
+---
+
+## 6. Scheduling and Cron Triggers
+
+The current system is user-triggered via CLI. A scheduled mode would allow automatic
+research runs on a cadence (daily, weekly) without manual invocation.
+
+**Design sketch:**
+
+- `APScheduler` or a cron job fires the outer graph on a configurable interval.
+- Synthetic user message with the last-used `search_filters` is written into state.
+- Run proceeds normally through the research subgraph.
+- Review gate still interrupts before publication — scheduling does not bypass
+  human review.
+- Multi-run serialization: if a run is pending review, the next scheduled run is
+  queued rather than started.
+
+---
+
+## 7. Telegram or Webhook Review Interface
+
+The current review gate uses a CLI prompt. A Telegram bot or webhook interface
+would allow review from a mobile device or integrate into existing team workflows.
+
+**Design notes:**
+
+- The `interrupt_before=["review_gate"]` mechanism does not change — only the I/O
+  surface changes.
+- `graph.update_state(config, feedback)` + `graph.invoke(None, config)` is the
+  resume pattern regardless of transport.
+- Feedback commands (approve, rewrite, augment, reset, discard) map directly to
+  the existing router actions.
+
+**Not a current priority** because the CLI demo is sufficient for the article and
+the review mechanism is transport-agnostic.
+
+---
+
+## 8. LangGraph Postgres Checkpointer (Production Resumability)
+
+The current implementation uses `MemorySaver` (in-process, lost on restart). Switching
+to `AsyncPostgresSaver` makes runs resumable across process restarts and supports
+time-travel debugging.
+
+**What the switch requires:**
+
+- One import change: replace `MemorySaver()` with `AsyncPostgresSaver(conn)`.
+- The LangGraph checkpoint schema is managed by the library — run migrations once.
+- The same `thread_id` resumes the run from the last checkpoint node.
+
+**Current status:** deferred because `MemorySaver` is sufficient for local demo and
+article purposes. The architecture is designed for this switch from the start.
+
+---
+
+## 9. LangSmith Tracing
+
+LangSmith provides full observability over LLM calls, tool calls, and state
+transitions across all nodes. Adding it requires:
+
+- Set `LANGCHAIN_TRACING_V2=true` and `LANGCHAIN_API_KEY`.
+- All LangChain and LangGraph calls are automatically traced.
+
+**Value:** compare cache-first runs against Tavily-heavy runs, trace token cost per
+node, debug validation failures with full prompt/response logs.
+
+**Current status:** structured logging to `research_runs` covers run-level metrics.
+LangSmith adds per-node and per-LLM-call granularity.
