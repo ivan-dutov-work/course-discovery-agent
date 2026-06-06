@@ -1,162 +1,178 @@
-**Course Discovery Agent --- Evaluation Metrics**
+# Course Discovery Agent — Evaluation Metrics
 
-This document defines the quantitative metrics used to evaluate the
-Course Discovery Agent's performance. Each metric includes its
-definition, measurement method, and target threshold where applicable.
-
----
-
-**1. Discovery Precision**
-
-- **Definition:** Percentage of courses surfaced in the digest that are
-  genuinely relevant to the user's query (topic, level, price
-  constraints).
-
-- **Measurement:** PM labels each course in the digest as relevant or
-  irrelevant during review. Precision = relevant / total surfaced.
-
-- **Target:** ≥85% across all test topics.
-
-- **Granularity:** Per-run and aggregated across a test batch.
-
-**2. Discovery Recall**
-
-- **Definition:** Percentage of known-good courses for a given topic
-  that the agent successfully finds, compared to a baseline.
-
-- **Measurement:** For each test topic, compile a ground-truth set via
-  manual search (human researcher spends 30 min per topic using Google,
-  platform sites, and Class Central). Recall = agent-found ∩
-  ground-truth / ground-truth.
-
-- **Target:** ≥60%. Full recall is unrealistic due to API coverage gaps;
-  the goal is significant time savings over manual search.
-
-- **Baseline comparison:** Also compute recall for ChatGPT/Perplexity
-  given the same query, and for Class Central search results.
-
-**3. Dedup Accuracy**
-
-- **Definition:** How accurately the Dedup Node distinguishes new
-  courses from previously seen ones.
-
-- **Measurement:** Over N runs, track two error types:
-  - **False positive (over-dedup):** A genuinely new course was
-    incorrectly matched to a known course and dropped. Detected by
-    manual review of dropped candidates.
-  - **False negative (under-dedup):** A duplicate course was surfaced
-    as new. Detected when PM flags a course as "already seen" during
-    review.
-
-- **Target:** False positive rate <5%, false negative rate <10%.
-
-- **Note:** This metric directly informs dedup threshold tuning (see
-  Section 8 of the architecture doc).
-
-**4. Feedback Router Accuracy**
-
-- **Definition:** Percentage of PM feedback messages correctly
-  classified into the intended routing action on the first attempt
-  (before the confirmation echo step).
-
-- **Measurement:** Log every router classification alongside PM's
-  confirmation or correction. Accuracy = confirmed / total
-  classifications.
-
-- **Target:** ≥90%. Below this, consider expanding few-shot examples or
-  switching to structured inline buttons.
-
-**5. End-to-End Latency**
-
-- **Definition:** Wall-clock time from run trigger (user message or
-  cron fire) to digest delivery at the Telegram Gate.
-
-- **Measurement:** Timestamp difference between run start and the
-  Synthesizer's final output message. Excludes PM review wait time.
-
-- **Target:** <120 seconds for a typical run (≤50 raw candidates).
-
-- **Breakdown tracked:** Gateway parse time, Worker A/B/C time
-  (parallel, so max of three), Dedup time, Synthesizer time, Telegram
-  send time.
-
-**6. PM Effort Score**
-
-- **Definition:** Average number of feedback loops (REWRITE, AUGMENT,
-  RESET cycles) per run before the run terminates in PUBLISH or
-  DISCARD.
-
-- **Measurement:** From the Run Log: count of routing_decisions per
-  run, excluding the terminal PUBLISH/DISCARD.
-
-- **Target:** ≤1.5 average. A score of 0 means the PM approved on
-  first review. Lower is better --- indicates higher agent quality.
-
-- **Secondary metric:** DISCARD rate. If >30% of runs are discarded,
-  the discovery pipeline needs quality improvement.
-
-**7. Certificate Accuracy**
-
-- **Definition:** Percentage of courses where the `certificate_type`
-  classification (none / platform / accredited) matches ground truth.
-
-- **Measurement:** For each test batch, manually verify certificate
-  claims on course landing pages. Compare against agent's
-  classification.
-
-- **Target:** ≥90%. Misclassifying "platform" as "accredited" is the
-  highest-severity error.
-
-**8. URL Liveness Rate**
-
-- **Definition:** Percentage of course URLs in the final digest that
-  return a valid HTTP response (2xx) at the time of PUBLISH.
-
-- **Measurement:** Automated --- the Synthesizer's HTTP HEAD check
-  already produces this data. Log pass/fail per URL.
-
-- **Target:** 100% at PUBLISH time (dead links should be caught and
-  dropped by the Synthesizer). Track the pre-filter liveness rate
-  (before dropping) as a data quality indicator.
-
-**9. Digest Acceptance Rate**
-
-- **Definition:** Ratio of runs that end in PUBLISH vs. total completed
-  runs (PUBLISH + DISCARD).
-
-- **Measurement:** From the Run Log: count PUBLISHED / (PUBLISHED +
-  DISCARDED). Exclude STALLED runs.
-
-- **Target:** ≥70%. Below this threshold, investigate whether the issue
-  is poor discovery quality, bad synthesis, or overly strict PM
-  standards.
-
-**10. Curriculum Overlap Score**
-
-- **Definition:** Average curriculum_score across all courses in
-  published digests, as computed by the RAG Curriculum Verification
-  pipeline.
-
-- **Measurement:** Per course: % of syllabus modules that match formal
-  academic course outlines. Aggregated as mean across all published
-  courses in a test period.
-
-- **Target:** ≥50% average for published courses. Courses below 40% are
-  flagged as low-rigor; tracking the average indicates whether the
-  agent tends to surface academically grounded content.
-
-- **Dependency:** Requires syllabus PDF availability. Report coverage
-  rate (% of courses with available syllabi) alongside the score.
+This document defines the metrics used to evaluate the agent's performance.
+Metrics are organized into three categories: quality, efficiency, and personalization.
+Each metric includes its definition, measurement method, and target threshold
+where applicable.
 
 ---
 
-**Metric Collection Infrastructure**
+## Quality Metrics
 
-All metrics except Discovery Recall and Certificate Accuracy can be
-computed automatically from existing system logs (Run Log, Dedup logs,
-Telegram message logs). Discovery Recall and Certificate Accuracy
-require manual labeling effort and are measured during formal evaluation
-batches, not on every production run.
+**1. Constraint Satisfaction Rate**
 
-**Recommended reporting cadence:** After every 50 production runs, or
-weekly during active development --- whichever comes first.
+- **Definition:** Percentage of courses in the final digest that satisfy all hard
+  constraints from `SearchFilters` (price, certificate, language, level, rating).
+- **Measurement:** Automated from validation results. Count of `valid_courses` whose
+  `CandidateValidation` shows no constraint violations, divided by total recommended.
+- **Target:** 100%. Any constraint violation in a published recommendation is a
+  failure.
+
+**2. Evidence Coverage Rate**
+
+- **Definition:** Percentage of constraint fields in each `CourseCandidate` that are
+  covered by at least one `EvidenceItem`.
+- **Measurement:** For each valid course: count fields with at least one supporting
+  evidence item divided by total constrained fields. Average across the digest.
+- **Target:** ≥80%. Lower coverage means the agent is accepting claims it has not
+  verified.
+
+**3. Unsupported Claim Count**
+
+- **Definition:** Number of factual claims in the synthesized digest that are not
+  backed by any evidence item in the corresponding `CourseCandidate`.
+- **Measurement:** LLM-assisted audit or structured synthesis output — the synthesizer
+  is prompted to cite evidence for each claim. Log count of uncited claims per run.
+- **Target:** 0 per run. Non-zero triggers a rewrite cycle.
+
+**4. Valid Candidate Count**
+
+- **Definition:** Number of candidates classified `valid` by the evidence validator
+  before synthesis.
+- **Measurement:** `len(valid_courses)` from state at synthesis time.
+- **Tracking:** Per-run. Useful for diagnosing poor recall from cache or search.
+
+**5. Rejected Candidate Count**
+
+- **Definition:** Number of candidates classified `rejected` by the evidence
+  validator.
+- **Measurement:** `len(rejected_courses)` from state.
+- **Tracking:** Per-run. High rejection rates indicate poor search quality or
+  constraint-retrieval mismatch.
+
+**6. Uncertain Candidate Count**
+
+- **Definition:** Number of candidates classified `uncertain` — not invalid, but
+  lacking sufficient evidence for a critical constraint.
+- **Measurement:** `len(uncertain_courses)` from state.
+- **Note:** Uncertain candidates are not included in recommendations but are logged
+  for human review. They may be promoted to valid on a subsequent Tavily call.
+
+**7. Replan Success Rate**
+
+- **Definition:** Percentage of replanning iterations that produced at least one
+  additional valid candidate.
+- **Measurement:** For each run with `replan_count > 0`: count iterations after which
+  `valid_candidate_count` increased. Divide by `replan_count`.
+- **Target:** ≥50%. Below this, the replanner is generating redundant queries.
+
+---
+
+## Efficiency Metrics
+
+**8. Cache Hit Rate**
+
+- **Definition:** Percentage of courses in the final digest that were served from the
+  course cache without a Tavily search.
+- **Measurement:** Count of `valid_courses` with `source = "cache"` divided by total
+  `valid_courses`.
+- **Target:** As high as possible for repeat topics. A run on a well-covered topic
+  should serve most recommendations from cache. Low cache hit rate on repeat queries
+  signals a cache population or freshness problem.
+
+**9. Tavily Calls Per Query**
+
+- **Definition:** Number of Tavily API calls made per research run.
+- **Measurement:** `tavily_calls` from state at run end.
+- **Tracking:** Per-run. High values indicate the cache is not being used effectively
+  or replanning is generating too many new queries.
+
+**10. Latency**
+
+- **Definition:** Wall-clock time from research entry to synthesizer output.
+  Excludes human review wait time.
+- **Measurement:** Timestamp at `research_entry` start and `synthesizer` end.
+  Breakdown tracked per node.
+- **Target:** <90 seconds for a typical run (cache-first, 1–2 Tavily calls).
+
+**11. Token Count**
+
+- **Definition:** Total LLM tokens consumed per run across all LLM nodes (planner,
+  extractor, validator, replanner, synthesizer).
+- **Measurement:** Accumulated from LLM call metadata in each node.
+- **Tracking:** Per-run. High token counts relative to valid candidate count indicate
+  inefficient prompting or excessive candidate extraction.
+
+**12. Duplicate Candidate Rate**
+
+- **Definition:** Percentage of raw candidates (before dedup) that are removed by
+  the dedup step.
+- **Measurement:** `1 - len(after_dedup) / len(before_dedup)`.
+- **Tracking:** Per-run. High rates are expected when cache and Tavily both surface
+  well-known courses. Very low rates may indicate insufficient cache coverage.
+
+---
+
+## Personalization Metrics
+
+**13. Accepted Recommendation Rate**
+
+- **Definition:** Percentage of recommendations that the user explicitly accepts
+  (PUBLISH action) vs. total recommendations shown.
+- **Measurement:** From `recommendation_events`: count `accepted = true` divided by
+  total events for the user.
+- **Tracking:** Per-user over time. Low acceptance rate signals poor personalization.
+
+**14. Rejected Recommendation Rate**
+
+- **Definition:** Percentage of recommendations explicitly rejected by the user.
+- **Measurement:** From `recommendation_events`: count `rejected = true` divided by
+  total events.
+- **Tracking:** Per-user. Rising rejection rate suggests memory is not capturing
+  preferences accurately.
+
+**15. Avoided-Provider Violation Rate**
+
+- **Definition:** Percentage of recommended courses whose provider is in the user's
+  `avoided_providers` list.
+- **Measurement:** Check each `valid_course.provider` against `user_memory.avoided_providers`.
+- **Target:** 0%. Any violation is a memory or validation failure.
+
+**16. Repeated Recommendation Rate**
+
+- **Definition:** Percentage of recommended courses that have already been recommended
+  to the same user in a previous run.
+- **Measurement:** Cross-reference digest courses against `recommendation_events` for
+  the user. Count duplicates divided by total recommendations.
+- **Target:** <10%. The agent should not repeatedly surface the same courses unless
+  explicitly augmenting.
+
+**17. Completed-Course Exclusion Rate**
+
+- **Definition:** Percentage of a user's completed courses that are correctly excluded
+  from recommendations.
+- **Measurement:** For runs where user has `completed_course_urls`, verify none appear
+  in `valid_courses`. Rate = correctly excluded / total completed courses checked.
+- **Target:** 100%. Recommending a course the user already completed is a memory
+  failure.
+
+---
+
+## Metric Collection Infrastructure
+
+**Automated (every run):**
+
+Metrics 1–12 and 15–17 can be computed from structured run state and database
+records. They are written to `research_runs` at the end of each research subgraph
+execution.
+
+**Semi-automated (requires human signal):**
+
+Metrics 13–14 (acceptance and rejection) require the user to complete the review
+cycle (PUBLISH or DISCARD) and optionally provide feedback text. Recorded in
+`recommendation_events` at the `user_memory_update` step.
+
+**Recommended reporting cadence:**
+
+After every 20 production runs, or weekly during active development — whichever
+comes first. Per-run metrics are always available from the `research_runs` table.
