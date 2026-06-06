@@ -1,5 +1,7 @@
 # Course Discovery Agent
 
+Built as part of the engineering work at [Halo Lab](https://www.halolab.us).
+
 This repository implements a personalized, cache-first course research agent controlled by LangGraph.
 
 The agent:
@@ -75,6 +77,20 @@ At review time the CLI prints the digest plus cache/search/validation counts. Fe
 - `reset: ...`
 - `discard`
 
+## Roadmap
+
+This repo delivers **Milestone 1** of a larger planned system. The full milestone breakdown lives in [`specs/IMPLEMENTATION_PLAN.md`](specs/IMPLEMENTATION_PLAN.md).
+
+| # | Milestone | Status |
+|---|-----------|--------|
+| M1 | **Article-Ready Core** — LangGraph patterns, mock workers, CLI human-in-the-loop | ✅ complete |
+| M2 | Telegram Integration — real bot, live status, inline approval buttons | planned |
+| M3 | Real Discovery Workers — API-backed and crawler-based workers with `SearchFilters` | planned |
+| M4 | Embedding Dedup + Postgres — pgvector, LangGraph Postgres checkpointer | planned |
+| M5 | Production Hardening — scheduling, multilingual support, monitoring dashboards | planned |
+
+See [`MAYBE_LATER.md`](MAYBE_LATER.md) for the current backlog of future ideas.
+
 ## Key Files
 
 - `course_discovery/workflows/outer_graph.py`: review/publish control shell.
@@ -87,3 +103,4 @@ At review time the CLI prints the digest plus cache/search/validation counts. Fe
 - `course_discovery/app/`: CLI, prompts, and gateway parsing.
 - `ARTICLE.md`: article-style explanation of the implementation.
 - `PLAN.md`: original implementation plan.
+- `specs/`: full implementation plan, article drafts, proposed metrics and testing approach.
