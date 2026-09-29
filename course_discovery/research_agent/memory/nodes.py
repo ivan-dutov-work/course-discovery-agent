@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from course_discovery.domain.models import DeliveryStatus
 from course_discovery.domain.state import AgentState
 from course_discovery.observability.logging import get_logger
 from course_discovery.research_agent.memory.repository import (
@@ -29,7 +30,7 @@ def user_memory_lookup_node(state: AgentState) -> dict:
 
 def user_memory_update_node(state: AgentState) -> dict:
     feedback = state.get("manager_feedback")
-    accepted = bool(state.get("published"))
+    accepted = state.get("publish_status") in {DeliveryStatus.QUEUED, DeliveryStatus.DELIVERED}
     record_feedback(
         state.get("user_id"),
         state.get("valid_courses", []),

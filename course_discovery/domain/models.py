@@ -14,6 +14,12 @@ class RoutingAction(str, Enum):
     DISCARD = "DISCARD"
 
 
+class DeliveryStatus(str, Enum):
+    QUEUED = "queued"
+    DELIVERED = "delivered"
+    DEAD = "dead"
+
+
 class SearchFilters(BaseModel):
     topic: str = Field(default="general programming")
     max_price: float = Field(default=0.0, ge=0)

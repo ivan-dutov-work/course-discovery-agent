@@ -58,7 +58,7 @@ def _state(**updates):
         "run_id": "test-run",
         "active_search_query": None,
         "error": None,
-        "published": False,
+        "publish_status": None,
         "discard_reason": None,
     }
     state.update(updates)

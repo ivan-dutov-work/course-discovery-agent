@@ -7,6 +7,7 @@ from typing import TypedDict
 from course_discovery.domain.models import (
     CandidateValidation,
     CourseCandidate,
+    DeliveryStatus,
     ResearchPlan,
     ResearchRunMetrics,
     RoutingAction,
@@ -47,5 +48,5 @@ class AgentState(TypedDict):
     run_id: str
     active_search_query: str | None
     error: str | None
-    published: bool
+    publish_status: DeliveryStatus | None
     discard_reason: str | None

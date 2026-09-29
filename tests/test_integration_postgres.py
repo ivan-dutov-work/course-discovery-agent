@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 import os
 import unittest
 import uuid
@@ -8,14 +7,15 @@ from unittest.mock import patch
 
 import psycopg
 from langchain_core.runnables import RunnableConfig
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
-from pydantic import BaseModel
 
 from course_discovery.app.cli import _initial_state
-from course_discovery.domain import models as domain_models
+from course_discovery.domain.models import DeliveryStatus
+from course_discovery.effects.factory import set_gateway
+from course_discovery.persistence.checkpointer import build_serde, memory_saver
 from course_discovery.research_agent.cache import nodes as cache_nodes
+from course_discovery.resilience import RETRY_SETTINGS
+from course_discovery.workflows import research_graph as research_module
 from course_discovery.workflows.outer_graph import build_graph
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
@@ -23,6 +23,7 @@ USER_ID = "cli-user"
 
 
 QUERY = "Find free Python courses with certificate for beginners"
+FAST_RETRY = {**RETRY_SETTINGS, "initial_interval": 0.0, "jitter": False}
 STATE_KEYS = ("valid_courses", "digest", "cache_hits", "tavily_calls", "routing_decision")
 
 
@@ -34,17 +35,8 @@ def _view(values: dict) -> dict:
     return {key: values.get(key) for key in STATE_KEYS}
 
 
-def _domain_model_allowlist() -> list[tuple[str, str]]:
-    return [
-        (cls.__module__, cls.__name__)
-        for _, cls in inspect.getmembers(domain_models, inspect.isclass)
-        if issubclass(cls, BaseModel) and cls.__module__ == domain_models.__name__
-    ]
-
-
 def _durable_saver():
-    serde = JsonPlusSerializer(allowed_msgpack_modules=_domain_model_allowlist())
-    return AsyncPostgresSaver.from_conn_string(TEST_DATABASE_URL, serde=serde)
+    return AsyncPostgresSaver.from_conn_string(TEST_DATABASE_URL, serde=build_serde())
 
 
 def _thread(thread_id: str) -> RunnableConfig:
@@ -91,6 +83,8 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
         env.start()
         self.addCleanup(env.stop)
         os.environ.pop("OPENROUTER_API_KEY", None)
+        set_gateway(None)
+        self.addCleanup(set_gateway, None)
 
         self.conn = psycopg.connect(TEST_DATABASE_URL, autocommit=True)
         self.addCleanup(self.conn.close)
@@ -111,7 +105,7 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_main_path_persists_courses_and_feedback(self):
         _, _, result = await self._run_to_publish("run-main")
 
-        self.assertTrue(result["published"])
+        self.assertEqual(result["publish_status"], DeliveryStatus.DELIVERED)
         self.assertGreater(len(result["valid_courses"]), 0)
         self.assertGreater(_count(self.conn, "SELECT count(*) FROM courses"), 0)
         self.assertGreater(_count(self.conn, "SELECT count(*) FROM course_evidence"), 0)
@@ -119,6 +113,33 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
             _count(self.conn, "SELECT count(*) FROM recommendation_events"),
             len(result["valid_courses"]),
         )
+
+    async def test_feedback_for_unknown_user_creates_user_and_records_events(self):
+        self.conn.execute("TRUNCATE users CASCADE")
+
+        _, _, result = await self._run_to_publish("run-new-user")
+
+        self.assertEqual(_count(self.conn, "SELECT count(*) FROM users WHERE id = 'cli-user'"), 1)
+        self.assertEqual(
+            _count(self.conn, "SELECT count(*) FROM recommendation_events"),
+            len(result["valid_courses"]),
+        )
+
+    async def test_write_failure_is_raised_and_leaves_no_partial_rows(self):
+        graph = build_graph()
+        config = _thread("run-write-fail")
+        await graph.ainvoke(_initial_state(QUERY, "run-write-fail"), config)
+        graph.update_state(config, {"manager_feedback": "approve"})
+        self.conn.execute("ALTER TABLE recommendation_events ADD CONSTRAINT no_events CHECK (false)")
+        self.addCleanup(
+            self.conn.execute, "ALTER TABLE recommendation_events DROP CONSTRAINT no_events"
+        )
+
+        with self.assertRaises(psycopg.errors.CheckViolation):
+            await graph.ainvoke(None, config)
+
+        self.assertEqual(graph.get_state(config).next, ("user_memory_update",))
+        self.assertEqual(_count(self.conn, "SELECT count(*) FROM recommendation_events"), 0)
 
     async def test_replay_from_checkpoint_does_not_duplicate_writes(self):
         graph, config, _ = await self._run_to_publish("run-replay")
@@ -144,7 +165,7 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_replay_from_subgraph_checkpoint_reruns_only_that_node(self):
-        saver = MemorySaver()
+        saver = memory_saver()
         graph = build_graph(checkpointer=saver)
         config = _thread("run-sub")
         await graph.ainvoke(_initial_state(QUERY, "run-sub"), config)
@@ -193,14 +214,57 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
             await second.aupdate_state(config, {"manager_feedback": "approve"})
             result = await second.ainvoke(None, config)
 
-        self.assertTrue(result["published"])
+        self.assertEqual(result["publish_status"], DeliveryStatus.DELIVERED)
         self.assertEqual(
             _count(self.conn, "SELECT count(*) FROM recommendation_events"),
             len(result["valid_courses"]),
         )
 
+    async def test_durability_modes_differ_in_checkpoint_granularity_not_in_resume(self):
+        counts = {}
+        for mode in ("sync", "async", "exit"):
+            with self.subTest(mode=mode), patch.dict(RETRY_SETTINGS, FAST_RETRY):
+                counts[mode] = await self._fail_then_resume(mode)
+        self.assertGreater(counts["sync"], 10)
+        self.assertGreater(counts["async"], 10)
+        self.assertLessEqual(counts["exit"], 3)
+
+    async def _fail_then_resume(self, mode: str) -> int:
+        thread_id = f"run-{mode}-{uuid.uuid4().hex[:8]}"
+        config = _thread(thread_id)
+        validator_calls = []
+        real_validator = research_module.evidence_validator_node
+        real_upsert = cache_nodes.upsert_courses
+        outage = {"active": True}
+
+        def validator(state):
+            validator_calls.append(1)
+            return real_validator(state)
+
+        def upsert(*args, **kwargs):
+            if outage["active"]:
+                raise ConnectionError("db unavailable")
+            return real_upsert(*args, **kwargs)
+
+        with patch.object(research_module, "evidence_validator_node", validator), patch.object(
+            cache_nodes, "upsert_courses", upsert
+        ):
+            async with _durable_saver() as saver:
+                await saver.setup()
+                graph = build_graph(checkpointer=saver)
+                with self.assertRaises(ConnectionError):
+                    await graph.ainvoke(_initial_state(QUERY, thread_id), config, durability=mode)
+                written = len([c async for c in saver.alist(config)])
+
+                outage["active"] = False
+                await graph.ainvoke(None, config, durability=mode)
+                self.assertEqual((await graph.aget_state(config)).next, ("review_gate",))
+
+        self.assertEqual(len(validator_calls), 1)
+        return written
+
     async def test_interrupt_inside_subgraph_pauses_resumes_and_replays(self):
-        saver = MemorySaver()
+        saver = memory_saver()
         graph = build_graph(
             checkpointer=saver,
             research_compile_kwargs={"interrupt_before": ["course_cache_upsert"]},

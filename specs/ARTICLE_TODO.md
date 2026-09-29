@@ -12,34 +12,53 @@ code — implementation and article coverage are tracked separately).
 ## Status snapshot — implemented in code vs. next up
 
 Implemented and tested, **not yet written into ARTICLE.md** (details in the items
-below):
+below). Integration tests need `docker compose up -d` and
+`TEST_DATABASE_URL=postgresql://course:course@localhost:55432/course_discovery`.
 
 - Replay-safe writes: `migrations/002_idempotent_writes.sql`, `ON CONFLICT` on
   `course_evidence` (content key) and `recommendation_events` (`idempotency_key`).
 - Local stack: `docker-compose.yml` (pgvector Postgres on host port 55432) and
-  `tests/test_integration_postgres.py`, run with `TEST_DATABASE_URL`.
+  `tests/test_integration_postgres.py`.
 - Replay coverage: outer-graph checkpoints, subgraph checkpoints, `interrupt_before`
   inside the subgraph, and a fresh `AsyncPostgresSaver` + graph reading the thread
   back and resuming through publish.
-- `build_graph(checkpointer=, research_compile_kwargs=)` so tests can vary durability.
-- msgpack allowlist for the durable saver (0 deserialization warnings, verified).
+- **Outbox behind a port** (`course_discovery/effects/`, `migrations/003_outbox.sql`):
+  `EffectGateway` port, `InMemoryOutboxStore` and `PostgresOutboxStore` behind one
+  `OutboxStore` protocol, `OutboxWorker` (leases, backoff, dead-letter),
+  `InlineGateway` (default) and `OutboxGateway` (`EFFECT_GATEWAY=outbox`, worker run
+  with `python -m course_discovery.effects`). `publish_node` submits
+  `publish:{run_id}`; `published: bool` is now `publish_status`
+  (`queued | delivered | dead`). One contract suite (`tests/outbox_contract.py`) runs
+  against both stores; Postgres adds parallel workers and concurrent-submit tests.
+- **Write failures surface.** `record_feedback` and `upsert_courses` re-raise after
+  logging; `record_feedback` creates the `users` row first, so the FK failure is gone.
+- **`RetryPolicy` on idempotent nodes** (`course_discovery/resilience.py`):
+  `gateway`, `tavily_search_worker`, `course_cache_upsert`, `publish_node`,
+  `user_memory_update`, retrying only `is_transient` errors.
+- **Client-level timeouts:** LLM request timeout, `asyncio.wait_for` on search,
+  Postgres connect and statement timeouts. No node-level timeout (see below).
+- **Durable checkpointer in the app path:** `open_checkpointer()` picks
+  `AsyncPostgresSaver` when `DATABASE_URL` is set, else `MemorySaver`; both use the
+  msgpack allowlist, now covering enums.
+- Durability modes tested (`sync`, `async`, `exit`) against Postgres.
+- **Read paths fail closed:** `load_user_memory` and the cache lookup re-raise after
+  logging, and `user_memory_lookup` / `course_cache_lookup` carry the transient
+  `RetryPolicy` (both are read-only, so retrying is safe).
+- **Real process kill:** `tests/test_integration_kill.py` runs the graph in a child
+  process that SIGKILLs itself inside `course_cache_upsert`. With `durability="sync"` a
+  fresh process resumes with `ainvoke(None)` and does not re-run `evidence_validator`.
+  With `durability="exit"` the thread has no checkpoints at all after the kill, so the
+  run restarts from scratch. `async` is not tested: whether the last background write
+  lands before a kill is a race.
 
-**Up next — implement now, in this order:**
+**Still open:**
 
-1. **Outbox behind a port** (see "Out-of-process effects" below). Most important:
-   `EffectGateway` port, Postgres outbox table with a unique key, an inline/in-memory
-   adapter for demo and tests, a separate worker (`FOR UPDATE SKIP LOCKED`, backoff,
-   dead-letter), and `publish_node` submitting instead of printing. Changes
-   `published: bool` into a delivery status.
-2. **Fix the swallowed FK failure** in `record_feedback` (user row missing -> silent
-   drop), and make the DB writers surface failure instead of only logging it.
-3. **`RetryPolicy` on read-only nodes** (LLM, search) with a test that a transient
-   failure is retried and a persistent one is not retried forever.
-4. **Wire a durable checkpointer into the real app path** (opt-in via `DATABASE_URL`)
-   with the msgpack allowlist, so §4.1 can describe what the repo actually does.
-5. **Timeouts** (`add_node(timeout=)` plus client-level) — small, pairs with 3.
-
-Everything else below stays article-only until the above lands.
+- Circuit breaker, `CachePolicy`, `Store` vs. checkpointer: untouched.
+- Same-transaction outbox write with `recommendation_events` is not done; the
+  outbox row and the domain write are separate transactions.
+- Handler for `publish_digest` still prints to stdout; only the delivery machinery
+  is real.
+- Strict-mode behaviour for a type outside the state schema is untested.
 
 ## Already in the code — foreground these, don't just add new stuff
 
@@ -60,8 +79,8 @@ Everything else below stays article-only until the above lands.
       on `AsyncPostgresSaver`, then a fresh saver + fresh graph reads the thread back
       from Postgres, replays, and resumes through approve -> publish. The default
       `build_graph()` is still `MemorySaver`; `checkpointer=` is now a parameter. This
-      is a new saver in the same OS process, not a killed process — don't claim crash
-      recovery. §4.1 wording is still accurate for the default; update it if the
+      is a new saver in the same OS process, not a killed process; the SIGKILL test in
+      `tests/test_integration_kill.py` covers crash recovery separately. §4.1 wording is still accurate for the default; update it if the
       article shows the durable variant.)*
 - [x] **Subgraphs for encapsulation.** `research_graph` compiled and mounted as a
       single node in `outer_graph`. The outer graph doesn't know or care about the
@@ -80,7 +99,11 @@ Everything else below stays article-only until the above lands.
       makes the namespace stable (`research_agent`). `interrupt_before` inside the
       subgraph works: `get_state(cfg, subgraphs=True)` shows the paused sub-state, resume
       and later replay both work. Not tested: `Command`/dynamic `interrupt()` inside a
-      subgraph, subgraph with `checkpointer=False`, a real process kill.
+      subgraph, subgraph with `checkpointer=False`.
+      **Also observed (retry tests):** when one of several parallel `Send` workers in the
+      subgraph fails, resuming the outer graph re-runs the workers that had already
+      succeeded; the same research graph run standalone re-runs only the failed one. Cost
+      of the encapsulation for fan-out inside a subgraph.
       Design alternative if namespace discovery feels fragile: keep mutating nodes at
       the top level, or have the subgraph return effects as data for an outer node.
 - [x] **Plan-driven `Send` fan-out.** Worker count comes from `research_plan`, not
@@ -100,17 +123,48 @@ Everything else below stays article-only until the above lands.
       is `MemorySaver`). Mutating nodes need the idempotency + outbox items below, not
       `RetryPolicy` — and note the DB-writing nodes catch and log exceptions, so a
       `RetryPolicy` on them would never fire.
+      *(Implemented, not yet in the article. Correction to the scope above: the DB
+      writers now re-raise, and `RetryPolicy` also sits on the idempotent writers
+      (`course_cache_upsert`, `user_memory_update`) and on `publish_node`, which is safe
+      to retry only because `submit` is keyed. `retry_on=is_transient` (timeouts,
+      connection errors, `psycopg.OperationalError`, HTTP 408/425/429/5xx); integrity
+      errors and `ValueError` are not retried. Findings: (1) nodes that caught every
+      exception made `RetryPolicy` a no-op, so `gateway` and `tavily_search_worker` now
+      re-raise transient errors and only convert permanent ones to state; (2) the LLM
+      client ships its own retries (`ChatOpenRouter.max_retries=2`, up to ~300 s
+      elapsed), which multiply with `RetryPolicy`, so `build_llm` defaults to 0 and the
+      router/synthesizer, which have no policy, opt back in; (3) exhausted retries
+      raise out of the graph and the run stays resumable from its checkpoint; (4)
+      observed on langgraph 1.1.2: when one of several parallel `Send` workers fails,
+      resuming a *standalone* graph re-runs only the failed worker, but the same graph
+      mounted as a subgraph re-runs the already-successful sibling too
+      (`tests/test_retries.py`, both directions asserted). The synthesizer keeps its
+      hand-rolled per-course retry and canned fallback; no policy there.)*
 - [ ] **Node-level cache policy** — `CachePolicy` (`langgraph.types.CachePolicy`,
       passed to `add_node`). Memoizes a single node's output keyed on input — narrower
       than a whole-workflow cache. Good contrast piece against our own
       `course_cache_lookup`, which is a *domain* cache we built ourselves; `CachePolicy`
-      is a *framework* cache for identical-input reruns. Also worth mentioning: newer
-      `timeout=` and `error_handler=` params on `add_node`.
+      is a *framework* cache for identical-input reruns. **Correction (checked against
+      the installed langgraph 1.1.2):** `add_node` has no `timeout=` or `error_handler=`
+      parameter; its signature is `defer, metadata, input_schema, retry_policy,
+      cache_policy, destinations`. Don't claim node-level timeouts without checking the
+      version the article targets.
 - [ ] **Durability modes** — `durability=` on `invoke`/`stream`, values `"exit"`
       (checkpoint only at graph exit, fastest/least safe), `"async"` (background
       checkpoint, balanced), `"sync"` (checkpoint before every step, safest/slowest).
       Frame as a tuning knob: candidate-extraction steps don't need `"sync"`; a
       publish-adjacent step might.
+      *(Tested, not in the article: `test_durability_modes_differ_in_checkpoint_granularity_not_in_resume`.
+      Run against `AsyncPostgresSaver` with a transient failure late in the run: `sync`
+      and `async` wrote ~12-14 checkpoints, `exit` wrote 2. In all three modes the failed
+      run resumed with `ainvoke(None, config)` without re-running the completed
+      `evidence_validator`, because `exit` still checkpoints when the graph exits via an
+      exception. What `exit` loses is history granularity (replay/time-travel points) and,
+      anything in flight at a hard kill. That is now tested
+      (`tests/test_integration_kill.py`): after a SIGKILL inside `course_cache_upsert`,
+      `sync` resumes without re-running `evidence_validator`, while `exit` has written
+      no checkpoints and restarts from scratch. The safety difference, not only the
+      granularity, is demonstrated.)*
 - [ ] **`Store` vs. checkpointer — the memory-scope distinction.** Checkpointer =
       thread-scoped run state, wired in via `compile(checkpointer=...)`, is what makes
       `interrupt_before` resumable. `Store` = cross-thread long-term memory (e.g.
@@ -242,13 +296,23 @@ brittleness, not just the mechanical knobs.
       from checkpoints, in-memory and Postgres savers; with the indexes dropped and the
       code fix stashed all four replay tests fail `10 != 5`. `publish_node` is still a
       stub, so it isn't covered.)*
-      **Unfixed, found while testing:** `recommendation_events.user_id` has an FK to
-      `users`, nothing creates the user, and `record_feedback` swallows the resulting
-      error into a log line — on a fresh DB the CLI's `cli-user` feedback is silently
-      dropped. Good concrete example for the "fail closed, visibly" point.
-- [ ] **Out-of-process effects: outbox behind a port.** *(Design only — nothing
-      implemented; no `EffectGateway`, no outbox table, no worker. **Top of the
-      "Up next" list.**)* Retry of a *mutation* is a
+      **Found while testing, now fixed:** `recommendation_events.user_id` has an FK to
+      `users`, nothing created the user, and `record_feedback` swallowed the resulting
+      error into a log line — on a fresh DB the CLI's `cli-user` feedback was silently
+      dropped. `record_feedback` now inserts the user row (`ON CONFLICT DO NOTHING`) in
+      the same transaction, and both writers re-raise after logging. Tests: unknown user
+      end to end, and a `CHECK (false)` constraint proving the failure surfaces, the run
+      stays paused at `user_memory_update`, and no partial rows land. Good concrete
+      example for the "fail closed, visibly" point.
+- [ ] **Out-of-process effects: outbox behind a port.** *(Implemented in
+      `course_discovery/effects/`; not yet in the article. Departures from the sketch
+      below: the port also has `status(key)`; the worker leases rows
+      (`locked_until`) so a crashed worker's rows are reclaimed, attempts are counted at
+      claim time so a record that keeps crashing its worker ends up dead-lettered; the
+      inline adapter attempts delivery once during `submit` and leaves failures queued
+      for a worker; `PermanentEffectError` and an unknown `kind` dead-letter
+      immediately. The `publish_digest` handler still prints. Not done: same-transaction
+      write with `recommendation_events`.)* Retry of a *mutation* is a
       different problem from retry of a *call*. Sketch, don't productize:
   - **Port:** nodes call `EffectGateway.submit(Effect(key, kind, payload))` and never
     the external system. The adapter inserts an outbox row (`ON CONFLICT (key) DO
@@ -272,10 +336,15 @@ brittleness, not just the mechanical knobs.
     LangGraph checkpointing — a different architecture, not an add-on). Don't claim
     LangGraph Platform background-run semantics without verifying.
   - Framing: illustrative sketch, not validated under load (see scope boundary below).
-- [ ] **Timeouts as a first-class concern, not an afterthought.** Node-level
-      `timeout=` (see `add_node` above) plus per-call timeouts inside the API client
-      itself (the mock client has none because it's local; a real HTTP client needs
-      an explicit timeout or a hung request blocks the whole fan-out branch).
+- [ ] **Timeouts as a first-class concern, not an afterthought.** ~~Node-level
+      `timeout=`~~ (not available in langgraph 1.1.2, see `add_node` above) plus
+      per-call timeouts inside the API client itself (a real HTTP client needs an
+      explicit timeout or a hung request blocks the whole fan-out branch).
+      *(Implemented, not in the article: `LLM_TIMEOUT_SECONDS` (30) on the chat client,
+      `asyncio.wait_for` with `SEARCH_TIMEOUT_SECONDS` (10) around the search call, and
+      Postgres `connect_timeout` plus `statement_timeout`. A search timeout raises
+      `TimeoutError`, which is transient, so it is retried by the node's `RetryPolicy`;
+      tested with a hanging client. The timeouts wrap the call, not the node.)*
 - [x] **Rate limiting.** LangChain chat models accept a `rate_limiter=` (e.g.
       `InMemoryRateLimiter`) to smooth outbound call rate — relevant when
       `research_planner`/`evidence_validator`/`synthesizer` all call the same Gemini
@@ -378,6 +447,14 @@ brittleness, not just the mechanical knobs.
       The warning is once-per-type-per-process, so assert it in a fresh process. This is
       a deserialization-safety control (a writer to the checkpoint DB can otherwise
       trigger arbitrary type construction) — worth one sentence beyond "schema drift".
+      **Found later:** an allowlist built from `BaseModel` subclasses only is not enough.
+      Enum-typed state fields (`RoutingAction`, `DeliveryStatus`) log `Blocked
+      deserialization of ... - not in allowed_msgpack_modules` under the same allowlist,
+      a different message from the "unregistered type" warning above. The allowlist in
+      `persistence/checkpointer.py` now includes `Enum` subclasses and
+      `tests/test_checkpointer.py` round-trips a model and both enums through it
+      asserting type and value. The effect of a blocked enum on the restored value was
+      not inspected. The same serde is now used by the default `MemorySaver`.
 - [x] **Graph structural versioning — a separate failure mode.** Changing node
       topology (add/remove/rename a node) between deploys can break in-flight
       checkpointed threads from the old graph shape even when `AgentState` itself

@@ -161,7 +161,7 @@ def synthesizer_node(state: AgentState) -> dict:
         },
     )
 
-    llm = build_llm("synthesizer") if llm_enabled() else None
+    llm = build_llm("synthesizer", max_retries=2) if llm_enabled() else None
     lines: list[str] = []
     validation_by_url = {item.url: item for item in state.get("validation_results", [])}
 

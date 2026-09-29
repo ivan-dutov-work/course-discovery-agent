@@ -72,7 +72,7 @@ def search_course_cache(
                 "course_cache_search_error",
                 extra={"event": "persistence.course_cache_search_error", **sanitize_error(exc)},
             )
-            return []
+            raise
 
     candidates: list[CourseCandidate] = []
     for row in rows:
@@ -187,3 +187,4 @@ def upsert_courses(
                 "course_cache_upsert_error",
                 extra={"event": "persistence.course_cache_upsert_error", **sanitize_error(exc)},
             )
+            raise
