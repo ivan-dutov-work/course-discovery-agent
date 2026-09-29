@@ -170,6 +170,7 @@ def upsert_courses(
                               source_type, confidence
                             )
                             VALUES (%s, %s, %s, %s, now(), %s, %s)
+                            ON CONFLICT (course_id, source_url, quote_or_summary) DO NOTHING
                             """,
                             (
                                 course_id,

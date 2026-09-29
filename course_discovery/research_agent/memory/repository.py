@@ -58,6 +58,7 @@ def record_feedback(
     *,
     accepted: bool,
     feedback_text: str | None,
+    run_id: str | None = None,
 ) -> None:
     if not user_id or not courses:
         return
@@ -77,9 +78,10 @@ def record_feedback(
                         """
                         INSERT INTO recommendation_events (
                           user_id, course_id, query, rank, recommendation_reason,
-                          accepted, rejected, feedback_text
+                          accepted, rejected, feedback_text, idempotency_key
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (idempotency_key) DO NOTHING
                         """,
                         (
                             user_id,
@@ -90,6 +92,7 @@ def record_feedback(
                             accepted,
                             not accepted,
                             feedback_text,
+                            f"{run_id}:{course.url}" if run_id else None,
                         ),
                     )
             conn.commit()

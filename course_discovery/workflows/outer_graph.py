@@ -33,12 +33,12 @@ def _route_from_router(state: AgentState):
     return state.get("routing_decision", RoutingAction.DISCARD)
 
 
-def build_graph():
+def build_graph(checkpointer=None, research_compile_kwargs=None):
     start_ts = time.perf_counter()
     builder = StateGraph(AgentState)
 
     builder.add_node("gateway", gateway_node)
-    builder.add_node("research_agent", build_research_graph())
+    builder.add_node("research_agent", build_research_graph(**(research_compile_kwargs or {})))
     builder.add_node("review_gate", review_gate_node)
     builder.add_node("router", router_node)
     builder.add_node("augment_dispatch", augment_dispatch_node)
@@ -74,7 +74,7 @@ def build_graph():
     builder.add_edge("discard_node", END)
 
     graph = builder.compile(
-        checkpointer=MemorySaver(),
+        checkpointer=checkpointer or MemorySaver(),
         interrupt_before=["review_gate"],
     )
 

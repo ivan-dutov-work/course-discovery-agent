@@ -60,7 +60,7 @@ def _dispatch_search_queries(state: AgentState):
     ]
 
 
-def build_research_graph():
+def build_research_graph(**compile_kwargs):
     builder = StateGraph(AgentState)
 
     builder.add_node("research_entry", research_entry_node)
@@ -120,4 +120,4 @@ def build_research_graph():
     builder.add_edge("synthesizer", END)
     builder.add_edge("research_done", END)
 
-    return builder.compile()
+    return builder.compile(**compile_kwargs)
