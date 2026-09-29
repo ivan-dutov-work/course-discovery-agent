@@ -487,7 +487,7 @@ called repeatedly within a single run — once per `PUBLISH`/`REWRITE`/
 `AUGMENT`/`RESET`/`DISCARD` review round-trip — so it's the most honest
 "shared quota under repeated calls" example.
 
-### Step 34 — Hand-rolled guardrail around `synthesizer` (§9.3)
+### Step 34 — Hand-rolled guardrail around `synthesizer` (§9.4)
 
 **Files:** new `course_discovery/research_agent/synthesis/guardrails.py`,
 `course_discovery/research_agent/synthesis/nodes.py`, new

@@ -37,14 +37,14 @@ can use this table instead of reading linearly. Tags are attached to subsection
 headers below; sections 1, 12, and 13 are framing/meta and carry no tag.
 
 | Concern | Where it's covered |
-|---|---|
-| `[performance]` | §3.2 Send fan-out, §5.2 durability modes, §5.5 subgraph resume cost, §7.3 CachePolicy, §7.2 async nodes, §10.2 stream_mode |
+|---|---|---|
+| `[performance]` | §3.2 Send fan-out, §5.2 durability modes, §5.5 subgraph resume cost, §7.3 CachePolicy, §7.2 async nodes, §10.2 stream_mode, §12.3 concurrent resume |
 | `[ux]` | §4.3 interrupt UX gaps, §10.2 stream_mode |
 | `[durability]` | §4.1 interrupt_before, §5.1-§5.4 checkpoints, durability modes, replay, `@task` |
-| `[reliability]` | §6.2 outbox, §7.1 RetryPolicy, §7.2 timeouts, §7.4 circuit breaking, §8.2 rate limiting, §9.1 provider fallback, §11.2 checkpoint/graph versioning |
-| `[correctness]` | §2.2 reducers, §5.3 replay determinism, §6.1 idempotent writes, §8.3 schema-drift validation |
+| `[reliability]` | §6.2 outbox, §7.1 RetryPolicy, §7.2 timeouts, §7.4 circuit breaking, §8.2 rate limiting, §9.1 provider fallback, §9.3 custom fallback, §11.2 checkpoint/graph versioning, §12.1 circuit breaking across workers, §12.2 outbox leasing |
+| `[correctness]` | §2.2 reducers, §5.3 replay determinism, §6.1 idempotent writes, §8.3 schema-drift validation, §12.3 concurrent resume |
 | `[cost]` | §5.5 subgraph resume cost, §7.1 retry multiplication, §8.2 rate limiting, §9.2 OpenRouter/LiteLLM |
-| `[security]` | §9.3 guardrails, §11.3 security primitives, §11.4 thread access control |
+| `[security]` | §9.4 guardrails, §11.3 security primitives, §11.4 thread access control |
 | `[compliance]` | §5.6 Store vs. checkpointer / retention, §11.1 GDPR |
 | `[observability]` | §10.1 OpenTelemetry |
 | `[maintainability]` | §3.3 subgraphs |
@@ -364,7 +364,7 @@ share a provider quota; in-process only, does not coordinate across workers.
 **8.3 Schema drift / structured-output validation** `[correctness]`
 
 Pydantic structured output fails loudly when a provider's output changes shape.
-It does not catch well-formed but malicious output (§9.3).
+It does not catch well-formed but malicious output (§9.4).
 
 ---
 
@@ -392,7 +392,20 @@ live; say so. LiteLLM has two shapes: SDK in-process (`ChatLiteLLM`,
 common production pattern and spend/cache-token billing accuracy is a known
 rough edge.
 
-**9.3 Guardrails and security** `[security]`
+**9.3 When the gateway isn't enough** `[reliability]` `[cost]` `[compliance]`
+
+Custom fallback logic layered on top of the gateway, not instead of it. A gateway
+defines failure as a provider error and the substitute as another model; name the
+business requirements that break that default: a wrong answer worse than a failed
+call (validation-triggered escalation), scores that must stay comparable within a
+run, a substitute that is not a model (stale cache, template, parked run),
+per-tenant or per-data-class provider rules, a budget or deadline scoped to the
+run, and substitution that must be visible to a reviewer (§4.3). Cost: you own the
+failure taxonomy and its tests; a validation-triggered fallback is testable with
+a stub model where a real provider outage is not. Decision rule: gateway for
+provider failure, custom logic only for these cases.
+
+**9.4 Guardrails and security** `[security]`
 
 Same wrap-the-Runnable shape as fallback: no native prompt-injection or
 PII-guardrail primitive in LangChain/LangGraph core. Concrete instantiation: an
@@ -444,7 +457,7 @@ in-flight threads even when state did not change; not tested here).
 
 **11.3 Security/guardrail primitives**
 
-Cross-reference §9.3 rather than re-explain.
+Cross-reference §9.4 rather than re-explain.
 
 **11.4 Access control on `thread_id`** `[security]`
 
@@ -456,7 +469,23 @@ Not implemented; the CLI has one user.
 
 ---
 
-## 12. Scope, Limitations and Verification (~250 words)
+## 12. Cross-Worker Coordination at Scale `[reliability]` `[correctness]` `[performance]` (~400 words)
+
+**12.1 Circuit breaking across workers** `[reliability]`
+
+Circuit state in Store (cross-worker, global). Checked at queue-consumer boundary before graph execution, also at subgraph entry for runs already in progress. Half-open probe requests. Composes with `RetryPolicy` (§7.1): retry handles single call failures, circuit breaker handles sustained outage. Thundering herd prevention emerges from the shared failure counter — one worker probes instead of twenty retrying simultaneously.
+
+**12.2 Outbox leasing at scale** `[reliability]`
+
+`FOR UPDATE SKIP LOCKED` row claiming so multiple workers don't deliver the same effect. Crashed worker's lease expires and rows are reclaimed. Attempt counting at claim time for crash-loop dead-lettering. Cost: a handler that outlives `locked_until` can be claimed twice — consumer must be idempotent.
+
+**12.3 Concurrent resume** `[correctness]` `[performance]`
+
+Nothing prevents two callers resuming the same `thread_id` simultaneously. Risk is double work (LLM calls, synthesis), not corruption (deterministic keys make re-submit a no-op). Application-level advisory lock (`pg_advisory_xact_lock`) before `ainvoke`, not inside the graph.
+
+---
+
+## 13. Scope, Limitations and Verification (~250 words)
 
 - Not a production case study — no load data, no incident log, no
   cost-at-scale numbers. A demonstration of mechanics using a domain-shaped
@@ -475,12 +504,12 @@ Not implemented; the CLI has one user.
 
 ---
 
-## 13. What's Next (~150 words)
+## 14. What's Next (~150 words)
 
 Next steps that add surfaces and infrastructure around the mechanics shown,
 none of which change the core patterns: a real delivery handler and
-same-transaction outbox write, dead-letter alerting and pruning, circuit
-breaking, a push-based review interface replacing the CLI, thread access
+same-transaction outbox write, dead-letter alerting and pruning,
+a push-based review interface replacing the CLI, thread access
 control, LangSmith/OTel tracing, scheduling.
 
 **Link to the repository.**
@@ -509,7 +538,7 @@ count, and validation summary, then prompts for review. Type `approve`,
 ## Estimated Word Count
 
 | Section | ~Words |
-|---|---|
+|---|---|---|
 | 0. TL;DR | 100 |
 | 1. Agents vs. Agentic Workflows | 350 |
 | 2. State as the Contract | 400 |
@@ -522,7 +551,8 @@ count, and validation summary, then prompts for review. Type `approve`,
 | 9. Provider-Level Resilience | 450 |
 | 10. Observability | 400 |
 | 11. What LangGraph Doesn't Own | 400 |
-| 12. Scope, Limitations and Verification | 250 |
-| 13. What's Next | 150 |
+| 12. Cross-Worker Coordination at Scale | 400 |
+| 13. Scope, Limitations and Verification | 250 |
+| 14. What's Next | 150 |
 | Appendix | 100 |
-| **Total** | **~5,800** |
+| **Total** | **~6,200** |

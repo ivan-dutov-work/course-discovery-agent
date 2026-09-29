@@ -57,12 +57,23 @@ below). Integration tests need `docker compose up -d` and
 
 **Still open:**
 
-- Circuit breaker, `CachePolicy`, `Store` vs. checkpointer: untouched.
+- `Store` vs. checkpointer: untouched.
 - Same-transaction outbox write with `recommendation_events` is not done; the
   outbox row and the domain write are separate transactions.
 - Handler for `publish_digest` still prints to stdout; only the delivery machinery
   is real.
 - Strict-mode behaviour for a type outside the state schema is untested.
+
+**Drafted as gap/contrast sections, now elevated to its own section:**
+
+- [x] **Circuit breaker** — originally §7.4 (gap named: per-node retry is not a
+  circuit breaker). Expanded to full cross-worker architecture at §12.1: Store as
+  shared state, queue-boundary check, subgraph entry check, half-open probes,
+  composition with retry.
+
+**Drafted as gap/contrast sections, no code change needed:**
+- `CachePolicy` (§7.3): contrasted against the domain cache; not implemented,
+  because this graph topology doesn't produce same-input reruns.
 
 ## Already in the code — foreground these, don't just add new stuff
 
@@ -117,7 +128,7 @@ below). Integration tests need `docker compose up -d` and
 
 ## Production principles to add (small, illustrative — not fully productized)
 
-- [ ] **Retry policy per node** — `RetryPolicy` passed to `add_node(..., retry_policy=RetryPolicy(...))`.
+- [x] **Retry policy per node** — `RetryPolicy` passed to `add_node(..., retry_policy=RetryPolicy(...))`.
       Handles transient exceptions (timeout, rate limit) with backoff/jitter.
       Contrast with `max_research_iterations`: retry = "the call failed," replanning
       = "the call succeeded but the result was insufficient." Two different failure
@@ -144,7 +155,8 @@ below). Integration tests need `docker compose up -d` and
       mounted as a subgraph re-runs the already-successful sibling too
       (`tests/test_retries.py`, both directions asserted). The synthesizer keeps its
       hand-rolled per-course retry and canned fallback; no policy there.)*
-- [ ] **Node-level cache policy** — `CachePolicy` (`langgraph.types.CachePolicy`,
+      *(Drafted in ARTICLE.md §7.1.)*
+- [x] **Node-level cache policy** — `CachePolicy` (`langgraph.types.CachePolicy`,
       passed to `add_node`). Memoizes a single node's output keyed on input — narrower
       than a whole-workflow cache. Good contrast piece against our own
       `course_cache_lookup`, which is a *domain* cache we built ourselves; `CachePolicy`
@@ -271,12 +283,13 @@ brittleness, not just the mechanical knobs.
     instead of collapsing the run — "fail closed with a visible limitation," not
     silent hallucination or a crashed graph. (Now serving from a mock catalog, but
     the failure-handling shape is what a real provider integration would reuse.)
-- [ ] **Retry + backoff vs. circuit breaking.** `RetryPolicy` handles transient
+- [x] **Retry + backoff vs. circuit breaking.** `RetryPolicy` handles transient
       failures; it does *not* protect against a sustained outage (retrying a fully
       down API just burns budget and latency). Worth naming the gap: LangGraph gives
       you per-node retry, not a circuit breaker — that's either hand-rolled (a
       failure-count field in state, checked before dispatching the next `Send`) or
       delegated to the client library/gateway in front of the API.
+      *(Drafted in ARTICLE.md §7.4.)*
 - [ ] **Idempotency under checkpoint replay.** If a node crashes mid-execution and the
       graph resumes from the last checkpoint, does re-running that node do something
       unsafe (double-charge, double-publish, duplicate insert)? `course_cache_upsert`
@@ -340,7 +353,7 @@ brittleness, not just the mechanical knobs.
     LangGraph checkpointing — a different architecture, not an add-on). Don't claim
     LangGraph Platform background-run semantics without verifying.
   - Framing: illustrative sketch, not validated under load (see scope boundary below).
-- [ ] **Timeouts as a first-class concern, not an afterthought.** ~~Node-level
+- [x] **Timeouts as a first-class concern, not an afterthought.** ~~Node-level
       `timeout=`~~ (not available in langgraph 1.1.2, see `add_node` above) plus
       per-call timeouts inside the API client itself (a real HTTP client needs an
       explicit timeout or a hung request blocks the whole fan-out branch).
@@ -349,6 +362,7 @@ brittleness, not just the mechanical knobs.
       Postgres `connect_timeout` plus `statement_timeout`. A search timeout raises
       `TimeoutError`, which is transient, so it is retried by the node's `RetryPolicy`;
       tested with a hanging client. The timeouts wrap the call, not the node.)*
+      *(Drafted in ARTICLE.md §7.2.)*
 - [x] **Rate limiting.** LangChain chat models accept a `rate_limiter=` (e.g.
       `InMemoryRateLimiter`) to smooth outbound call rate — relevant when
       `research_planner`/`evidence_validator`/`synthesizer` all call the same Gemini
@@ -439,13 +453,30 @@ the interrupted node is re-run from the top. Everything below follows from that.
 - [ ] **Growth:** no code deletes outbox rows or checkpoints (grep found no `DELETE`/prune
       in `effects/`); checkpoints are 12–14 per run in `sync`.
 - [ ] **Access control on `thread_id`** — drafted in ARTICLE.md §11.4: the id is a bearer
-      capability, and `update_state` on `manager_feedback` can open the publish gate.
-      Not implemented; the CLI has one user.
+  capability, and `update_state` on `manager_feedback` can open the publish gate.
+  Not implemented; the CLI has one user.
 - [ ] **When not LangGraph:** Temporal/Restate/DBOS give durable execution at the
-      activity level, which is what the outbox plus keys approximate by hand. Worth a
-      short "when to reach for it instead" paragraph, not a comparison.
+  activity level, which is what the outbox plus keys approximate by hand. Worth a
+  short "when to reach for it instead" paragraph, not a comparison.
 - [ ] **Testing story:** the SIGKILL child-process test is the strongest evidence in the
-      repo; `async` is deliberately untested for a hard kill (a race).
+  repo; `async` is deliberately untested for a hard kill (a race).
+
+## New: Cross-worker coordination section (§12)
+
+Drafted in ARTICLE.md §12.1–§12.3. No code changes needed — all three patterns are
+architectural descriptions, not implementations in this repo. Mark items off as
+each is verified against the repo patterns.
+
+- [x] **Circuit breaking across workers** (§12.1) — drafted. Key claim: Store as shared
+  state for circuit state, two-tier check (queue + subgraph entry), half-open probe,
+  composition with RetryPolicy. No code written for this pattern.
+- [x] **Outbox leasing at scale** (§12.2) — drafted. Covers `FOR UPDATE SKIP LOCKED`,
+  lease expiry, claim-time attempt counting. The SQL pattern is the same used in
+  the existing outbox worker (`course_discovery/effects/worker.py`); §12.2
+  describes it in architectural terms rather than duplicating the code reference.
+- [x] **Concurrent resume** (§12.3) — drafted. Application-level advisory lock before
+  `ainvoke`. The risk scenario (double work, not corruption) follows from
+  deterministic keys established in §6.1.
 
 ## Explicit scope boundary — not a case study
 
@@ -601,12 +632,13 @@ Where TODO items now land (old outline section -> new):
 | Replay determinism, `@task` findings, subgraph resume cost | §5.3-§5.5 |
 | `Store` vs. checkpointer | §5.6 |
 | Idempotent writes, outbox, multi-effect, ops gaps, Temporal/DBOS | §6.1-§6.5 |
-| `RetryPolicy`, timeouts/async, `CachePolicy`, circuit breaker | §7.1-§7.4 |
+| `RetryPolicy`, timeouts/async, `CachePolicy`, circuit breaker (gap) | §7.1-§7.4 |
 | Graceful degradation, rate limiting, schema drift | §8.1-§8.3 |
-| Fallbacks, OpenRouter/LiteLLM, guardrails | §9.1-§9.3 |
+| Fallbacks, OpenRouter/LiteLLM, custom fallback cases, guardrails | §9.1-§9.4 |
 | OTel, `stream_mode`, domain metrics | §10.1-§10.3 |
 | GDPR, versioning, security xref, thread access control | §11.1-§11.4 |
-| Scope boundary, verification, untested list | §12 |
+| Cross-worker coordination (circuit breaking, outbox leasing, concurrent resume) | §12.1-§12.3 |
+| Scope boundary, verification, untested list | §13 |
 
 Corrections to carry into drafting: the old outline promised a node-level `timeout=`
 and `error_handler=` on `add_node`; langgraph 1.1.2 has neither (§7.2 now says so).
