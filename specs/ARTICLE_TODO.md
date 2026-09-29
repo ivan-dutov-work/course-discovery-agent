@@ -16,7 +16,11 @@ below). Integration tests need `docker compose up -d` and
 `TEST_DATABASE_URL=postgresql://course:course@localhost:55432/course_discovery`.
 
 - Replay-safe writes: `migrations/002_idempotent_writes.sql`, `ON CONFLICT` on
-  `course_evidence` (content key) and `recommendation_events` (`idempotency_key`).
+  `recommendation_events` (`idempotency_key`). `course_evidence` was first keyed on
+  content and is now keyed on `(course_id, source_url)` with `DO UPDATE`
+  (`migrations/004_evidence_source_key.sql`): a re-run that fetches a different snippet
+  for the same source updates the row instead of adding one. Trade-off: one evidence
+  row per source per course, last write wins, no history.
 - Local stack: `docker-compose.yml` (pgvector Postgres on host port 55432) and
   `tests/test_integration_postgres.py`.
 - Replay coverage: outer-graph checkpoints, subgraph checkpoints, `interrupt_before`
@@ -80,8 +84,8 @@ below). Integration tests need `docker compose up -d` and
       from Postgres, replays, and resumes through approve -> publish. The default
       `build_graph()` is still `MemorySaver`; `checkpointer=` is now a parameter. This
       is a new saver in the same OS process, not a killed process; the SIGKILL test in
-      `tests/test_integration_kill.py` covers crash recovery separately. §4.1 wording is still accurate for the default; update it if the
-      article shows the durable variant.)*
+      `tests/test_integration_kill.py` covers crash recovery separately. §4.1 was
+      rewritten to describe `open_checkpointer()` and both tests.)*
 - [x] **Subgraphs for encapsulation.** `research_graph` compiled and mounted as a
       single node in `outer_graph`. The outer graph doesn't know or care about the
       research agent's internal node count. *(Drafted in ARTICLE.md §3.3.)*
@@ -194,14 +198,14 @@ below). Integration tests need `docker compose up -d` and
       LangGraph glue needed. Good point: the graph is only responsible for
       *structural* control flow (which node runs next); the Runnable layer underneath
       already owns *call-level* resilience, so LangGraph doesn't need to reinvent it.
-      *(Drafted in ARTICLE.md §7.1 as the in-process alternative. This repo uses
+      *(Drafted in ARTICLE.md §9.1 as the in-process alternative. This repo uses
       neither — it delegates fallback to OpenRouter's `models` array.)*
 - [x] **`ModelFallbackMiddleware`** — *verified*, this is the current native
       multi-model fallback mechanism (`langchain.agents.middleware`), e.g.
       `ModelFallbackMiddleware("openai:gpt-5.5", "anthropic:claude-...")`. Distinct
       from and newer than `.with_fallbacks()`. **Correction to an earlier assumption**:
       `init_chat_model()` does *not* natively take a fallback list — don't claim that
-      in the article. *(Drafted in ARTICLE.md §7.1.)*
+      in the article. *(Drafted in ARTICLE.md §9.1.)*
 - [x] **OpenRouter as a production fallback/spend-control layer.** *Verified*:
       dedicated `langchain-openrouter` package (`ChatOpenRouter`) is the modern
       integration path (preserves OpenRouter-specific metadata — reasoning content,
@@ -214,7 +218,7 @@ below). Integration tests need `docker compose up -d` and
       cannot both be set (400 error). Framing for the article: the real production
       value isn't "fallback" per se — `.with_fallbacks()`/`ModelFallbackMiddleware`
       already give you that in-process — it's *one bill, one rate-limit surface, and
-      per-key spend caps* across providers. *(Drafted in ARTICLE.md §7.2, and now
+      per-key spend caps* across providers. *(Drafted in ARTICLE.md §9.2, and now
       wired in code: `app/llm.py:build_llm()`, DeepSeek V4.1 Flash primary, Gemini
       2.5 Flash Lite fallback. Observed, not from docs: `ChatOpenRouter` has no
       `models` field, so it goes via `model_kwargs`; an invalid model ID is a 400,
@@ -222,7 +226,7 @@ below). Integration tests need `docker compose up -d` and
       **Still open:** the fallback path was never triggered live — only asserted
       in the outgoing request payload. Don't claim it was exercised. Also still
       unverified: OpenRouter data-retention/ZDR controls — the article notes every
-      prompt now transits a third party, per §9.1.)*
+      prompt now transits a third party, per §11.1.)*
 - [ ] **LiteLLM — two distinct integration shapes, don't conflate them.** *Verified*:
       (a) **SDK, in-process**: `langchain-litellm` package provides `ChatLiteLLM` and
       `ChatLiteLLMRouter` (wraps LiteLLM's own `Router` for load-balancing/fallback) —
@@ -349,7 +353,7 @@ brittleness, not just the mechanical knobs.
       `InMemoryRateLimiter`) to smooth outbound call rate — relevant when
       `research_planner`/`evidence_validator`/`synthesizer` all call the same Gemini
       quota within one run, and worse under concurrent users. *(Drafted in
-      ARTICLE.md §6.4. Correction: the planner/validator are deterministic Python,
+      ARTICLE.md §8.2. Correction: the planner/validator are deterministic Python,
       so the real LLM nodes sharing quota are gateway/router/synthesizer. The
       limiter is on the router only, with untuned demo values, and is in-process —
       it does not coordinate across workers.)*
@@ -360,6 +364,89 @@ brittleness, not just the mechanical knobs.
       propagating garbage downstream. Worth tying back to the "fail closed" framing
       already in `CLAUDE.md`.
 
+## Replay semantics — exact between nodes, best-effort inside one
+
+Checkpoints land at superstep boundaries. Completed nodes are not re-run on resume;
+the interrupted node is re-run from the top. Everything below follows from that.
+
+- [ ] **Keep non-determinism out of effect nodes.** An effect node should derive its
+      payload only from checkpointed state; the LLM/search call that produced the input
+      lives in an earlier node, so a checkpoint lands between them. Audit of this repo
+      (read `publish_node`, `course_cache_upsert_node`, `user_memory_update_node`): all
+      three build from state, none calls an LLM, and `run_id` is minted by the CLI
+      (`uuid4()`) before the graph starts, so `publish:{run_id}` is stable. `candidate_extractor`,
+      the planner and the validator are deterministic Python today (`CLAUDE.md` still
+      says "LLM" for them; the TODO's rate-limiting note already records this), so the
+      fragility below is about a real search provider returning changing snippets, not
+      about an LLM.
+- [ ] **Multiple effects in one node.** Not implemented (`publish_node` is the only
+      `submit` call site). Reasoning from `OutboxGateway`/`InlineGateway`, not tested:
+      each effect has its own key; replay re-submits all, and existing keys are no-ops;
+      the worker owns retry, so replay does not retry a delivered/queued/dead effect,
+      except that `InlineGateway.submit` calls `worker.run_once()` on a still-queued
+      record (whether that targets the key or any due row is unchecked). Keys must be
+      stable per effect (not list position). `DO NOTHING` keeps the first payload if a
+      replay recomputes a different one. No ordering between effects.
+- [ ] **`@task` intra-node memoization — observed on langgraph 1.1.2** (subagent
+      experiments, scripts not kept in the repo; each crash timing run once):
+  - Works inside a plain `StateGraph` node, sync or async, no `@entrypoint`. On a
+    top-level node, completed tasks short-circuit on resume and return the identical
+    stored value.
+  - **Did not memoize inside a subgraph** (tasks re-ran, new values), including with
+    subgraph `checkpointer=None`/`True` and after `interrupt()`. Mechanism not
+    identified. The whole research pipeline is a subgraph here, so `@task` would not
+    protect it. Consistent with the sibling-`Send` re-run below. Reproduce before
+    citing.
+  - Matching is by function name and call index, not arguments: `A(99)` after a run
+    that called `A(1)` returned the stale `A(1)` result; swapped or skipped calls
+    re-ran. Task id composition (checkpoint id, ns, step, name, call index) is from
+    reading the source, not observed.
+  - Scope is per superstep: replan-loop iterations get fresh executions; replay from
+    an old checkpoint re-runs tasks.
+  - Result is a pending write, written asynchronously: SIGKILL right after the effect
+    ran it twice on resume in `sync` and `async`; with a 0.3 s gap, once. `exit`
+    persisted nothing. Not exactly-once.
+  - Return types must be in the msgpack allowlist, or the memoized value comes back as
+    a plain dict.
+  - `@task(retry_policy=...)` is in-run only; `cache_policy` is key-based and
+    cross-thread; neither is the resume memoization.
+- [ ] **Resume cost in a subgraph.** Resuming re-runs already-successful sibling `Send`
+      workers (extra search/LLM spend; `tests/test_retries.py` counts calls). Checked
+      whether this double-counts reducer output: it does not. After a subgraph resume
+      `tavily_calls == len(set(completed_queries))`, same as standalone. (Ten results
+      for five unique URLs in both cases is the mock catalog returning the same
+      entries for two queries, not a resume artifact.)
+- [ ] **Approved digest equals published digest.** `publish_node` reads `digest` from
+      checkpointed state, so what the reviewer saw is what is submitted, provided
+      nothing re-runs the synthesizer between review and publish. The router LLM can
+      classify differently if it is re-run after a crash, but the reviewer's text is
+      already stored in `manager_feedback`. Not tested end to end.
+- [ ] **Small replay side effects, checked.** `course_cache_upsert` uses `now()` for
+      `last_seen_at`/`updated_at`; the only reader is an `ORDER BY ... last_seen_at
+      DESC` tie-break in cache lookup, so a replay reordering ties is benign.
+      `publish_status` can differ between a run and its replay under `InlineGateway`
+      (`DELIVERED` vs `QUEUED`); `user_memory_update` treats both as accepted, so
+      nothing breaks, but any future branch on it would be replay-sensitive.
+
+## Operations the article should name (not built)
+
+- [ ] **Dead letters:** the worker marks rows `dead` and logs `effect_dead`; there is no
+      alerting, listing or requeue path (checked by grep in `course_discovery/effects/`).
+- [ ] **Lease vs handler duration:** a handler that outlives `locked_until` can be
+      claimed by a second worker, giving duplicate delivery; the consumer must be
+      idempotent. `deliver_digest` reads only the payload and does not forward the effect
+      key downstream.
+- [ ] **Growth:** no code deletes outbox rows or checkpoints (grep found no `DELETE`/prune
+      in `effects/`); checkpoints are 12–14 per run in `sync`.
+- [ ] **Access control on `thread_id`** — drafted in ARTICLE.md §11.4: the id is a bearer
+      capability, and `update_state` on `manager_feedback` can open the publish gate.
+      Not implemented; the CLI has one user.
+- [ ] **When not LangGraph:** Temporal/Restate/DBOS give durable execution at the
+      activity level, which is what the outbox plus keys approximate by hand. Worth a
+      short "when to reach for it instead" paragraph, not a comparison.
+- [ ] **Testing story:** the SIGKILL child-process test is the strongest evidence in the
+      repo; `async` is deliberately untested for a hard kill (a race).
+
 ## Explicit scope boundary — not a case study
 
 - [x] **State up front this is not a production case study.** No item in this article
@@ -367,11 +454,11 @@ brittleness, not just the mechanical knobs.
       log, no cost-at-scale numbers. It's a demonstration of LangGraph mechanics using
       a domain-shaped example, evaluated by reading the code and running it locally.
       Say this once, plainly, probably in the intro or "Known Limitations" (outline
-      section 9) — don't let the production-principles framing (retry/cache/durability/
+      section 12) — don't let the production-principles framing (retry/cache/durability/
       OTel/fallback) imply operational validation that didn't happen.
 - [x] Corollary: "production would swap this one class" (mock search -> real provider)
       is an architectural claim, not a tested migration. Say so. *(Drafted in
-      ARTICLE.md §10.)*
+      ARTICLE.md §12.)*
 
 ## Explicitly ruled out — don't re-litigate
 
@@ -381,14 +468,14 @@ brittleness, not just the mechanical knobs.
       consequence is trivial — each node just calls whatever Runnable it's bound to, so
       per-node model choice is a one-line fact, not a feature — worth at most a
       parenthetical where per-node model binding is already discussed, never its own
-      section. *(Drafted in ARTICLE.md §10.)*
+      section. *(Drafted in ARTICLE.md §12.)*
 
 ## Data protection / GDPR — a boundary, not a feature
 
 - [x] LangGraph has zero built-in compliance tooling. Frame this as a layer-of-
-      abstraction point, not a gap to fill. *(Drafted in ARTICLE.md §9.1 — the
-      "this durability is also a retention liability" line references §4.5, which
-      is not drafted yet; revisit the cross-reference once §4.5 lands. The
+      abstraction point, not a gap to fill. *(Drafted in ARTICLE.md §11.1 — the
+      "this durability is also a retention liability" line references §5.6, which
+      is not drafted yet; revisit the cross-reference once §5.6 lands. The
       OpenRouter PII-filtering claim was left as an open question in the article
       text rather than cited as fact, per the unverified note here.)*
   - The checkpointer and `Store` are literally a database of user state — whatever
@@ -490,17 +577,38 @@ brittleness, not just the mechanical knobs.
     single event (thread_id, run_id, payload) over a websocket/SSE channel; the
     frontend subscribes per-user/thread and renders the pending review. This is a
     one-paragraph sketch, not a protocol design — ties to the "What's Next" webhook/
-    dashboard bullets already in `ARTICLE_OUTLINE.md` section 10.
+    dashboard bullets already in `ARTICLE_OUTLINE.md` section 13.
   - Reviewers aren't limited to approve/reject — `graph.update_state(...)` before
     resuming lets a reviewer patch state and continue, not just gate it.
   - Concurrent-resume race: nothing stops two callers resuming the same `thread_id`
     simultaneously; that's an app-level lock, not something the checkpointer
     arbitrates.
 
-## Open question — not yet resolved
+## Outline restructure — resolved
 
-- [ ] Whether to restructure `ARTICLE_OUTLINE.md`'s section list around this material
-      (new sections for retry/cache/durability/Store/OTel/fallback/brittleness) or
-      fold it into the existing sections (6 "Control Shell", 8 "Observability", 9
-      "Known Limitations"). Needs a decision before drafting starts — don't draft
-      prose until this is settled.
+- [x] Restructured `ARTICLE_OUTLINE.md` around one spine: a checkpoint gives exactness
+      at node boundaries, so production correctness is about the seam. Durability and
+      effects now have their own sections instead of being spread over §4.1, §4.4, §5.1,
+      §6.3 and §9.2. `ARTICLE.md` headings and cross-references follow the new numbering.
+
+Where TODO items now land (old outline section -> new):
+
+| Item | New home |
+|---|---|
+| `interrupt_before`, dynamic `interrupt()`, UX gaps | §4.1-§4.3 |
+| `recursion_limit` | §4.4 |
+| Durability modes, SIGKILL tests, checkpointer wiring | §5.1-§5.2 |
+| Replay determinism, `@task` findings, subgraph resume cost | §5.3-§5.5 |
+| `Store` vs. checkpointer | §5.6 |
+| Idempotent writes, outbox, multi-effect, ops gaps, Temporal/DBOS | §6.1-§6.5 |
+| `RetryPolicy`, timeouts/async, `CachePolicy`, circuit breaker | §7.1-§7.4 |
+| Graceful degradation, rate limiting, schema drift | §8.1-§8.3 |
+| Fallbacks, OpenRouter/LiteLLM, guardrails | §9.1-§9.3 |
+| OTel, `stream_mode`, domain metrics | §10.1-§10.3 |
+| GDPR, versioning, security xref, thread access control | §11.1-§11.4 |
+| Scope boundary, verification, untested list | §12 |
+
+Corrections to carry into drafting: the old outline promised a node-level `timeout=`
+and `error_handler=` on `add_node`; langgraph 1.1.2 has neither (§7.2 now says so).
+`StateGraph` `input_schema`/`output_schema` (§2.3) and `stream_mode` (§10.2) are still
+not used by the code and need a working example or a doc-only label.
