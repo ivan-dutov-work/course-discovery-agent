@@ -41,18 +41,23 @@ below). Integration tests need `docker compose up -d` and
   `AsyncPostgresSaver` when `DATABASE_URL` is set, else `MemorySaver`; both use the
   msgpack allowlist, now covering enums.
 - Durability modes tested (`sync`, `async`, `exit`) against Postgres.
+- **Read paths fail closed:** `load_user_memory` and the cache lookup re-raise after
+  logging, and `user_memory_lookup` / `course_cache_lookup` carry the transient
+  `RetryPolicy` (both are read-only, so retrying is safe).
+- **Real process kill:** `tests/test_integration_kill.py` runs the graph in a child
+  process that SIGKILLs itself inside `course_cache_upsert`. With `durability="sync"` a
+  fresh process resumes with `ainvoke(None)` and does not re-run `evidence_validator`.
+  With `durability="exit"` the thread has no checkpoints at all after the kill, so the
+  run restarts from scratch. `async` is not tested: whether the last background write
+  lands before a kill is a race.
 
 **Still open:**
 
-- Nothing kills a process. Every "recovery" test is a new saver/graph in the same OS
-  process, or a raised exception.
 - Circuit breaker, `CachePolicy`, `Store` vs. checkpointer: untouched.
 - Same-transaction outbox write with `recommendation_events` is not done; the
   outbox row and the domain write are separate transactions.
 - Handler for `publish_digest` still prints to stdout; only the delivery machinery
   is real.
-- Read paths (`load_user_memory`, cache lookup) still swallow DB errors and return
-  empty results.
 - Strict-mode behaviour for a type outside the state schema is untested.
 
 ## Already in the code — foreground these, don't just add new stuff
@@ -74,8 +79,8 @@ below). Integration tests need `docker compose up -d` and
       on `AsyncPostgresSaver`, then a fresh saver + fresh graph reads the thread back
       from Postgres, replays, and resumes through approve -> publish. The default
       `build_graph()` is still `MemorySaver`; `checkpointer=` is now a parameter. This
-      is a new saver in the same OS process, not a killed process — don't claim crash
-      recovery. §4.1 wording is still accurate for the default; update it if the
+      is a new saver in the same OS process, not a killed process; the SIGKILL test in
+      `tests/test_integration_kill.py` covers crash recovery separately. §4.1 wording is still accurate for the default; update it if the
       article shows the durable variant.)*
 - [x] **Subgraphs for encapsulation.** `research_graph` compiled and mounted as a
       single node in `outer_graph`. The outer graph doesn't know or care about the
@@ -94,7 +99,7 @@ below). Integration tests need `docker compose up -d` and
       makes the namespace stable (`research_agent`). `interrupt_before` inside the
       subgraph works: `get_state(cfg, subgraphs=True)` shows the paused sub-state, resume
       and later replay both work. Not tested: `Command`/dynamic `interrupt()` inside a
-      subgraph, subgraph with `checkpointer=False`, a real process kill.
+      subgraph, subgraph with `checkpointer=False`.
       **Also observed (retry tests):** when one of several parallel `Send` workers in the
       subgraph fails, resuming the outer graph re-runs the workers that had already
       succeeded; the same research graph run standalone re-runs only the failed one. Cost
@@ -155,8 +160,11 @@ below). Integration tests need `docker compose up -d` and
       run resumed with `ainvoke(None, config)` without re-running the completed
       `evidence_validator`, because `exit` still checkpoints when the graph exits via an
       exception. What `exit` loses is history granularity (replay/time-travel points) and,
-      untested here, anything in flight at a hard kill. Nothing kills the process, so the
-      safety difference is not demonstrated, only the granularity.)*
+      anything in flight at a hard kill. That is now tested
+      (`tests/test_integration_kill.py`): after a SIGKILL inside `course_cache_upsert`,
+      `sync` resumes without re-running `evidence_validator`, while `exit` has written
+      no checkpoints and restarts from scratch. The safety difference, not only the
+      granularity, is demonstrated.)*
 - [ ] **`Store` vs. checkpointer — the memory-scope distinction.** Checkpointer =
       thread-scoped run state, wired in via `compile(checkpointer=...)`, is what makes
       `interrupt_before` resumable. `Store` = cross-thread long-term memory (e.g.
