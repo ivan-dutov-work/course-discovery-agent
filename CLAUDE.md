@@ -2,13 +2,18 @@
 
 ## What This Project Is
 
-A personalized, cache-first course research agent controlled by LangGraph, built for a Halo Lab engineering article. The article's subject is the **complex research agent** (memory + cache + planning + Tavily search + extraction + evidence validation + replanning). The surrounding LangGraph graph (outer workflow, review gate, router) is the control shell — secondary to the article's argument.
+A personalized, cache-first course research agent controlled by LangGraph, built as the running example for a Halo Lab engineering article. The article's subject is **using LangGraph to implement complex AI agents in production** — state contracts, reducers, plan-driven `Send` fan-out, subgraphs, `interrupt_before` human review, checkpointing/durability, Store vs. checkpointer memory, retry/cache policies, and provider-fallback composition. The course-discovery domain (memory + cache + planning + search + extraction + evidence validation + replanning) is the vehicle for demonstrating these patterns, not the point of the article.
+
+**Search is mocked, deliberately.** `course_discovery/research_agent/search/tavily_client.py` serves results from a static in-repo catalog (`mock_catalog.py`) instead of calling a real search API. Course listing pages are mostly JS/PHP-rendered and poorly indexed, so real web search would introduce operational noise (rate limits, flaky results, API keys) that has nothing to do with the article's subject. The code is written so a real provider (Tavily, Serper, Brave) could replace `TavilyClient` behind the same `search()` signature without touching graph or node code — call this out in the article as "production would swap this one class," not as a gap.
 
 ## Source of Truth
 
 `specs/` is the authoritative source for:
 
 - `ARTICLE_OUTLINE.md` — article sections, narrative structure, word counts
+- `ARTICLE_TODO.md` — running checklist of production LangGraph principles (retry, cache
+  policy, durability, Store vs. checkpointer, OTel, provider fallback, API brittleness)
+  to fold into the article; check before drafting any new section
 - `IMPLEMENTATION_PLAN.md` — implementation steps and milestones
 - `PROPOSED_METRICS.md` — quality, efficiency, and personalization metrics
 - `PROPOSED_TESTING.md` — test scope and coverage expectations
@@ -67,9 +72,10 @@ specs/              article drafts, implementation plan, metrics, testing
 
 ```powershell
 $env:GOOGLE_API_KEY   # Gemini 2.0 Flash for gateway/synthesis/router
-$env:TAVILY_API_KEY   # web search (graceful degradation if absent)
 $env:DATABASE_URL     # Postgres+pgvector (in-memory seed cache if absent)
 ```
+
+No search API key is required — `tavily_search_worker` reads from the mock catalog.
 
 ## Run
 
@@ -87,11 +93,11 @@ All LLM nodes use Gemini 2.0 Flash (`langchain-google-genai`) with `temperature=
 - **Never auto-publish.** `interrupt_before=["review_gate"]` is always compiled in.
 - **Loop budget.** `max_research_iterations` caps the replanning loop (default: 2–3).
 - **Evidence over claims.** Treat missing evidence as `uncertain`, not `valid`.
-- **Cache first.** Tavily is only called for gaps, freshness checks, or new topics.
-- **Fail closed.** Gateway parsing, DB access, and Tavily failures all fail closed with structured error state — no silent fallback to hallucination.
+- **Cache first.** The search worker is only dispatched for gaps, freshness checks, or new topics.
+- **Fail closed.** Gateway parsing, DB access, and search failures all fail closed with structured error state — no silent fallback to hallucination.
 
 ## Article Framing
 
-> LangGraph controls a bounded, personalized research agent. The complex agent lives in the research subgraph; the surrounding graph provides persistence, interrupts, routing, and review controls.
+> LangGraph is the control shell for a bounded, personalized research agent — but the article's actual subject is the LangGraph mechanics themselves: reducers, `Send` fan-out, subgraphs, `interrupt_before`, checkpointer durability, `Store` vs. thread-scoped memory, node-level retry/cache policies, and Runnable-level provider fallback. The course-discovery domain gives every pattern something concrete and narratively coherent to attach to.
 
-The article is NOT about LangGraph basics. It is about what makes this agent **complex**: memory, cache-first strategy, evidence extraction, validation, replanning, and personalized synthesis. LangGraph features are introduced where they serve this story.
+The article is NOT a LangGraph basics tutorial, and it is NOT a course-search product spec. Search is intentionally mocked so the domain never becomes the story. LangGraph features are introduced where they illustrate a production-relevant principle, with a small real snippet from this codebase — not a fully productized feature.
