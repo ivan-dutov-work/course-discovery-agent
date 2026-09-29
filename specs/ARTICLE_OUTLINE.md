@@ -376,7 +376,7 @@ replacing a CLI HIL stub, scheduling, a dashboard streaming node-level progress.
 ```bash
 git clone https://github.com/your-org/course-discovery-agent
 cd course-discovery-agent
-# optional: set GOOGLE_API_KEY, DATABASE_URL in .env — no search API key needed, search is mocked
+# optional: set OPENROUTER_API_KEY, DATABASE_URL in .env — no search API key needed, search is mocked
 uv sync
 uv run python main.py
 ```

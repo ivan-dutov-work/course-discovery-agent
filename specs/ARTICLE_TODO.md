@@ -72,20 +72,22 @@ code — implementation and article coverage are tracked separately).
       OpenInference/Traceloop bridges still exist for LangSmith-independent setups.
       Strong section: "you get real distributed tracing across your whole stack, not
       just an isolated agent UI."
-- [ ] **Provider fallback via `Runnable.with_fallbacks()`.** *Verified*: this is
+- [x] **Provider fallback via `Runnable.with_fallbacks()`.** *Verified*: this is
       `langchain_core.runnables`, not LangGraph-specific — tries fallback runnables in
       order until one succeeds, at single-call or full-chain granularity. Inside a
       LangGraph node it's just "wrap the chain, call it like any other Runnable," no
       LangGraph glue needed. Good point: the graph is only responsible for
       *structural* control flow (which node runs next); the Runnable layer underneath
       already owns *call-level* resilience, so LangGraph doesn't need to reinvent it.
-- [ ] **`ModelFallbackMiddleware`** — *verified*, this is the current native
+      *(Drafted in ARTICLE.md §7.1 as the in-process alternative. This repo uses
+      neither — it delegates fallback to OpenRouter's `models` array.)*
+- [x] **`ModelFallbackMiddleware`** — *verified*, this is the current native
       multi-model fallback mechanism (`langchain.agents.middleware`), e.g.
       `ModelFallbackMiddleware("openai:gpt-5.5", "anthropic:claude-...")`. Distinct
       from and newer than `.with_fallbacks()`. **Correction to an earlier assumption**:
       `init_chat_model()` does *not* natively take a fallback list — don't claim that
-      in the article.
-- [ ] **OpenRouter as a production fallback/spend-control layer.** *Verified*:
+      in the article. *(Drafted in ARTICLE.md §7.1.)*
+- [x] **OpenRouter as a production fallback/spend-control layer.** *Verified*:
       dedicated `langchain-openrouter` package (`ChatOpenRouter`) is the modern
       integration path (preserves OpenRouter-specific metadata — reasoning content,
       routing info — that a generic `ChatOpenAI`-pointed-at-OpenRouter setup loses,
@@ -97,7 +99,15 @@ code — implementation and article coverage are tracked separately).
       cannot both be set (400 error). Framing for the article: the real production
       value isn't "fallback" per se — `.with_fallbacks()`/`ModelFallbackMiddleware`
       already give you that in-process — it's *one bill, one rate-limit surface, and
-      per-key spend caps* across providers.
+      per-key spend caps* across providers. *(Drafted in ARTICLE.md §7.2, and now
+      wired in code: `app/llm.py:build_llm()`, DeepSeek V4.1 Flash primary, Gemini
+      2.5 Flash Lite fallback. Observed, not from docs: `ChatOpenRouter` has no
+      `models` field, so it goes via `model_kwargs`; an invalid model ID is a 400,
+      not a fallback trigger; `ServedModelLogger` logs the response `model_name`.
+      **Still open:** the fallback path was never triggered live — only asserted
+      in the outgoing request payload. Don't claim it was exercised. Also still
+      unverified: OpenRouter data-retention/ZDR controls — the article notes every
+      prompt now transits a third party, per §9.1.)*
 - [ ] **LiteLLM — two distinct integration shapes, don't conflate them.** *Verified*:
       (a) **SDK, in-process**: `langchain-litellm` package provides `ChatLiteLLM` and
       `ChatLiteLLMRouter` (wraps LiteLLM's own `Router` for load-balancing/fallback) —
@@ -135,7 +145,7 @@ brittleness, not just the mechanical knobs.
 - [ ] **This repo already demonstrates graceful degradation** — use it as the worked
       example before introducing new mechanisms:
   - Gateway/synthesis/router fall back to deterministic parsing when
-    `GOOGLE_API_KEY` is absent (no LLM call attempted at all, not a failed call).
+    `OPENROUTER_API_KEY` is absent (no LLM call attempted at all, not a failed call).
   - `course_cache_lookup` falls back to the in-memory seed cache when `DATABASE_URL`
     is absent.
   - `tavily_search_worker` catches exceptions and writes a `research_notes` entry
@@ -160,10 +170,14 @@ brittleness, not just the mechanical knobs.
       `timeout=` (see `add_node` above) plus per-call timeouts inside the API client
       itself (the mock client has none because it's local; a real HTTP client needs
       an explicit timeout or a hung request blocks the whole fan-out branch).
-- [ ] **Rate limiting.** LangChain chat models accept a `rate_limiter=` (e.g.
+- [x] **Rate limiting.** LangChain chat models accept a `rate_limiter=` (e.g.
       `InMemoryRateLimiter`) to smooth outbound call rate — relevant when
       `research_planner`/`evidence_validator`/`synthesizer` all call the same Gemini
-      quota within one run, and worse under concurrent users.
+      quota within one run, and worse under concurrent users. *(Drafted in
+      ARTICLE.md §6.4. Correction: the planner/validator are deterministic Python,
+      so the real LLM nodes sharing quota are gateway/router/synthesizer. The
+      limiter is on the router only, with untuned demo values, and is in-process —
+      it does not coordinate across workers.)*
 - [ ] **Schema drift / structured-output validation as a brittleness surface.**
       Pydantic structured output (`ResearchPlan`, `CandidateValidation`, etc.) is
       itself a defense against a brittle API: if the LLM provider changes behavior and

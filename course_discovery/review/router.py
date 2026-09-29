@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import os
 import time
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.rate_limiters import InMemoryRateLimiter
 
+from course_discovery.app.llm import build_llm, llm_enabled
 from course_discovery.app.prompts import ROUTER_SYSTEM_PROMPT
 from course_discovery.domain.models import RoutingAction, RoutingDecision
 from course_discovery.domain.state import AgentState
@@ -19,6 +19,8 @@ from course_discovery.observability.logging import (
 
 logger = get_logger(__name__)
 
+_router_rate_limiter = InMemoryRateLimiter(requests_per_second=2, max_bucket_size=4)
+
 
 def _coerce_routing_decision(value: Any) -> RoutingDecision:
     if isinstance(value, RoutingDecision):
@@ -26,12 +28,6 @@ def _coerce_routing_decision(value: Any) -> RoutingDecision:
     if isinstance(value, dict):
         return RoutingDecision.model_validate(value)
     return RoutingDecision.model_validate(getattr(value, "model_dump", lambda: value)())
-
-
-def _build_router_llm() -> ChatGoogleGenerativeAI:
-    if not os.getenv("GOOGLE_API_KEY"):
-        raise RuntimeError("GOOGLE_API_KEY is required for router node")
-    return ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", temperature=0)
 
 
 def router_node(state: AgentState) -> dict:
@@ -94,7 +90,7 @@ def router_node(state: AgentState) -> dict:
             "iteration_count": state.get("iteration_count", 0) + 1,
             "rewrite_instructions": None,
         }
-    if not os.getenv("GOOGLE_API_KEY"):
+    if not llm_enabled():
         if lower_feedback.startswith("rewrite"):
             action = RoutingAction.REWRITE
             rewrite_instructions = feedback
@@ -116,7 +112,7 @@ def router_node(state: AgentState) -> dict:
 
     try:
         start_ts = time.perf_counter()
-        llm = _build_router_llm().with_structured_output(RoutingDecision)
+        llm = build_llm("router", rate_limiter=_router_rate_limiter).with_structured_output(RoutingDecision)
         decision_raw = llm.invoke(
             [
                 SystemMessage(content=ROUTER_SYSTEM_PROMPT),

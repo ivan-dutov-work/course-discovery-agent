@@ -71,7 +71,7 @@ specs/              article drafts, implementation plan, metrics, testing
 ## Environment
 
 ```powershell
-$env:GOOGLE_API_KEY   # Gemini 2.0 Flash for gateway/synthesis/router
+$env:OPENROUTER_API_KEY   # DeepSeek V4.1 Flash (Gemini 2.5 Flash Lite fallback) for gateway/synthesis/router
 $env:DATABASE_URL     # Postgres+pgvector (in-memory seed cache if absent)
 ```
 
@@ -86,7 +86,7 @@ uv run python main.py
 
 ## LLM
 
-All LLM nodes use Gemini 2.0 Flash (`langchain-google-genai`) with `temperature=0` and structured output via Pydantic. Do not introduce other providers without updating both code and article.
+All LLM nodes go through `course_discovery/app/llm.py:build_llm()`, which returns a `ChatOpenRouter` (`langchain-openrouter`) with `temperature=0` and structured output via Pydantic. Primary model is `deepseek/deepseek-v4.1-flash`; OpenRouter's server-side `models` priority array falls back to `google/gemini-2.5-flash-lite`. Do not build chat models anywhere else, and do not add providers without updating both code and article.
 
 ## Key Constraints
 
