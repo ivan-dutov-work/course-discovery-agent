@@ -16,7 +16,13 @@ from course_discovery.observability.logging import (
     get_logger,
     truncate_text,
 )
+from course_discovery.observability.tracing import (
+    configure_tracing,
+    run_span,
+    shutdown_tracing,
+)
 from course_discovery.persistence.checkpointer import open_checkpointer
+from course_discovery.resilience import RECURSION_LIMIT
 from course_discovery.workflows.outer_graph import build_graph
 
 
@@ -66,9 +72,42 @@ async def main() -> None:
     if dotenv is not None:
         dotenv.load_dotenv()
     configure_logging()
+    configure_tracing("course-agent-cli")
 
-    async with open_checkpointer() as saver:
-        await _run(build_graph(checkpointer=saver))
+    try:
+        async with open_checkpointer() as saver:
+            await _run(build_graph(checkpointer=saver))
+    finally:
+        shutdown_tracing()
+
+
+def _print_progress(namespace: tuple[str, ...], mode: str, chunk) -> None:
+    prefix = "  " * len(namespace)
+    if mode == "updates":
+        for node in chunk:
+            if not node.startswith("__"):
+                print(f"{prefix}- {node}")
+    elif mode == "custom":
+        print(f"{prefix}  {chunk}")
+
+
+async def _stream_until_pause(graph, graph_input, config: RunnableConfig, *, resume: bool) -> dict:
+    run_id = config["configurable"]["thread_id"]
+    with run_span(
+        "run.resume" if resume else "run.start",
+        run_id=run_id,
+        thread_id=run_id,
+        resume=resume,
+    ):
+        async for namespace, mode, chunk in graph.astream(
+            graph_input,
+            config,
+            stream_mode=["updates", "custom"],
+            subgraphs=True,
+        ):
+            _print_progress(namespace, mode, chunk)
+        snapshot = await graph.aget_state(config)
+    return snapshot.values
 
 
 async def _run(graph) -> None:
@@ -80,7 +119,10 @@ async def _run(graph) -> None:
     )
 
     run_id = str(uuid4())
-    config: RunnableConfig = {"configurable": {"thread_id": run_id}}
+    config: RunnableConfig = {
+        "configurable": {"thread_id": run_id},
+        "recursion_limit": RECURSION_LIMIT,
+    }
     start_ts = time.perf_counter()
 
     logger.info(
@@ -97,7 +139,9 @@ async def _run(graph) -> None:
     print(f"\nRun ID: {run_id}")
     print("\nStarting graph execution...\n")
 
-    result = await graph.ainvoke(_initial_state(query, run_id), config)
+    result = await _stream_until_pause(
+        graph, _initial_state(query, run_id), config, resume=False
+    )
 
     for _ in range(10):
         routing_decision = result.get("routing_decision")
@@ -152,7 +196,7 @@ async def _run(graph) -> None:
                 "thread_id": run_id,
             },
         )
-        result = await graph.ainvoke(None, config)
+        result = await _stream_until_pause(graph, None, config, resume=True)
 
         publish_status = result.get("publish_status")
         if publish_status:

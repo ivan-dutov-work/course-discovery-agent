@@ -7,6 +7,8 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
+from opentelemetry import trace
+
 
 _SECRET_PATTERNS = [
     re.compile(r"sk-[A-Za-z0-9_\-]{12,}"),
@@ -49,6 +51,11 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
             "message": record.getMessage(),
         }
+
+        context = trace.get_current_span().get_span_context()
+        if context.is_valid:
+            payload["trace_id"] = format(context.trace_id, "032x")
+            payload["span_id"] = format(context.span_id, "016x")
 
         for key, value in record.__dict__.items():
             if key in self._BASE_ATTRS:

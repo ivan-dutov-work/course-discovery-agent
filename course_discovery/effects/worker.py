@@ -9,6 +9,7 @@ from typing import Callable, Mapping
 from course_discovery.effects.models import Effect, OutboxRecord, PermanentEffectError
 from course_discovery.effects.store import OutboxStore
 from course_discovery.observability.logging import get_logger, sanitize_error
+from course_discovery.observability.tracing import extract_trace_context, tracer
 
 
 logger = get_logger(__name__)
@@ -87,7 +88,16 @@ class OutboxWorker:
             return
 
         try:
-            handler(record.effect)
+            with tracer().start_as_current_span(
+                "effect.deliver",
+                context=extract_trace_context(record.effect.payload),
+                attributes={
+                    "effect.kind": record.effect.kind,
+                    "effect.key": record.effect.key,
+                    "effect.attempt": record.attempts,
+                },
+            ):
+                handler(record.effect)
         except PermanentEffectError as exc:
             self.store.mark_dead(key, str(exc))
             stats.dead += 1

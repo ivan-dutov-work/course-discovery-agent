@@ -8,6 +8,7 @@ from langgraph.types import RetryPolicy
 
 LLM_TIMEOUT_MS = int(float(os.getenv("LLM_TIMEOUT_SECONDS", "30")) * 1000)
 SEARCH_TIMEOUT_SECONDS = float(os.getenv("SEARCH_TIMEOUT_SECONDS", "10"))
+RECURSION_LIMIT = int(os.getenv("GRAPH_RECURSION_LIMIT", "50"))
 DB_CONNECT_TIMEOUT_SECONDS = int(os.getenv("DB_CONNECT_TIMEOUT_SECONDS", "5"))
 DB_STATEMENT_TIMEOUT_MS = int(float(os.getenv("DB_STATEMENT_TIMEOUT_SECONDS", "15")) * 1000)
 

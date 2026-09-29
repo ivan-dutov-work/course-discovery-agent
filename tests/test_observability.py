@@ -1,0 +1,206 @@
+from __future__ import annotations
+
+import contextlib
+import io
+import json
+import logging
+import os
+import unittest
+from unittest.mock import patch
+
+from langchain_core.runnables import RunnableConfig
+from opentelemetry.sdk.trace.export import SpanExportResult
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+from course_discovery.app.cli import _initial_state, _stream_until_pause
+from course_discovery.domain.models import DeliveryStatus
+from course_discovery.effects.factory import set_gateway
+from course_discovery.effects.gateway import InlineGateway, OutboxGateway
+from course_discovery.effects.memory_store import InMemoryOutboxStore
+from course_discovery.effects.models import Effect
+from course_discovery.effects.worker import OutboxWorker
+from course_discovery.observability.logging import JsonFormatter
+from course_discovery.observability.tracing import (
+    configure_tracing,
+    run_span,
+    shutdown_tracing,
+)
+from course_discovery.workflows.outer_graph import build_graph
+
+QUERY = "Find free Python courses with certificate for beginners"
+
+
+def _config(run_id: str) -> RunnableConfig:
+    return {"configurable": {"thread_id": run_id}}
+
+
+class JsonLines(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__()
+        self.setFormatter(JsonFormatter())
+        self.lines: list[dict] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.lines.append(json.loads(self.format(record)))
+
+
+class FailingExporter:
+    def export(self, spans):
+        raise ConnectionError("collector down")
+
+    def shutdown(self) -> None:
+        pass
+
+    def force_flush(self, timeout_millis: int = 30000) -> bool:
+        return True
+
+
+class TracingTestCase(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        env = patch.dict(os.environ, {}, clear=False)
+        env.start()
+        self.addCleanup(env.stop)
+        for name in ("OPENROUTER_API_KEY", "DATABASE_URL", "OTEL_SDK_DISABLED"):
+            os.environ.pop(name, None)
+        self.exporter = InMemorySpanExporter()
+        configure_tracing("test", exporter=self.exporter)
+        self.addCleanup(shutdown_tracing)
+        self.addCleanup(set_gateway, None)
+        self.store = InMemoryOutboxStore()
+        self.delivered: list[Effect] = []
+        self.worker = OutboxWorker(
+            self.store, {"publish_digest": self.delivered.append}, backoff=lambda _: 0.0
+        )
+
+    def spans(self, name: str):
+        return [s for s in self.exporter.get_finished_spans() if s.name == name]
+
+    async def run_to_publish(self, run_id: str) -> dict:
+        graph = build_graph()
+        config = _config(run_id)
+        with contextlib.redirect_stdout(io.StringIO()):
+            paused = await _stream_until_pause(
+                graph, _initial_state(QUERY, run_id), config, resume=False
+            )
+            self.paused = paused
+            self.pending = (await graph.aget_state(config)).next
+            await graph.aupdate_state(config, {"manager_feedback": "approve"})
+            return await _stream_until_pause(graph, None, config, resume=True)
+
+
+class RunTraceTests(TracingTestCase):
+    async def test_review_pause_splits_a_run_into_two_traces_sharing_run_id(self):
+        set_gateway(InlineGateway(self.store, self.worker))
+
+        result = await self.run_to_publish("run-trace")
+
+        self.assertEqual(self.pending, ("review_gate",))
+        self.assertEqual(result["publish_status"], DeliveryStatus.DELIVERED)
+
+        (start,), (resume,) = self.spans("run.start"), self.spans("run.resume")
+        self.assertNotEqual(start.context.trace_id, resume.context.trace_id)
+        for span in (start, resume):
+            self.assertEqual(span.attributes["course.run_id"], "run-trace")
+
+        first = {
+            s.name
+            for s in self.exporter.get_finished_spans()
+            if s.context.trace_id == start.context.trace_id
+        }
+        self.assertTrue(
+            {"research_agent", "tavily_search_worker", "evidence_validator", "synthesizer"} <= first
+        )
+
+        second = {
+            s.name
+            for s in self.exporter.get_finished_spans()
+            if s.context.trace_id == resume.context.trace_id
+        }
+        self.assertTrue({"publish_node", "effect.submit", "effect.deliver"} <= second)
+
+    async def test_delivery_in_another_context_joins_the_submitting_trace(self):
+        gateway = OutboxGateway(self.store)
+        with run_span("run.start", run_id="r", thread_id="r"):
+            gateway.submit(Effect("publish:r", "publish_digest", {"digest": "d"}))
+        self.assertEqual(self.delivered, [])
+
+        self.worker.run_once()
+
+        (submit,), (deliver,) = self.spans("effect.submit"), self.spans("effect.deliver")
+        self.assertEqual(deliver.context.trace_id, submit.context.trace_id)
+        self.assertEqual(deliver.parent.span_id, submit.context.span_id)
+        self.assertEqual(deliver.attributes["effect.attempt"], 1)
+
+    async def test_failed_delivery_marks_span_and_next_attempt_is_visible(self):
+        calls = []
+
+        def flaky(effect: Effect) -> None:
+            calls.append(effect)
+            if len(calls) == 1:
+                raise ConnectionError("downstream unavailable")
+
+        worker = OutboxWorker(self.store, {"publish_digest": flaky}, backoff=lambda _: 0.0)
+        OutboxGateway(self.store).submit(Effect("publish:r2", "publish_digest", {}))
+
+        worker.run_once()
+        worker.run_once()
+
+        first, second = sorted(self.spans("effect.deliver"), key=lambda s: s.start_time)
+        self.assertFalse(first.status.is_ok)
+        self.assertEqual([first.attributes["effect.attempt"], second.attributes["effect.attempt"]], [1, 2])
+
+    async def test_no_query_or_digest_content_reaches_span_attributes(self):
+        set_gateway(InlineGateway(self.store, self.worker))
+
+        result = await self.run_to_publish("run-content")
+
+        values = [
+            str(v)
+            for s in self.exporter.get_finished_spans()
+            for v in (s.attributes or {}).values()
+        ]
+        self.assertTrue(values)
+        self.assertFalse([v for v in values if "Python" in v or result["digest"][:40] in v])
+
+    async def test_logs_inside_a_run_carry_the_trace_id(self):
+        set_gateway(InlineGateway(self.store, self.worker))
+        handler = JsonLines()
+        logging.getLogger().addHandler(handler)
+        self.addCleanup(logging.getLogger().removeHandler, handler)
+        root_level = logging.getLogger().level
+        logging.getLogger().setLevel(logging.INFO)
+        self.addCleanup(logging.getLogger().setLevel, root_level)
+
+        await self.run_to_publish("run-logs")
+
+        (start,) = self.spans("run.start")
+        search = [l for l in handler.lines if l.get("event") == "tavily.search_complete"]
+        self.assertTrue(search)
+        self.assertEqual({l["trace_id"] for l in search}, {format(start.context.trace_id, "032x")})
+
+
+class FailOpenTests(unittest.IsolatedAsyncioTestCase):
+    async def test_dead_collector_does_not_fail_the_run(self):
+        with patch.dict(os.environ, {}, clear=False):
+            for name in ("OPENROUTER_API_KEY", "DATABASE_URL", "OTEL_SDK_DISABLED"):
+                os.environ.pop(name, None)
+            configure_tracing("test", exporter=FailingExporter())
+            self.addCleanup(shutdown_tracing)
+            self.addCleanup(set_gateway, None)
+            store = InMemoryOutboxStore()
+            worker = OutboxWorker(store, {"publish_digest": lambda e: None})
+            set_gateway(InlineGateway(store, worker))
+            graph = build_graph()
+
+            with contextlib.redirect_stdout(io.StringIO()), self.assertLogs("opentelemetry", "ERROR"):
+                await _stream_until_pause(
+                    graph, _initial_state(QUERY, "run-dead"), _config("run-dead"), resume=False
+                )
+                await graph.aupdate_state(_config("run-dead"), {"manager_feedback": "approve"})
+                result = await _stream_until_pause(graph, None, _config("run-dead"), resume=True)
+
+        self.assertEqual(result["publish_status"], DeliveryStatus.DELIVERED)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import time
 
+from langgraph.config import get_stream_writer
+
 from course_discovery.domain.state import AgentState
 from course_discovery.observability.logging import get_logger, sanitize_error
 from course_discovery.research_agent.search.tavily_client import TavilyClient
@@ -10,6 +12,13 @@ from course_discovery.resilience import SEARCH_TIMEOUT_SECONDS, is_transient
 
 
 logger = get_logger(__name__)
+
+
+def _emit_progress(message: str) -> None:
+    try:
+        get_stream_writer()(message)
+    except RuntimeError:
+        pass
 
 
 async def tavily_search_worker_node(state: AgentState) -> dict:
@@ -37,6 +46,7 @@ async def tavily_search_worker_node(state: AgentState) -> dict:
                 "duration_ms": int((time.perf_counter() - start_ts) * 1000),
             },
         )
+        _emit_progress(f"searched '{query}': {len(results)} results")
         return {
             "tavily_results": results,
             "completed_queries": [query],
