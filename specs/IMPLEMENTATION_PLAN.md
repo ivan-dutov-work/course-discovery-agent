@@ -274,7 +274,7 @@ See `specs/FUTURE_IDEAS.md` for the full backlog.
 
 Phase 1 (steps 1-22) built the domain agent. Phase 2 does not add domain
 features — it wires in the production LangGraph mechanics that
-`specs/ARTICLE_OUTLINE.md` (sections 2-10) needs a real, small, in-repo snippet
+`specs/ARTICLE_OUTLINE.md` (sections 2-11) needs a real, small, in-repo snippet
 for. Every step here is scoped to be the minimum change that makes a concept
 *true of this codebase*, not a staged demonstration. Where no real, honest
 change was possible, the section stays prose-only in the article (see
@@ -296,7 +296,7 @@ API here.
 `with_structured_output`. Only `gateway_node`, `router_node`, and
 `synthesizer_node` (per course, inside `_highlight_with_retry`) call
 `ChatOpenRouter`. `CLAUDE.md`'s architecture section and
-`ARTICLE_OUTLINE.md` §5 both currently describe all four as LLM nodes. This
+the pre-restructure `ARTICLE_OUTLINE.md` §5 both described all four as LLM nodes. This
 phase does not convert them to real LLM calls (out of scope — a heuristic
 extractor/validator is a legitimate design, not a bug) but every step below is
 placed against the *actual* LLM nodes, not the documented ones. `CLAUDE.md`'s
@@ -341,7 +341,7 @@ class WorkflowOutput(TypedDict):
 gets this — the research subgraph keeps `AgentState` as both input and output,
 since it has no narrower public contract worth carving out.
 
-### Step 25 — Explicit `durability=` on invoke (§4.4)
+### Step 25 — Explicit `durability=` on invoke (§5.2)
 
 **File:** `course_discovery/app/cli.py`
 
@@ -349,7 +349,7 @@ Add `durability="async"` to both `graph.ainvoke(...)` calls in `main()`. One
 line each, no behavior change from the current default — the point is making
 the choice explicit and named, not changing it.
 
-### Step 26 — Explicit `recursion_limit` (§4.6)
+### Step 26 — Explicit `recursion_limit` (§4.4)
 
 **File:** `course_discovery/app/cli.py`
 
@@ -359,15 +359,18 @@ should name the contrast: this is a generic structural backstop, independent
 of the domain-level `max_iterations`/`max_research_iterations` budgets already
 in `AgentState`.
 
-### Step 27 — `timeout=` on the search worker node (§5.3)
+### Step 27 — `timeout=` on the search worker node (§7.2)
 
 **File:** `course_discovery/workflows/research_graph.py`
 
 `builder.add_node("tavily_search_worker", tavily_search_worker_node, timeout=10)`.
+*(Correction: langgraph 1.1.2's `add_node` has no `timeout=` parameter. The timeout
+was implemented in the clients instead: `asyncio.wait_for` around search, plus LLM
+request and Postgres connect/statement timeouts. See `ARTICLE_TODO.md`.)*
 The one real I/O-bound call in the graph — the only node where this is
 honestly motivated.
 
-### Step 28 — `RetryPolicy` + fault injection on the search worker (§5.1, §6.2 tie-in)
+### Step 28 — `RetryPolicy` + fault injection on the search worker (§7.1, §7.4 tie-in)
 
 **Files:** `course_discovery/research_agent/search/tavily_client.py`,
 `course_discovery/research_agent/search/nodes.py`,
@@ -387,7 +390,7 @@ honestly motivated.
 - `research_graph.py`: add `retry_policy=RetryPolicy(max_attempts=3)` to the
   `tavily_search_worker` node registration.
 
-### Step 29 — `CachePolicy` on `course_cache_lookup` (§5.2)
+### Step 29 — `CachePolicy` on `course_cache_lookup` (§7.3)
 
 **File:** `course_discovery/workflows/research_graph.py`
 
@@ -448,7 +451,7 @@ resume path.
   `publish_node` without passing through `review_gate` — verify the graph
   topology still forces that after this node is inserted.
 
-### Step 32 — OpenRouter as the single LLM gateway (§7.1, §7.2)
+### Step 32 — OpenRouter as the single LLM gateway (§9.1, §9.2)
 
 **Files:** `pyproject.toml`, new `course_discovery/app/llm.py`, `app/gateway.py`,
 `review/router.py`, `research_agent/synthesis/nodes.py`, `CLAUDE.md`, `README.md`,
@@ -472,7 +475,7 @@ resume path.
 - `tests/test_llm.py` asserts the outgoing request carries the priority list
   with the primary first, and that a missing key fails closed.
 
-### Step 33 — Rate limiter on `router_node`'s LLM (§6.4)
+### Step 33 — Rate limiter on `router_node`'s LLM (§8.2)
 
 **File:** `course_discovery/review/router.py`
 
@@ -484,7 +487,7 @@ called repeatedly within a single run — once per `PUBLISH`/`REWRITE`/
 `AUGMENT`/`RESET`/`DISCARD` review round-trip — so it's the most honest
 "shared quota under repeated calls" example.
 
-### Step 34 — Hand-rolled guardrail around `synthesizer` (§7.3)
+### Step 34 — Hand-rolled guardrail around `synthesizer` (§9.3)
 
 **Files:** new `course_discovery/research_agent/synthesis/guardrails.py`,
 `course_discovery/research_agent/synthesis/nodes.py`, new
@@ -510,7 +513,7 @@ graph mechanics, not NLP tooling):
   prompt-injection string and a canned PII pattern — the "verified, not just
   wired in" bar from `ARTICLE_TODO.md`.
 
-### Step 35 — OpenTelemetry via LangSmith (§8.1, no code)
+### Step 35 — OpenTelemetry via LangSmith (§10.1, no code)
 
 **Files:** `README.md`, `CLAUDE.md` Environment section
 
@@ -519,7 +522,7 @@ Document `LANGSMITH_TRACING=true`, `LANGSMITH_OTEL_ENABLED=true`,
 `OTEL_EXPORTER_OTLP_HEADERS` as optional env vars. No source change — that's
 the substance of the section, not a gap in it.
 
-### Step 36 — `stream_mode` in the CLI (§8.2)
+### Step 36 — `stream_mode` in the CLI (§10.2)
 
 **File:** `course_discovery/app/cli.py`
 
