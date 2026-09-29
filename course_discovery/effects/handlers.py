@@ -10,7 +10,7 @@ def deliver_digest(effect: Effect) -> None:
     digest = effect.payload.get("digest")
     if not digest:
         raise PermanentEffectError("publish_digest payload has no digest")
-    print("\n=== PUBLISH (stdout stub) ===")
+    print(f"\n=== PUBLISH (stdout stub, idempotency-key={effect.key}) ===")
     print(digest)
     print("=== END PUBLISH ===\n")
 
