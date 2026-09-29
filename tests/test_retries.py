@@ -144,31 +144,33 @@ class GraphRetryTests(unittest.IsolatedAsyncioTestCase):
                 await graph.ainvoke(state, config)
             after_failure = dict(calls)
             broken["active"] = False
-            await graph.ainvoke(None, config)
+            final = await graph.ainvoke(None, config)
 
         self.assertEqual(after_failure[poisoned[0]], RETRY_SETTINGS["max_attempts"])
         self.assertEqual(calls[poisoned[0]], RETRY_SETTINGS["max_attempts"] + 1)
         siblings = {q: n for q, n in calls.items() if q != poisoned[0]}
         self.assertTrue(siblings)
         self.assertTrue(all(after_failure[q] == 1 for q in siblings))
-        return siblings
+        return siblings, final
 
     async def test_standalone_graph_resume_keeps_completed_sibling_writes(self):
         state = _initial_state(QUERY, "r-flat")
         state.update(gateway_module.gateway_node(state))
 
-        siblings = await self._resume_after_search_outage(
+        siblings, final = await self._resume_after_search_outage(
             build_research_graph(checkpointer=memory_saver()), state, "r-flat"
         )
+        self.assertEqual(final["tavily_calls"], len(set(final["completed_queries"])))
 
         self.assertTrue(all(n == 1 for n in siblings.values()), siblings)
 
-    async def test_subgraph_resume_reruns_completed_sibling(self):
-        siblings = await self._resume_after_search_outage(
+    async def test_subgraph_resume_reruns_completed_sibling_without_double_counting(self):
+        siblings, final = await self._resume_after_search_outage(
             build_graph(), _initial_state(QUERY, "r-nested"), "r-nested"
         )
 
         self.assertTrue(all(n == 2 for n in siblings.values()), siblings)
+        self.assertEqual(final["tavily_calls"], len(set(final["completed_queries"])))
 
     async def test_search_timeout_is_retried_as_transient(self):
         calls = Counter()
