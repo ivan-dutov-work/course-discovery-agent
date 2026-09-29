@@ -9,7 +9,7 @@ The agent:
 - parses a learner query into structured filters;
 - loads durable user preferences;
 - checks a shared course cache before web search;
-- plans Tavily searches only for missing or stale evidence;
+- plans searches only for missing or stale evidence (search results are served from a mock catalog — see below);
 - extracts course candidates with evidence;
 - deduplicates and validates candidates;
 - replans when too few valid courses exist;
@@ -50,17 +50,20 @@ research_entry
 
 The graph uses in-memory checkpointing for the local demo. The durable course cache and user memory are designed for Postgres plus pgvector; see `migrations/001_postgres_pgvector.sql`.
 
+## Search is mocked
+
+`tavily_search_worker` reads from a small static catalog (`course_discovery/research_agent/search/mock_catalog.py`) instead of calling a real search API. This project demonstrates LangGraph patterns, not course-search product quality — real course listing pages are mostly JS/PHP-rendered and poorly indexed, so a real search integration adds operational noise unrelated to the article's subject. `TavilyClient.search()` keeps the shape a real provider (Tavily, Serper, Brave) would have, so swapping it in production is a one-class change; no graph or node code depends on it being mocked.
+
 ## Environment
 
 Optional keys:
 
 ```powershell
 $env:GOOGLE_API_KEY="your-key"   # structured LLM parsing/synthesis/router
-$env:TAVILY_API_KEY="your-key"   # web search
 $env:DATABASE_URL="postgresql://..." # durable memory/cache
 ```
 
-If `GOOGLE_API_KEY` is absent, the gateway, synthesis, and router use deterministic fallbacks. If `TAVILY_API_KEY` is absent, Tavily workers record research notes and the digest reports the limitation. If `DATABASE_URL` is absent, the cache lookup uses a small local seed cache.
+If `GOOGLE_API_KEY` is absent, the gateway, synthesis, and router use deterministic fallbacks. If `DATABASE_URL` is absent, the cache lookup uses a small local seed cache. No search API key is needed — search results are served from a mock catalog (see below).
 
 ## Run
 
@@ -79,9 +82,9 @@ At review time the CLI prints the digest plus cache/search/validation counts. Fe
 
 ## Roadmap
 
-The current implementation covers the full complex research agent (memory, cache,
-planning, search, extraction, validation, replanning, synthesis). The full
-implementation order lives in [`specs/IMPLEMENTATION_PLAN.md`](specs/IMPLEMENTATION_PLAN.md).
+The current implementation covers the full complex research agent loop (memory, cache,
+planning, search, extraction, validation, replanning, synthesis) with search mocked.
+The full implementation order lives in [`specs/IMPLEMENTATION_PLAN.md`](specs/IMPLEMENTATION_PLAN.md).
 
 Deferred work and future ideas live in [`specs/FUTURE_IDEAS.md`](specs/FUTURE_IDEAS.md).
 
