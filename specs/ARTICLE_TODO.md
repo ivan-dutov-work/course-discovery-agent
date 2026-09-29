@@ -69,7 +69,7 @@ below; the "not yet in the article" notes on individual items are stale). Integr
 **Drafted as gap/contrast sections, now elevated to its own section:**
 
 - [x] **Circuit breaker** — originally §7.4 (gap named: per-node retry is not a
-  circuit breaker). Expanded to full cross-worker architecture at §12.1: Store as
+  circuit breaker). Expanded to full cross-worker architecture at §11.1: Store as
   shared state, queue-boundary check, subgraph entry check, half-open probes,
   composition with retry.
 
@@ -212,14 +212,14 @@ below; the "not yet in the article" notes on individual items are stale). Integr
       LangGraph glue needed. Good point: the graph is only responsible for
       *structural* control flow (which node runs next); the Runnable layer underneath
       already owns *call-level* resilience, so LangGraph doesn't need to reinvent it.
-      *(Drafted in ARTICLE.md §9.1 as the in-process alternative. This repo uses
+      *(Drafted in ARTICLE.md §8.1 as the in-process alternative. This repo uses
       neither — it delegates fallback to OpenRouter's `models` array.)*
 - [x] **`ModelFallbackMiddleware`** — *verified*, this is the current native
       multi-model fallback mechanism (`langchain.agents.middleware`), e.g.
       `ModelFallbackMiddleware("openai:gpt-5.5", "anthropic:claude-...")`. Distinct
       from and newer than `.with_fallbacks()`. **Correction to an earlier assumption**:
       `init_chat_model()` does *not* natively take a fallback list — don't claim that
-      in the article. *(Drafted in ARTICLE.md §9.1.)*
+      in the article. *(Drafted in ARTICLE.md §8.1.)*
 - [x] **OpenRouter as a production fallback/spend-control layer.** *Verified*:
       dedicated `langchain-openrouter` package (`ChatOpenRouter`) is the modern
       integration path (preserves OpenRouter-specific metadata — reasoning content,
@@ -232,7 +232,7 @@ below; the "not yet in the article" notes on individual items are stale). Integr
       cannot both be set (400 error). Framing for the article: the real production
       value isn't "fallback" per se — `.with_fallbacks()`/`ModelFallbackMiddleware`
       already give you that in-process — it's *one bill, one rate-limit surface, and
-      per-key spend caps* across providers. *(Drafted in ARTICLE.md §9.2, and now
+      per-key spend caps* across providers. *(Drafted in ARTICLE.md §8.2, and now
       wired in code: `app/llm.py:build_llm()`, DeepSeek V4.1 Flash primary, Gemini
       2.5 Flash Lite fallback. Observed, not from docs: `ChatOpenRouter` has no
       `models` field, so it goes via `model_kwargs`; an invalid model ID is a 400,
@@ -240,7 +240,7 @@ below; the "not yet in the article" notes on individual items are stale). Integr
       **Still open:** the fallback path was never triggered live — only asserted
       in the outgoing request payload. Don't claim it was exercised. Also still
       unverified: OpenRouter data-retention/ZDR controls — the article notes every
-      prompt now transits a third party, per §11.1.)*
+      prompt now transits a third party, per §10.1.)*
 - [ ] **LiteLLM — two distinct integration shapes, don't conflate them.** *Verified*:
       (a) **SDK, in-process**: `langchain-litellm` package provides `ChatLiteLLM` and
       `ChatLiteLLMRouter` (wraps LiteLLM's own `Router` for load-balancing/fallback) —
@@ -267,15 +267,17 @@ below; the "not yet in the article" notes on individual items are stale). Integr
       not replace — conflating "parallel `Send` workers" with "a job queue" is a
       real mistake worth calling out directly.
 
-## New: API brittleness — a dedicated section
+## API brittleness — dissolved into existing sections
 
-The user's own APIs backing this agent (Gemini, and in production a real search
-provider) are exactly the kind of dependency that fails in the field: rate limits,
-timeouts, schema drift, partial outages. This deserves its own treatment, distinct
-from the "retry/cache/durability" list above because it's about *designing for*
-brittleness, not just the mechanical knobs.
+There is no dedicated brittleness chapter: retry, timeouts, circuit breaking, rate
+limiting and provider fallback each already have a home (§7.1, §7.2, §7.4, §8.3, §8.4),
+so a chapter would restate them. What was distinct is folded in where it belongs:
+degrade-versus-fail in §6.1, parse failures as a permanent error in §7.1, and
+"a changed output shape is invisible to the gateway, so count validation failures"
+in §8.4. Well-formed malicious output is a security topic and belongs to §8.5 and
+§10.3, not to drift. Internal state-schema drift stays in §10.2.
 
-- [ ] **This repo already demonstrates graceful degradation** — use it as the worked
+- [x] **This repo already demonstrates graceful degradation** *(Folded into §6.1.)* — use it as the worked
       example before introducing new mechanisms:
   - Gateway/synthesis/router fall back to deterministic parsing when
     `OPENROUTER_API_KEY` is absent (no LLM call attempted at all, not a failed call).
@@ -369,11 +371,11 @@ brittleness, not just the mechanical knobs.
       `InMemoryRateLimiter`) to smooth outbound call rate — relevant when
       `research_planner`/`evidence_validator`/`synthesizer` all call the same Gemini
       quota within one run, and worse under concurrent users. *(Drafted in
-      ARTICLE.md §8.2. Correction: the planner/validator are deterministic Python,
+      ARTICLE.md §8.3. Correction: the planner/validator are deterministic Python,
       so the real LLM nodes sharing quota are gateway/router/synthesizer. The
       limiter is on the router only, with untuned demo values, and is in-process —
       it does not coordinate across workers.)*
-- [ ] **Schema drift / structured-output validation as a brittleness surface.**
+- [x] **Schema drift / structured-output validation as a brittleness surface.** *(Folded into §7.1 and §8.4; state drift is §10.2.)*
       Pydantic structured output (`ResearchPlan`, `CandidateValidation`, etc.) is
       itself a defense against a brittle API: if the LLM provider changes behavior and
       returns malformed output, validation fails loudly instead of silently
@@ -457,7 +459,7 @@ the interrupted node is re-run from the top. Everything below follows from that.
       outbox rows and, with the flag, whole threads whose newest checkpoint `ts` is
       older than N days (`adelete_thread`). Age-based, so a run parked at review longer
       than N days is deleted too.
-- [ ] **Access control on `thread_id`** — drafted in ARTICLE.md §11.4: the id is a bearer
+- [ ] **Access control on `thread_id`** — drafted in ARTICLE.md §10.4: the id is a bearer
   capability, and `update_state` on `manager_feedback` can open the publish gate.
   Not implemented; the CLI has one user.
 - [x] **When not LangGraph:** Temporal/Restate/DBOS give durable execution at the
@@ -466,20 +468,20 @@ the interrupted node is re-run from the top. Everything below follows from that.
 - [ ] **Testing story:** the SIGKILL child-process test is the strongest evidence in the
   repo; `async` is deliberately untested for a hard kill (a race).
 
-## New: Cross-worker coordination section (§12)
+## New: Cross-worker coordination section (§11)
 
-Drafted in ARTICLE.md §12.1–§12.3. No code changes needed — all three patterns are
+Drafted in ARTICLE.md §11.1–§11.3. No code changes needed — all three patterns are
 architectural descriptions, not implementations in this repo. Mark items off as
 each is verified against the repo patterns.
 
-- [x] **Circuit breaking across workers** (§12.1) — drafted. Key claim: Store as shared
+- [x] **Circuit breaking across workers** (§11.1) — drafted. Key claim: Store as shared
   state for circuit state, two-tier check (queue + subgraph entry), half-open probe,
   composition with RetryPolicy. No code written for this pattern.
-- [x] **Outbox leasing at scale** (§12.2) — drafted. Covers `FOR UPDATE SKIP LOCKED`,
+- [x] **Outbox leasing at scale** (§11.2) — drafted. Covers `FOR UPDATE SKIP LOCKED`,
   lease expiry, claim-time attempt counting. The SQL pattern is the same used in
-  the existing outbox worker (`course_discovery/effects/worker.py`); §12.2
+  the existing outbox worker (`course_discovery/effects/worker.py`); §11.2
   describes it in architectural terms rather than duplicating the code reference.
-- [x] **Concurrent resume** (§12.3) — drafted. Application-level advisory lock before
+- [x] **Concurrent resume** (§11.3) — drafted. Application-level advisory lock before
   `ainvoke`. The risk scenario (double work, not corruption) follows from
   deterministic keys established in §6.1.
 
@@ -494,7 +496,7 @@ each is verified against the repo patterns.
       OTel/fallback) imply operational validation that didn't happen.
 - [x] Corollary: "production would swap this one class" (mock search -> real provider)
       is an architectural claim, not a tested migration. Say so. *(Drafted in
-      ARTICLE.md §12.)*
+      ARTICLE.md §11.)*
 
 ## Explicitly ruled out — don't re-litigate
 
@@ -504,12 +506,12 @@ each is verified against the repo patterns.
       consequence is trivial — each node just calls whatever Runnable it's bound to, so
       per-node model choice is a one-line fact, not a feature — worth at most a
       parenthetical where per-node model binding is already discussed, never its own
-      section. *(Drafted in ARTICLE.md §12.)*
+      section. *(Drafted in ARTICLE.md §11.)*
 
 ## Data protection / GDPR — a boundary, not a feature
 
 - [x] LangGraph has zero built-in compliance tooling. Frame this as a layer-of-
-      abstraction point, not a gap to fill. *(Drafted in ARTICLE.md §11.1 — the
+      abstraction point, not a gap to fill. *(Drafted in ARTICLE.md §10.1 — the
       "this durability is also a retention liability" line references §5.6, which
       is not drafted yet; revisit the cross-reference once §5.6 lands. The
       OpenRouter PII-filtering claim was left as an open question in the article
@@ -557,7 +559,7 @@ each is verified against the repo patterns.
       persisted under the previous shape may not deserialize. This is a LangGraph-
       specific problem (not generic app versioning) because the checkpointer
       serializes your TypedDict/Pydantic state directly. *(Drafted in ARTICLE.md
-      §9.2.)*
+      §8.2.)*
       **Add — msgpack allowlist (verified):** with `langgraph-checkpoint` 4.2.0 a
       durable saver logs `Deserializing unregistered type course_discovery.domain.models.X
       from checkpoint. This will be blocked in a future version` once per Pydantic model
@@ -582,7 +584,7 @@ each is verified against the repo patterns.
       topology (add/remove/rename a node) between deploys can break in-flight
       checkpointed threads from the old graph shape even when `AgentState` itself
       didn't change. Name both as independent risks, not one bucket. *(Drafted in
-      ARTICLE.md §9.2 — added the note that neither risk is currently exercised
+      ARTICLE.md §8.2 — added the note that neither risk is currently exercised
       since the compiled checkpointer is `MemorySaver`, not durable.)*
 
 ## HITL — dynamic interrupt and the UX gaps around it
@@ -625,7 +627,7 @@ each is verified against the repo patterns.
 - [x] Restructured `ARTICLE_OUTLINE.md` around one spine: a checkpoint gives exactness
       at node boundaries, so production correctness is about the seam. Durability and
       effects now have their own sections instead of being spread over §4.1, §4.4, §5.1,
-      §6.3 and §9.2. `ARTICLE.md` headings and cross-references follow the new numbering.
+      §6.3 and §8.2. `ARTICLE.md` headings and cross-references follow the new numbering.
 
 Where TODO items now land (old outline section -> new):
 
@@ -638,14 +640,13 @@ Where TODO items now land (old outline section -> new):
 | `Store` vs. checkpointer | §5.6 |
 | Idempotent writes, outbox, multi-effect, ops gaps, Temporal/DBOS | §6.1-§6.5 |
 | `RetryPolicy`, timeouts/async, `CachePolicy`, circuit breaker (gap) | §7.1-§7.4 |
-| Graceful degradation, rate limiting, schema drift | §8.1-§8.3 |
-| Fallbacks, OpenRouter/LiteLLM, custom fallback cases, guardrails | §9.1-§9.4 |
-| OTel, `stream_mode`, domain metrics | §10.1-§10.3 |
-| GDPR, versioning, security xref, thread access control | §11.1-§11.4 |
-| Cross-worker coordination (circuit breaking, outbox leasing, concurrent resume) | §12.1-§12.3 |
-| Scope boundary, verification, untested list | §13 |
+| Fallbacks, OpenRouter/LiteLLM, custom fallback cases, guardrails | §8.1-§8.5 |
+| OTel, `stream_mode`, domain metrics | §9.1-§9.3 |
+| GDPR, versioning, security xref, thread access control | §10.1-§10.4 |
+| Cross-worker coordination (circuit breaking, outbox leasing, concurrent resume) | §11.1-§11.3 |
+| Scope boundary, verification, untested list | §12 |
 
 Corrections to carry into drafting: the old outline promised a node-level `timeout=`
 and `error_handler=` on `add_node`; langgraph 1.1.2 has neither (§7.2 now says so).
-`StateGraph` `input_schema`/`output_schema` (§2.3) and `stream_mode` (§10.2) are still
+`StateGraph` `input_schema`/`output_schema` (§2.3) and `stream_mode` (§9.2) are still
 not used by the code and need a working example or a doc-only label.
