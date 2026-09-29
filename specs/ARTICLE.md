@@ -5,7 +5,7 @@ either drafted prose or an explicit placeholder naming what's pending — nothin
 silently missing. Placeholders are marked `[NOT DRAFTED]` so a partial read never
 gets mistaken for a finished section.
 
-Drafted so far: §2.2, §3.2, §3.3, §4.1, §4.2, §4.3, §9.1, §9.2, §10.
+Drafted so far: §2.2, §3.2, §3.3, §4.1, §4.2, §4.3, §6.4, §7.1, §7.2 (OpenRouter half), §9.1, §9.2, §10.
 Everything else is outline-only — see `specs/ARTICLE_OUTLINE.md` for what each
 pending section needs to say.
 
@@ -230,13 +230,92 @@ What LangGraph doesn't give you, briefly:
 
 ## 6. API Brittleness by Design
 
-[NOT DRAFTED] — see outline §6 (6.1–6.5).
+[NOT DRAFTED] — see outline §6 (6.1–6.3, 6.5). Only §6.4 is drafted below.
+
+### 6.4 Rate limiting
+
+Every LLM call in this repo goes through one factory, `build_llm()`, which takes
+an optional `rate_limiter=`. LangChain chat models accept any
+`BaseRateLimiter`; `router_node` passes a module-level `InMemoryRateLimiter`
+(2 requests/second, bucket of 4). The limiter is module-level on purpose: a
+limiter built per call would never see the previous call.
+
+The router is the node that gets called repeatedly within one run — once per
+review round-trip, across PUBLISH/REWRITE/AUGMENT/RESET/DISCARD — so it's the
+honest place to show a shared quota under repeated calls. The 2/4 numbers are
+demo values, not tuned ones.
+
+Two boundaries worth stating. `InMemoryRateLimiter` is a token bucket inside one
+process: it smooths this process's outbound rate and knows nothing about a
+second worker or a second user's run against the same key. Real cross-process
+limiting belongs at the gateway or provider account, which is where §7.2 picks
+up. And it limits the rate of *starting* calls; it says nothing about whether a
+call succeeded, which is the retry question in §5.1.
 
 ---
 
 ## 7. Provider-Level Resilience and Spend Control
 
-[NOT DRAFTED] — see outline §7 (7.1–7.3).
+[NOT DRAFTED] — §7.3 (guardrails) and the LiteLLM half of §7.2 are pending; see outline §7.
+
+### 7.1 Where call-level resilience lives
+
+The graph decides which node runs next. What happens when the model behind a
+node is down is not a graph concern, and LangGraph doesn't try to make it one:
+the node calls a Runnable, and resilience is a property of that Runnable.
+
+There are two in-process ways to build that in. `Runnable.with_fallbacks()`
+(`langchain_core.runnables`, not LangGraph-specific) tries a list of runnables
+in order. `ModelFallbackMiddleware` (`langchain.agents.middleware`) is the newer
+native multi-model version. Either way it's "wrap the chain, call it like any
+other Runnable" — no LangGraph glue. One correction worth making explicitly:
+`init_chat_model()` does not take a fallback list.
+
+This repo uses neither. It pushes the fallback one layer further out, to the
+gateway (§7.2), so the LangChain side still sees exactly one chat model object.
+
+### 7.2 OpenRouter as the single gateway
+
+Every LLM node — gateway, router, synthesizer — is built by
+`course_discovery/app/llm.py:build_llm()`, which returns a `ChatOpenRouter`
+from the `langchain-openrouter` package. The primary model is
+`deepseek/deepseek-v4.1-flash`; the fallback is `google/gemini-2.5-flash-lite`.
+The fallback is OpenRouter's own `models: [...]` priority array in the request
+body, which retries the next model on rate limits, downtime, context-length
+errors, or moderation flags, and bills only the model that actually answered.
+
+`ChatOpenRouter` has no first-class field for that array, so it goes in through
+`model_kwargs`:
+
+```python
+ChatOpenRouter(
+    model=PRIMARY_MODEL,
+    temperature=0,
+    model_kwargs={"models": [PRIMARY_MODEL, *FALLBACK_MODELS]},
+    rate_limiter=rate_limiter,
+    callbacks=[ServedModelLogger(node)],
+)
+```
+
+Two facts from running it, not from docs. An invalid model ID is not a
+fallback trigger: OpenRouter rejects the whole request with a 400 before any
+routing happens, so the priority array protects against provider failures, not
+configuration mistakes. And because the fallback is invisible to the caller,
+you have to ask which model answered: the response carries a `model_name`, and
+`ServedModelLogger` logs it on every call, at WARNING when it differs from the
+primary. Without that, a week of silent fallbacks would look identical to a
+week of healthy primary calls.
+
+What was and wasn't verified. A live call to each LLM path returned the primary
+model with structured output parsed correctly. The fallback path itself was not
+triggered live — forcing a real provider failure on demand isn't practical — so
+the test suite asserts only that the priority array is in the outgoing request
+and that the logger flags a non-primary model.
+
+The argument for a gateway isn't fallback; `.with_fallbacks()` gives you that
+in-process. It's one bill, one rate-limit surface, and per-key spend caps across
+providers. The cost is a hop through a third party: every prompt now transits
+OpenRouter, which matters for §9.1.
 
 ---
 

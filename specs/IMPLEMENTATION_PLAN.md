@@ -243,7 +243,7 @@ agent while keeping the surrounding LangGraph workflow secondary.
 | Layer | Technology |
 |---|---|
 | Agent orchestration | LangGraph |
-| LLM calls | LangChain + Gemini 2.0 Flash (`langchain-google-genai`) |
+| LLM calls | LangChain + OpenRouter (`langchain-openrouter`): DeepSeek V4.1 Flash, Gemini 2.5 Flash Lite fallback |
 | Schema validation | Pydantic v2 |
 | Web search | Mocked (static catalog, `TavilyClient`-shaped for a real provider swap) |
 | Checkpointing (demo) | LangGraph `MemorySaver` |
@@ -295,7 +295,7 @@ API here.
 `evidence_validator_node` are plain deterministic Python — no LLM call, no
 `with_structured_output`. Only `gateway_node`, `router_node`, and
 `synthesizer_node` (per course, inside `_highlight_with_retry`) call
-`ChatGoogleGenerativeAI`. `CLAUDE.md`'s architecture section and
+`ChatOpenRouter`. `CLAUDE.md`'s architecture section and
 `ARTICLE_OUTLINE.md` §5 both currently describe all four as LLM nodes. This
 phase does not convert them to real LLM calls (out of scope — a heuristic
 extractor/validator is a legitimate design, not a bug) but every step below is
@@ -448,32 +448,37 @@ resume path.
   `publish_node` without passing through `review_gate` — verify the graph
   topology still forces that after this node is inserted.
 
-### Step 32 — Cross-provider fallback via OpenRouter on `synthesizer` (§7.1, §7.2)
+### Step 32 — OpenRouter as the single LLM gateway (§7.1, §7.2)
 
-**Files:** `pyproject.toml`, `course_discovery/research_agent/synthesis/nodes.py`,
-`CLAUDE.md`, `README.md`
+**Files:** `pyproject.toml`, new `course_discovery/app/llm.py`, `app/gateway.py`,
+`review/router.py`, `research_agent/synthesis/nodes.py`, `CLAUDE.md`, `README.md`,
+`.env.example`, new `tests/test_llm.py`
 
-- Add `langchain-openrouter` to `pyproject.toml`.
-- `synthesis/nodes.py`: `_build_synthesizer_llm()` gets an `OPENROUTER_API_KEY`
-  branch. When present, build `ChatOpenRouter(model="google/gemini-2.5-flash-lite", models=["google/gemini-2.5-flash-lite", "anthropic/claude-haiku-4.5"])`
-  instead of `ChatGoogleGenerativeAI` — OpenRouter's own `models:` priority
-  array does the cross-provider fallback server-side, so LangChain code still
-  only ever talks to one chat model instance. This is the "not custom
-  wiring" version specifically: no `.with_fallbacks()`, no second LangChain
-  chat model object. When `OPENROUTER_API_KEY` is absent, fall back to direct
-  Gemini exactly as today — same fail-closed-but-degrade shape as the rest of
-  the codebase.
-- `CLAUDE.md`: update the "All LLM nodes use Gemini 2.0 Flash... do not
-  introduce other providers" line to name `synthesizer` as the one
-  intentional, documented exception, and say why (final step before publish,
-  worst node in the graph to lose to a provider outage).
-- `README.md`: document `OPENROUTER_API_KEY` as optional.
+- Replace `langchain-google-genai` with `langchain-openrouter`. Gemini-direct is
+  removed entirely, not kept as a branch.
+- `app/llm.py`: `build_llm(node)` returns
+  `ChatOpenRouter(model="deepseek/deepseek-v4.1-flash", temperature=0, model_kwargs={"models": [...]})`
+  with `google/gemini-2.5-flash-lite` as the fallback. `ChatOpenRouter` has no
+  first-class `models` field, so the priority array goes through `model_kwargs`.
+  OpenRouter does the cross-provider fallback server-side, so LangChain code
+  still only talks to one chat model instance — no `.with_fallbacks()`.
+- `llm_enabled()` (`OPENROUTER_API_KEY` present) replaces every
+  `os.getenv("OPENROUTER_API_KEY")` check; the deterministic no-LLM paths are
+  unchanged.
+- `CLAUDE.md`/`README.md`/`.env.example` updated to `OPENROUTER_API_KEY`.
+- `ServedModelLogger` (callback attached in `build_llm`) logs the response
+  `model_name` per call and warns when it differs from the primary, since the
+  server-side fallback is otherwise invisible to the caller.
+- `tests/test_llm.py` asserts the outgoing request carries the priority list
+  with the primary first, and that a missing key fails closed.
 
 ### Step 33 — Rate limiter on `router_node`'s LLM (§6.4)
 
 **File:** `course_discovery/review/router.py`
 
-Add `rate_limiter=InMemoryRateLimiter(...)` to `_build_router_llm()`. Chosen
+Pass a module-level `InMemoryRateLimiter(requests_per_second=2, max_bucket_size=4)`
+to `build_llm("router", rate_limiter=...)`; the limiter is module-level so it is
+shared across calls. Chosen
 over gateway/synthesizer because `router_node` is the node most likely to be
 called repeatedly within a single run — once per `PUBLISH`/`REWRITE`/
 `AUGMENT`/`RESET`/`DISCARD` review round-trip — so it's the most honest
@@ -500,7 +505,7 @@ graph mechanics, not NLP tooling):
   text before building the prompt; check the returned highlight before it's
   used in the digest. On a hit, log and fall back to the existing
   non-LLM templated summary (the same fallback path already used when
-  `GOOGLE_API_KEY` is absent) rather than raising.
+  `OPENROUTER_API_KEY` is absent) rather than raising.
 - `tests/test_guardrails.py`: assert both functions actually fire on a canned
   prompt-injection string and a canned PII pattern — the "verified, not just
   wired in" bar from `ARTICLE_TODO.md`.

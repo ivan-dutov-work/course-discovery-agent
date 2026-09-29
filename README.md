@@ -59,11 +59,11 @@ The graph uses in-memory checkpointing for the local demo. The durable course ca
 Optional keys:
 
 ```powershell
-$env:GOOGLE_API_KEY="your-key"   # structured LLM parsing/synthesis/router
+$env:OPENROUTER_API_KEY="..."   # structured LLM parsing/synthesis/router
 $env:DATABASE_URL="postgresql://..." # durable memory/cache
 ```
 
-If `GOOGLE_API_KEY` is absent, the gateway, synthesis, and router use deterministic fallbacks. If `DATABASE_URL` is absent, the cache lookup uses a small local seed cache. No search API key is needed — search results are served from a mock catalog (see below).
+If `OPENROUTER_API_KEY` is absent, the gateway, synthesis, and router use deterministic fallbacks. If `DATABASE_URL` is absent, the cache lookup uses a small local seed cache. No search API key is needed — search results are served from a mock catalog (see below).
 
 ## Run
 

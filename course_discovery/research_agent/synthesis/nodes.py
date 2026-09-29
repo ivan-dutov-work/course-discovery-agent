@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import os
 import time
 from typing import Any
 from datetime import datetime
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openrouter import ChatOpenRouter
 
+from course_discovery.app.llm import build_llm, llm_enabled
 from course_discovery.app.prompts import SYNTHESIZER_SYSTEM_PROMPT
 from course_discovery.domain.models import CourseCandidate, RoutingAction
 from course_discovery.domain.state import AgentState
@@ -24,12 +24,6 @@ def _extract_content(response: Any) -> str:
     if isinstance(content, list):
         return " ".join(str(item) for item in content).strip()
     return str(content).strip()
-
-
-def _build_synthesizer_llm() -> ChatGoogleGenerativeAI:
-    if not os.getenv("GOOGLE_API_KEY"):
-        raise RuntimeError("GOOGLE_API_KEY is required for synthesizer node")
-    return ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", temperature=0)
 
 
 def _parse_date(value: str) -> datetime:
@@ -52,7 +46,7 @@ def _rank_courses(courses: list[CourseCandidate]) -> list[CourseCandidate]:
 
 
 def _highlight_with_retry(
-    llm: ChatGoogleGenerativeAI,
+    llm: ChatOpenRouter,
     course: CourseCandidate,
     rewrite_instructions: str | None,
     *,
@@ -81,7 +75,7 @@ def _highlight_with_retry(
         HumanMessage(content=f"Summarize this course:\n{payload}"),
     ]
 
-    if not os.getenv("GOOGLE_API_KEY"):
+    if not llm_enabled():
         evidence = "; ".join(item.quote_or_summary for item in course.evidence[:2])
         return (
             f"Fits the request based on validated evidence for "
@@ -167,7 +161,7 @@ def synthesizer_node(state: AgentState) -> dict:
         },
     )
 
-    llm = _build_synthesizer_llm() if os.getenv("GOOGLE_API_KEY") else None
+    llm = build_llm("synthesizer") if llm_enabled() else None
     lines: list[str] = []
     validation_by_url = {item.url: item for item in state.get("validation_results", [])}
 

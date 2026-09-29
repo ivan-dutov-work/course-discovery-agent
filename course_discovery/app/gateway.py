@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import os
 import time
 from typing import cast
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
-
+from course_discovery.app.llm import build_llm, llm_enabled
 from course_discovery.app.prompts import GATEWAY_SYSTEM_PROMPT
 from course_discovery.domain.models import RoutingAction, SearchFilters
 from course_discovery.domain.state import AgentState
@@ -18,12 +16,6 @@ from course_discovery.observability.logging import (
 
 
 logger = get_logger(__name__)
-
-
-def _build_gateway_llm() -> ChatGoogleGenerativeAI:
-    if not os.getenv("GOOGLE_API_KEY"):
-        raise RuntimeError("GOOGLE_API_KEY is required for gateway node")
-    return ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", temperature=0)
 
 
 def _fallback_parse_filters(query: str) -> SearchFilters:
@@ -46,9 +38,9 @@ def _fallback_parse_filters(query: str) -> SearchFilters:
 
 
 def _parse_filters(query: str) -> SearchFilters:
-    if not os.getenv("GOOGLE_API_KEY"):
+    if not llm_enabled():
         return _fallback_parse_filters(query)
-    llm = _build_gateway_llm().with_structured_output(SearchFilters)
+    llm = build_llm("gateway").with_structured_output(SearchFilters)
     result = llm.invoke(
         [
             SystemMessage(content=GATEWAY_SYSTEM_PROMPT),
