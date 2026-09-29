@@ -8,18 +8,24 @@ import os
 import unittest
 from unittest.mock import patch
 
+from langchain_core.messages import AIMessage
+from langchain_core.outputs import ChatGeneration, LLMResult
 from langchain_core.runnables import RunnableConfig
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from opentelemetry.sdk.trace.export import SpanExportResult
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
+from course_discovery.app.llm import FALLBACK_MODELS, PRIMARY_MODEL, ServedModelLogger
 from course_discovery.app.cli import _initial_state, _stream_until_pause
 from course_discovery.domain.models import DeliveryStatus
 from course_discovery.effects.factory import set_gateway
 from course_discovery.effects.gateway import InlineGateway, OutboxGateway
 from course_discovery.effects.memory_store import InMemoryOutboxStore
-from course_discovery.effects.models import Effect
+from course_discovery.effects.models import Effect, PermanentEffectError
 from course_discovery.effects.worker import OutboxWorker
 from course_discovery.observability.logging import JsonFormatter
+from course_discovery.observability import tracing
+from course_discovery.observability.metrics import configure_metrics, shutdown_metrics
 from course_discovery.observability.tracing import (
     configure_tracing,
     run_span,
@@ -204,3 +210,109 @@ class FailOpenTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MetricsTestCase(TracingTestCase):
+    def setUp(self):
+        super().setUp()
+        self.reader = InMemoryMetricReader()
+        configure_metrics("test", reader=self.reader)
+        self.addCleanup(shutdown_metrics)
+
+    def points(self, name: str) -> list:
+        data = self.reader.get_metrics_data()
+        return [
+            point
+            for resource in (data.resource_metrics if data else [])
+            for scope in resource.scope_metrics
+            for metric in scope.metrics
+            if metric.name == name
+            for point in metric.data.data_points
+        ]
+
+
+class MetricsTests(MetricsTestCase):
+    async def test_run_records_cache_lookup_and_a_duration_per_segment(self):
+        set_gateway(InlineGateway(self.store, self.worker))
+
+        await self.run_to_publish("run-metrics")
+
+        (lookups,) = self.points("course.cache.lookups")
+        self.assertEqual(lookups.value, 1)
+        self.assertEqual(len(self.points("course.cache.hits")), 1)
+        durations = {p.attributes["course.resume"]: p for p in self.points("course.run.duration")}
+        self.assertEqual(set(durations), {False, True})
+        self.assertTrue(all(p.count == 1 and p.sum > 0 for p in durations.values()))
+
+    async def test_fallback_counter_only_counts_calls_served_by_a_fallback_model(self):
+        def served(model: str) -> LLMResult:
+            message = AIMessage(content="x", response_metadata={"model_name": model})
+            return LLMResult(generations=[[ChatGeneration(message=message)]])
+
+        handler = ServedModelLogger("planner")
+        handler.on_llm_end(served(PRIMARY_MODEL))
+        handler.on_llm_end(served(FALLBACK_MODELS[0]))
+
+        (calls,), (fallbacks,) = self.points("llm.calls"), self.points("llm.fallbacks")
+        self.assertEqual((calls.value, fallbacks.value), (2, 1))
+        self.assertEqual(fallbacks.attributes, {"node": "planner"})
+
+    async def test_outbox_counts_outcomes_and_dead_letter_reasons(self):
+        def broken(effect: Effect) -> None:
+            raise PermanentEffectError("rejected")
+
+        worker = OutboxWorker(
+            self.store,
+            {"publish_digest": self.delivered.append, "broken": broken},
+            backoff=lambda _: 0.0,
+        )
+        gateway = OutboxGateway(self.store)
+        gateway.submit(Effect("publish:ok", "publish_digest", {}))
+        gateway.submit(Effect("broken:1", "broken", {}))
+        gateway.submit(Effect("orphan:1", "unknown_kind", {}))
+
+        worker.run_once()
+
+        counted = {
+            (p.attributes["outcome"], p.attributes.get("reason")): p.value
+            for p in self.points("outbox.effects")
+        }
+        self.assertEqual(
+            counted,
+            {("delivered", None): 1, ("dead", "permanent"): 1, ("dead", "no_handler"): 1},
+        )
+
+
+class QueryContentTests(TracingTestCase):
+    async def test_search_log_events_carry_query_length_not_query_text(self):
+        set_gateway(InlineGateway(self.store, self.worker))
+        handler = JsonLines()
+        logging.getLogger().addHandler(handler)
+        self.addCleanup(logging.getLogger().removeHandler, handler)
+        root_level = logging.getLogger().level
+        logging.getLogger().setLevel(logging.INFO)
+        self.addCleanup(logging.getLogger().setLevel, root_level)
+
+        await self.run_to_publish("run-query-logs")
+
+        searches = [l for l in handler.lines if str(l.get("event", "")).startswith("tavily.")]
+        self.assertTrue(searches)
+        for line in searches:
+            self.assertIsInstance(line["query_len"], int)
+            self.assertNotIn("query", line)
+
+
+class FlushTests(unittest.IsolatedAsyncioTestCase):
+    async def test_spans_are_exported_when_a_run_segment_ends_without_waiting_for_the_batch(self):
+        exporter = InMemorySpanExporter()
+        with patch.dict(os.environ, {}, clear=False), patch.object(
+            tracing, "_exporter", return_value=exporter
+        ), patch.object(tracing, "_BATCH_DELAY_MS", 600_000):
+            os.environ.pop("OTEL_SDK_DISABLED", None)
+            configure_tracing("test")
+            self.addCleanup(shutdown_tracing)
+
+            with run_span("run.start", run_id="r", thread_id="r"):
+                pass
+
+            self.assertEqual([s.name for s in exporter.get_finished_spans()], ["run.start"])

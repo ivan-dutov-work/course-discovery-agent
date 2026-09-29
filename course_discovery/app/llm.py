@@ -9,6 +9,7 @@ from langchain_core.rate_limiters import BaseRateLimiter
 from langchain_openrouter import ChatOpenRouter
 
 from course_discovery.observability.logging import get_logger
+from course_discovery.observability.metrics import record_llm_call
 from course_discovery.resilience import LLM_TIMEOUT_MS
 
 PRIMARY_MODEL = "deepseek/deepseek-v4.1-flash"
@@ -25,6 +26,7 @@ class ServedModelLogger(BaseCallbackHandler):
         message = getattr(response.generations[0][0], "message", None)
         served = (getattr(message, "response_metadata", None) or {}).get("model_name")
         fell_back = bool(served) and served != PRIMARY_MODEL
+        record_llm_call(self.node, fell_back=fell_back)
         logger.log(
             30 if fell_back else 20,
             "llm_call_served",

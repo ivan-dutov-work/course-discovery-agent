@@ -30,7 +30,7 @@ async def tavily_search_worker_node(state: AgentState) -> dict:
 
     logger.info(
         "tavily_search_start",
-        extra={"event": "tavily.search_start", "run_id": run_id, "query": query},
+        extra={"event": "tavily.search_start", "run_id": run_id, "query_len": len(query)},
     )
     try:
         results = await asyncio.wait_for(
@@ -41,7 +41,7 @@ async def tavily_search_worker_node(state: AgentState) -> dict:
             extra={
                 "event": "tavily.search_complete",
                 "run_id": run_id,
-                "query": query,
+                "query_len": len(query),
                 "result_count": len(results),
                 "duration_ms": int((time.perf_counter() - start_ts) * 1000),
             },
@@ -61,7 +61,7 @@ async def tavily_search_worker_node(state: AgentState) -> dict:
             extra={
                 "event": "tavily.search_error",
                 "run_id": run_id,
-                "query": query,
+                "query_len": len(query),
                 **err,
             },
         )

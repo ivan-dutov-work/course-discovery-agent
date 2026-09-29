@@ -96,7 +96,7 @@ uv run python -m unittest discover tests
 
 Without `TEST_DATABASE_URL` the integration tests skip. `docker-compose.yml` applies `migrations/` on a fresh volume only; apply a new migration by hand to an existing one.
 
-Tracing is off until an exporter is configured. `docker compose --profile tracing up -d jaeger`, then `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 uv run python main.py` and open http://localhost:16686 (`OTEL_TRACES_EXPORTER=console` prints spans instead, `OTEL_SDK_DISABLED=true` turns it off). Prompt and state content is redacted from spans unless `OTEL_CAPTURE_CONTENT=true`. Exporter failures never fail a run.
+Tracing is off until an exporter is configured. `docker compose --profile tracing up -d jaeger`, then `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 uv run python main.py` and open http://localhost:16686 (`OTEL_TRACES_EXPORTER=console` prints spans instead, `OTEL_SDK_DISABLED=true` turns it off). Prompt and state content is redacted from spans unless `OTEL_CAPTURE_CONTENT=true`. Exporter failures never fail a run. Metrics (cache lookups/hits, run duration per segment, LLM calls/fallbacks, outbox outcomes with dead-letter reason) are off until `OTEL_METRICS_EXPORTER=otlp` or `console`; Jaeger does not ingest metrics, so point OTLP at a collector. Spans are flushed at the end of each run segment and batched every 1s (`OTEL_BSP_SCHEDULE_DELAY`), so a SIGKILL loses at most the last second of spans plus any span still open.
 
 With `DATABASE_URL` set, the CLI checkpoints to Postgres (`open_checkpointer`). `EFFECT_GATEWAY=inline` (default) delivers the publish effect during `publish_node`; `EFFECT_GATEWAY=outbox` only queues it, and `python -m course_discovery.effects` runs the delivery worker.
 

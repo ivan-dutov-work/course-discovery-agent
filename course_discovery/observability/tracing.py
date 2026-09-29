@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from contextlib import contextmanager
 from typing import Iterator
 
@@ -15,12 +16,16 @@ from opentelemetry.sdk.trace.export import (
 )
 
 from course_discovery.observability.logging import get_logger
+from course_discovery.observability.metrics import record_run_duration
 
 logger = get_logger(__name__)
 
 TRACER_NAME = "course_discovery"
 
 _provider: TracerProvider | None = None
+
+_BATCH_DELAY_MS = int(os.getenv("OTEL_BSP_SCHEDULE_DELAY", "1000"))
+_FLUSH_TIMEOUT_MS = 2000
 
 
 def _enabled() -> bool:
@@ -74,7 +79,9 @@ def configure_tracing(
         if exporter is not None:
             provider.add_span_processor(SimpleSpanProcessor(exporter))
         elif (configured := _exporter()) is not None:
-            provider.add_span_processor(BatchSpanProcessor(configured))
+            provider.add_span_processor(
+                BatchSpanProcessor(configured, schedule_delay_millis=_BATCH_DELAY_MS)
+            )
         trace.set_tracer_provider(provider)
         instrument(provider)
     except Exception:
@@ -112,6 +119,17 @@ def uninstrument() -> None:
     PsycopgInstrumentor().uninstrument()
 
 
+def flush_tracing() -> None:
+    if _provider is None:
+        return
+    try:
+        _provider.force_flush(timeout_millis=_FLUSH_TIMEOUT_MS)
+    except Exception:
+        logger.warning(
+            "tracing_flush_failed", extra={"event": "tracing.flush_failed"}, exc_info=True
+        )
+
+
 def tracer() -> trace.Tracer:
     return (_provider or trace.get_tracer_provider()).get_tracer(TRACER_NAME)
 
@@ -139,12 +157,17 @@ def extract_trace_context(payload: dict) -> context.Context | None:
 def run_span(
     name: str, *, run_id: str, thread_id: str, resume: bool = False
 ) -> Iterator[trace.Span]:
-    with tracer().start_as_current_span(
-        name,
-        attributes={
-            "course.run_id": run_id,
-            "course.thread_id": thread_id,
-            "course.resume": resume,
-        },
-    ) as span:
-        yield span
+    start = time.perf_counter()
+    try:
+        with tracer().start_as_current_span(
+            name,
+            attributes={
+                "course.run_id": run_id,
+                "course.thread_id": thread_id,
+                "course.resume": resume,
+            },
+        ) as span:
+            yield span
+    finally:
+        record_run_duration(time.perf_counter() - start, resume=resume)
+        flush_tracing()

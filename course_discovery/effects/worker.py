@@ -9,6 +9,7 @@ from typing import Callable, Mapping
 from course_discovery.effects.models import Effect, OutboxRecord, PermanentEffectError
 from course_discovery.effects.store import OutboxStore
 from course_discovery.observability.logging import get_logger, sanitize_error
+from course_discovery.observability.metrics import record_effect_outcome
 from course_discovery.observability.tracing import extract_trace_context, tracer
 
 
@@ -77,6 +78,7 @@ class OutboxWorker:
         if record.attempts > self.max_attempts:
             self.store.mark_dead(key, record.last_error or "lease expired after final attempt")
             stats.dead += 1
+            record_effect_outcome("dead", reason="attempts_exhausted")
             self._log("effect_dead", record, reason="attempts_exhausted")
             return
 
@@ -84,6 +86,7 @@ class OutboxWorker:
         if handler is None:
             self.store.mark_dead(key, f"no handler for kind {record.effect.kind!r}")
             stats.dead += 1
+            record_effect_outcome("dead", reason="no_handler")
             self._log("effect_dead", record, reason="no_handler")
             return
 
@@ -101,21 +104,25 @@ class OutboxWorker:
         except PermanentEffectError as exc:
             self.store.mark_dead(key, str(exc))
             stats.dead += 1
+            record_effect_outcome("dead", reason="permanent")
             self._log("effect_dead", record, reason="permanent", **sanitize_error(exc))
         except Exception as exc:  # noqa: BLE001
             error = f"{type(exc).__name__}: {exc}"
             if record.attempts >= self.max_attempts:
                 self.store.mark_dead(key, error)
                 stats.dead += 1
+                record_effect_outcome("dead", reason="attempts_exhausted")
                 self._log("effect_dead", record, reason="attempts_exhausted", **sanitize_error(exc))
             else:
                 retry_at = self.clock() + timedelta(seconds=self.backoff(record.attempts))
                 self.store.release(key, error, retry_at)
                 stats.retried += 1
+                record_effect_outcome("retried")
                 self._log("effect_retry", record, **sanitize_error(exc))
         else:
             self.store.mark_delivered(key, self.clock())
             stats.delivered += 1
+            record_effect_outcome("delivered")
             self._log("effect_delivered", record)
 
     def _log(self, event: str, record: OutboxRecord, **extra) -> None:

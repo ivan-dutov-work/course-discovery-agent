@@ -209,9 +209,12 @@ below; the "not yet in the article" notes on individual items are stale). Integr
       (`OTEL_CAPTURE_CONTENT`), exporter failure is fail-open and tested, log lines carry
       `trace_id`/`span_id`. Verified live against Jaeger: LLM spans show model and token
       counts, inputs/outputs `__REDACTED__`. Chose this over `LANGSMITH_OTEL_ENABLED`
-      because prompts and state would leave for a third party (§11.1). Not done: OTel
-      metrics; `tavily.*` log events still include the raw search query; a SIGKILL loses
-      the unexported batch of spans.)* *Verified*: LangSmith has native end-to-end OTel
+      because prompts and state would leave for a third party (§11.1). Metrics are in
+      `observability/metrics.py` (cache lookups/hits, run duration per segment, LLM
+      calls/fallbacks, outbox outcomes by dead-letter reason), opt-in via
+      `OTEL_METRICS_EXPORTER`. `tavily.*` log events carry `query_len`, not the query.
+      Spans flush at each run segment end and batch every 1s, so a SIGKILL loses at most
+      the last second plus spans still open; not eliminated.)* *Verified*: LangSmith has native end-to-end OTel
       support — `LANGSMITH_OTEL_ENABLED=true` plus standard
       `OTEL_EXPORTER_OTLP_ENDPOINT`/`OTEL_EXPORTER_OTLP_HEADERS`; traces can route to
       Datadog/Grafana/Jaeger over plain OTLP, no bridging library required.

@@ -3,6 +3,7 @@ from __future__ import annotations
 from course_discovery.domain.models import ResearchRunMetrics, UserMemory
 from course_discovery.domain.state import AgentState
 from course_discovery.observability.logging import get_logger
+from course_discovery.observability.metrics import record_cache_lookup
 from course_discovery.research_agent.cache.repository import (
     search_course_cache,
     upsert_courses,
@@ -24,6 +25,7 @@ def course_cache_lookup_node(state: AgentState) -> dict:
     metrics = (state.get("metrics") or ResearchRunMetrics()).model_copy(
         update={"cache_hits": len(candidates)}
     )
+    record_cache_lookup(len(candidates))
     logger.info(
         "course_cache_lookup_complete",
         extra={

@@ -16,6 +16,7 @@ from course_discovery.observability.logging import (
     get_logger,
     truncate_text,
 )
+from course_discovery.observability.metrics import configure_metrics, shutdown_metrics
 from course_discovery.observability.tracing import (
     configure_tracing,
     run_span,
@@ -73,12 +74,14 @@ async def main() -> None:
         dotenv.load_dotenv()
     configure_logging()
     configure_tracing("course-agent-cli")
+    configure_metrics("course-agent-cli")
 
     try:
         async with open_checkpointer() as saver:
             await _run(build_graph(checkpointer=saver))
     finally:
         shutdown_tracing()
+        shutdown_metrics()
 
 
 def _print_progress(namespace: tuple[str, ...], mode: str, chunk) -> None:
