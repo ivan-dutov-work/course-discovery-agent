@@ -9,6 +9,38 @@ as fact in the article without checking it first.
 Check items off as they're written into the article draft (not just implemented in
 code — implementation and article coverage are tracked separately).
 
+## Status snapshot — implemented in code vs. next up
+
+Implemented and tested, **not yet written into ARTICLE.md** (details in the items
+below):
+
+- Replay-safe writes: `migrations/002_idempotent_writes.sql`, `ON CONFLICT` on
+  `course_evidence` (content key) and `recommendation_events` (`idempotency_key`).
+- Local stack: `docker-compose.yml` (pgvector Postgres on host port 55432) and
+  `tests/test_integration_postgres.py`, run with `TEST_DATABASE_URL`.
+- Replay coverage: outer-graph checkpoints, subgraph checkpoints, `interrupt_before`
+  inside the subgraph, and a fresh `AsyncPostgresSaver` + graph reading the thread
+  back and resuming through publish.
+- `build_graph(checkpointer=, research_compile_kwargs=)` so tests can vary durability.
+- msgpack allowlist for the durable saver (0 deserialization warnings, verified).
+
+**Up next — implement now, in this order:**
+
+1. **Outbox behind a port** (see "Out-of-process effects" below). Most important:
+   `EffectGateway` port, Postgres outbox table with a unique key, an inline/in-memory
+   adapter for demo and tests, a separate worker (`FOR UPDATE SKIP LOCKED`, backoff,
+   dead-letter), and `publish_node` submitting instead of printing. Changes
+   `published: bool` into a delivery status.
+2. **Fix the swallowed FK failure** in `record_feedback` (user row missing -> silent
+   drop), and make the DB writers surface failure instead of only logging it.
+3. **`RetryPolicy` on read-only nodes** (LLM, search) with a test that a transient
+   failure is retried and a persistent one is not retried forever.
+4. **Wire a durable checkpointer into the real app path** (opt-in via `DATABASE_URL`)
+   with the msgpack allowlist, so §4.1 can describe what the repo actually does.
+5. **Timeouts** (`add_node(timeout=)` plus client-level) — small, pairs with 3.
+
+Everything else below stays article-only until the above lands.
+
 ## Already in the code — foreground these, don't just add new stuff
 
 - [x] **Reducers for safe concurrent state merges.** `tavily_results`,
@@ -24,9 +56,33 @@ code — implementation and article coverage are tracked separately).
       loop." *(Drafted in ARTICLE.md §4.1 — correction: compiled checkpointer is
       `MemorySaver`, in-memory only; §4.1 states plainly that "resume from a different
       machine" needs a durable checkpointer this repo doesn't currently wire in.)*
+      *(Verified since, test-only: `tests/test_integration_postgres.py` runs the graph
+      on `AsyncPostgresSaver`, then a fresh saver + fresh graph reads the thread back
+      from Postgres, replays, and resumes through approve -> publish. The default
+      `build_graph()` is still `MemorySaver`; `checkpointer=` is now a parameter. This
+      is a new saver in the same OS process, not a killed process — don't claim crash
+      recovery. §4.1 wording is still accurate for the default; update it if the
+      article shows the durable variant.)*
 - [x] **Subgraphs for encapsulation.** `research_graph` compiled and mounted as a
       single node in `outer_graph`. The outer graph doesn't know or care about the
       research agent's internal node count. *(Drafted in ARTICLE.md §3.3.)*
+      **Checkpoint behavior to add (observed on langgraph 1.1.2, not from docs):**
+      the outer graph's history only shows checkpoints around `research_agent`, but a
+      subgraph compiled without its own checkpointer inherits the parent's and its
+      steps are stored under `checkpoint_ns = "research_agent:<task_id>"` in the same
+      saver. `get_state_history(config_with_that_ns)` lists every subgraph step, and
+      `ainvoke(None, snapshot.config)` on the *parent* replays from exactly that node
+      (`course_cache_upsert` re-ran once, run continued to `review_gate`, tracked state
+      identical). `<task_id>` is per-execution, so the namespace must be discovered at
+      runtime (`saver.alist`, or `get_state(cfg, subgraphs=True)` while paused).
+      Also observed: a subgraph's *own* checkpointer is ignored when a parent
+      checkpointer exists (own `MemorySaver()` stayed empty); `checkpointer=True` only
+      makes the namespace stable (`research_agent`). `interrupt_before` inside the
+      subgraph works: `get_state(cfg, subgraphs=True)` shows the paused sub-state, resume
+      and later replay both work. Not tested: `Command`/dynamic `interrupt()` inside a
+      subgraph, subgraph with `checkpointer=False`, a real process kill.
+      Design alternative if namespace discovery feels fragile: keep mutating nodes at
+      the top level, or have the subgraph return effects as data for an outer node.
 - [x] **Plan-driven `Send` fan-out.** Worker count comes from `research_plan`, not
       from the code — contrast with a fixed number of hardcoded parallel branches.
       *(Drafted in ARTICLE.md §3.2, including the "not a distributed queue" boundary
@@ -39,6 +95,11 @@ code — implementation and article coverage are tracked separately).
       Contrast with `max_research_iterations`: retry = "the call failed," replanning
       = "the call succeeded but the result was insufficient." Two different failure
       classes, two different mechanisms — don't conflate them in the article.
+      **Scope: read-only nodes only** (LLM, search), where retry is safe. State plainly
+      that this is in-process: it does not survive process death (compiled checkpointer
+      is `MemorySaver`). Mutating nodes need the idempotency + outbox items below, not
+      `RetryPolicy` — and note the DB-writing nodes catch and log exceptions, so a
+      `RetryPolicy` on them would never fire.
 - [ ] **Node-level cache policy** — `CachePolicy` (`langgraph.types.CachePolicy`,
       passed to `add_node`). Memoizes a single node's output keyed on input — narrower
       than a whole-workflow cache. Good contrast piece against our own
@@ -166,6 +227,51 @@ brittleness, not just the mechanical knobs.
       dedup (e.g. an idempotency key derived from `run_id` + node name). Call out
       which of our own nodes are safe to replay and which would need this if they
       called a real external API.
+      **Correction (checked against code):** `course_cache_upsert` is only half
+      idempotent — `courses` uses `ON CONFLICT ... DO UPDATE`, but `course_evidence`
+      is a plain `INSERT`, so replay duplicates evidence rows. `user_memory_update`
+      (`recommendation_events`) is a plain `INSERT` too: replay double-records
+      feedback and skews personalization. `publish_node` is a stdout stub today and
+      the canonical non-idempotent effect once real. Fix: deterministic idempotency
+      key (`run_id` + node) with a unique constraint.
+      *(Implemented, not yet in the article: `migrations/002_idempotent_writes.sql`.
+      `course_evidence` dedups on content, unique `(course_id, source_url,
+      quote_or_summary)` + `ON CONFLICT DO NOTHING`; `recommendation_events` gets an
+      `idempotency_key` = `{run_id}:{course.url}` (NULL when no `run_id`, i.e. no
+      dedup). Integration tests replay `user_memory_update` and `course_cache_upsert`
+      from checkpoints, in-memory and Postgres savers; with the indexes dropped and the
+      code fix stashed all four replay tests fail `10 != 5`. `publish_node` is still a
+      stub, so it isn't covered.)*
+      **Unfixed, found while testing:** `recommendation_events.user_id` has an FK to
+      `users`, nothing creates the user, and `record_feedback` swallows the resulting
+      error into a log line — on a fresh DB the CLI's `cli-user` feedback is silently
+      dropped. Good concrete example for the "fail closed, visibly" point.
+- [ ] **Out-of-process effects: outbox behind a port.** *(Design only — nothing
+      implemented; no `EffectGateway`, no outbox table, no worker. **Top of the
+      "Up next" list.**)* Retry of a *mutation* is a
+      different problem from retry of a *call*. Sketch, don't productize:
+  - **Port:** nodes call `EffectGateway.submit(Effect(key, kind, payload))` and never
+    the external system. The adapter inserts an outbox row (`ON CONFLICT (key) DO
+    NOTHING`) and returns; the node writes `status="queued"`, not "done". The key is
+    derived deterministically from state (`run_id` + node), never generated at
+    execution time, or replay mints a new key and defeats dedup.
+  - **Worker:** separate process claims rows (`FOR UPDATE SKIP LOCKED`), dispatches by
+    `kind`, backs off, dead-letters after N attempts. This is the part that actually
+    delivers "survives the service going down"; the outbox table alone does not.
+  - **Two recovery loops, don't conflate:** checkpointer resumes the *graph*; the
+    worker retries the *effect*. Replay re-submits the same key, so submit is a no-op.
+  - **Atomicity limit:** outbox row can share a transaction with the node's own domain
+    write (e.g. `recommendation_events`), but not with the checkpointer write. At-least-
+    once delivery, so the consumer stays idempotent.
+  - **State contract change:** `published: bool` becomes a status
+    (queued/delivered/failed). Say so — it's a real cost of the pattern.
+  - **Adapters:** Postgres outbox (best fit here: Postgres already present, gives
+    same-transaction write); in-memory/inline adapter for demo and tests, matching the
+    mock-search and seed-cache philosophy; SQS/Celery via an outbox relay if
+    cross-service; Temporal if many long-running side-effect steps (overlaps with
+    LangGraph checkpointing — a different architecture, not an add-on). Don't claim
+    LangGraph Platform background-run semantics without verifying.
+  - Framing: illustrative sketch, not validated under load (see scope boundary below).
 - [ ] **Timeouts as a first-class concern, not an afterthought.** Node-level
       `timeout=` (see `add_node` above) plus per-call timeouts inside the API client
       itself (the mock client has none because it's local; a real HTTP client needs
@@ -260,6 +366,18 @@ brittleness, not just the mechanical knobs.
       specific problem (not generic app versioning) because the checkpointer
       serializes your TypedDict/Pydantic state directly. *(Drafted in ARTICLE.md
       §9.2.)*
+      **Add — msgpack allowlist (verified):** with `langgraph-checkpoint` 4.2.0 a
+      durable saver logs `Deserializing unregistered type course_discovery.domain.models.X
+      from checkpoint. This will be blocked in a future version` once per Pydantic model
+      in state (6 here). Two fixes, each verified to give 0 warnings and correct state
+      on read-back: (a) `JsonPlusSerializer(allowed_msgpack_modules=[(module, name), ...])`
+      passed as `serde=` to the saver; (b) `LANGGRAPH_STRICT_MSGPACK=true`, no code — at
+      compile time LangGraph derives an allowlist from the state schema
+      (`langgraph/_internal/_serde.py`), so schema-reachable models are allowed
+      automatically. Not tested: what strict mode blocks for a type outside the schema.
+      The warning is once-per-type-per-process, so assert it in a fresh process. This is
+      a deserialization-safety control (a writer to the checkpoint DB can otherwise
+      trigger arbitrary type construction) — worth one sentence beyond "schema drift".
 - [x] **Graph structural versioning — a separate failure mode.** Changing node
       topology (add/remove/rename a node) between deploys can break in-flight
       checkpointed threads from the old graph shape even when `AgentState` itself
