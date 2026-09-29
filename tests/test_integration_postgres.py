@@ -111,6 +111,33 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
             len(result["valid_courses"]),
         )
 
+    async def test_feedback_for_unknown_user_creates_user_and_records_events(self):
+        self.conn.execute("TRUNCATE users CASCADE")
+
+        _, _, result = await self._run_to_publish("run-new-user")
+
+        self.assertEqual(_count(self.conn, "SELECT count(*) FROM users WHERE id = 'cli-user'"), 1)
+        self.assertEqual(
+            _count(self.conn, "SELECT count(*) FROM recommendation_events"),
+            len(result["valid_courses"]),
+        )
+
+    async def test_write_failure_is_raised_and_leaves_no_partial_rows(self):
+        graph = build_graph()
+        config = _thread("run-write-fail")
+        await graph.ainvoke(_initial_state(QUERY, "run-write-fail"), config)
+        graph.update_state(config, {"manager_feedback": "approve"})
+        self.conn.execute("ALTER TABLE recommendation_events ADD CONSTRAINT no_events CHECK (false)")
+        self.addCleanup(
+            self.conn.execute, "ALTER TABLE recommendation_events DROP CONSTRAINT no_events"
+        )
+
+        with self.assertRaises(psycopg.errors.CheckViolation):
+            await graph.ainvoke(None, config)
+
+        self.assertEqual(graph.get_state(config).next, ("user_memory_update",))
+        self.assertEqual(_count(self.conn, "SELECT count(*) FROM recommendation_events"), 0)
+
     async def test_replay_from_checkpoint_does_not_duplicate_writes(self):
         graph, config, _ = await self._run_to_publish("run-replay")
 

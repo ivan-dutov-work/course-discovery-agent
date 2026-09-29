@@ -67,6 +67,10 @@ def record_feedback(
             return
         try:
             with conn.transaction():
+                conn.execute(
+                    "INSERT INTO users (id) VALUES (%s) ON CONFLICT (id) DO NOTHING",
+                    (user_id,),
+                )
                 for rank, course in enumerate(courses, start=1):
                     course_row = conn.execute(
                         "SELECT id FROM courses WHERE canonical_url = %s",
@@ -101,3 +105,4 @@ def record_feedback(
                 "feedback_record_error",
                 extra={"event": "persistence.feedback_record_error", **sanitize_error(exc)},
             )
+            raise

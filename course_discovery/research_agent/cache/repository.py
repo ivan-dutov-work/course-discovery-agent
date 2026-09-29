@@ -187,3 +187,4 @@ def upsert_courses(
                 "course_cache_upsert_error",
                 extra={"event": "persistence.course_cache_upsert_error", **sanitize_error(exc)},
             )
+            raise

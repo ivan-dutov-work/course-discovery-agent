@@ -21,6 +21,8 @@ class _FakeConn:
     def __init__(self):
         self.events: dict[str, tuple] = {}
         self.evidence: set[tuple] = set()
+        self.users: set[str] = set()
+        self.fail_on: str | None = None
 
     @contextmanager
     def transaction(self):
@@ -30,6 +32,10 @@ class _FakeConn:
         pass
 
     def execute(self, sql, params=()):
+        if self.fail_on and self.fail_on in sql:
+            raise RuntimeError("write failed")
+        if "INSERT INTO users" in sql:
+            self.users.add(params[0])
         if "INSERT INTO recommendation_events" in sql:
             if "ON CONFLICT (idempotency_key) DO NOTHING" in sql:
                 self.events.setdefault(params[-1], params)
@@ -87,6 +93,47 @@ class IdempotentWriteTests(unittest.TestCase):
                 upsert_courses([_course()], [])
 
         self.assertEqual(len(conn.evidence), 1)
+
+    def test_record_feedback_creates_the_user_row_first(self):
+        conn = _FakeConn()
+
+        @contextmanager
+        def fake_connect():
+            yield conn
+
+        with patch("course_discovery.research_agent.memory.repository.connect", fake_connect):
+            record_feedback(
+                "new-user", [_course()], "python", accepted=True, feedback_text=None, run_id="r"
+            )
+
+        self.assertEqual(conn.users, {"new-user"})
+        self.assertEqual(len(conn.events), 1)
+
+    def test_record_feedback_surfaces_write_failure(self):
+        conn = _FakeConn()
+        conn.fail_on = "INSERT INTO recommendation_events"
+
+        @contextmanager
+        def fake_connect():
+            yield conn
+
+        with patch("course_discovery.research_agent.memory.repository.connect", fake_connect):
+            with self.assertRaises(RuntimeError):
+                record_feedback(
+                    "u1", [_course()], "python", accepted=True, feedback_text=None, run_id="r"
+                )
+
+    def test_upsert_courses_surfaces_write_failure(self):
+        conn = _FakeConn()
+        conn.fail_on = "INSERT INTO course_evidence"
+
+        @contextmanager
+        def fake_connect():
+            yield conn
+
+        with patch("course_discovery.research_agent.cache.repository.connect", fake_connect):
+            with self.assertRaises(RuntimeError):
+                upsert_courses([_course()], [])
 
 
 if __name__ == "__main__":
