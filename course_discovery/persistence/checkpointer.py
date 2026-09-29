@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import AsyncIterator
 
@@ -40,3 +41,22 @@ async def open_checkpointer(database_url: str | None = None) -> AsyncIterator[Ba
     async with AsyncPostgresSaver.from_conn_string(url, serde=build_serde()) as saver:
         await saver.setup()
         yield saver
+
+
+async def prune_checkpoints(
+    saver: AsyncPostgresSaver, older_than_days: float, now: datetime | None = None
+) -> list[str]:
+    cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=older_than_days)
+    async with saver._cursor() as cur:
+        await cur.execute(
+            """
+            SELECT thread_id FROM checkpoints
+            GROUP BY thread_id
+            HAVING max((checkpoint ->> 'ts')::timestamptz) < %s
+            """,
+            (cutoff,),
+        )
+        thread_ids = [row["thread_id"] for row in await cur.fetchall()]
+    for thread_id in thread_ids:
+        await saver.adelete_thread(thread_id)
+    return thread_ids
