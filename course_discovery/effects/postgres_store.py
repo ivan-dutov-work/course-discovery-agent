@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-import psycopg
 from psycopg.types.json import Jsonb
 
 from course_discovery.effects.models import Effect, OutboxRecord, RecordStatus
+from course_discovery.persistence.postgres import open_connection
 
 
 _COLUMNS = "key, kind, payload, status, attempts, next_attempt_at, locked_until, last_error"
@@ -27,7 +27,7 @@ class PostgresOutboxStore:
         self.database_url = database_url
 
     def enqueue(self, effect: Effect, now: datetime) -> OutboxRecord:
-        with psycopg.connect(self.database_url) as conn:
+        with open_connection(self.database_url) as conn:
             conn.execute(
                 """
                 INSERT INTO outbox (key, kind, payload, next_attempt_at)
@@ -42,7 +42,7 @@ class PostgresOutboxStore:
         return _record(row)
 
     def claim(self, now: datetime, limit: int, lease_seconds: float) -> list[OutboxRecord]:
-        with psycopg.connect(self.database_url) as conn:
+        with open_connection(self.database_url) as conn:
             rows = conn.execute(
                 f"""
                 UPDATE outbox
@@ -90,12 +90,12 @@ class PostgresOutboxStore:
         )
 
     def get(self, key: str) -> OutboxRecord | None:
-        with psycopg.connect(self.database_url) as conn:
+        with open_connection(self.database_url) as conn:
             row = conn.execute(
                 f"SELECT {_COLUMNS} FROM outbox WHERE key = %s", (key,)
             ).fetchone()
         return _record(row) if row else None
 
     def _execute(self, sql: str, params: tuple) -> None:
-        with psycopg.connect(self.database_url) as conn:
+        with open_connection(self.database_url) as conn:
             conn.execute(sql, params)

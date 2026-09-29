@@ -9,6 +9,7 @@ from langchain_core.rate_limiters import BaseRateLimiter
 from langchain_openrouter import ChatOpenRouter
 
 from course_discovery.observability.logging import get_logger
+from course_discovery.resilience import LLM_TIMEOUT_MS
 
 PRIMARY_MODEL = "deepseek/deepseek-v4.1-flash"
 FALLBACK_MODELS = ["google/gemini-2.5-flash-lite"]
@@ -42,7 +43,10 @@ def llm_enabled() -> bool:
 
 
 def build_llm(
-    node: str, *, rate_limiter: BaseRateLimiter | None = None
+    node: str,
+    *,
+    rate_limiter: BaseRateLimiter | None = None,
+    max_retries: int = 0,
 ) -> ChatOpenRouter:
     if not llm_enabled():
         raise RuntimeError(f"OPENROUTER_API_KEY is required for {node} node")
@@ -51,5 +55,7 @@ def build_llm(
         temperature=0,
         model_kwargs={"models": [PRIMARY_MODEL, *FALLBACK_MODELS]},
         rate_limiter=rate_limiter,
+        request_timeout=LLM_TIMEOUT_MS,
+        max_retries=max_retries,
         callbacks=[ServedModelLogger(node)],
     )

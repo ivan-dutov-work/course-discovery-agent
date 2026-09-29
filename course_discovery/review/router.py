@@ -115,7 +115,7 @@ def router_node(state: AgentState) -> dict:
 
     try:
         start_ts = time.perf_counter()
-        llm = build_llm("router", rate_limiter=_router_rate_limiter).with_structured_output(RoutingDecision)
+        llm = build_llm("router", rate_limiter=_router_rate_limiter, max_retries=2).with_structured_output(RoutingDecision)
         decision_raw = llm.invoke(
             [
                 SystemMessage(content=ROUTER_SYSTEM_PROMPT),

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import time
 
 from course_discovery.domain.state import AgentState
 from course_discovery.observability.logging import get_logger, sanitize_error
 from course_discovery.research_agent.search.tavily_client import TavilyClient
+from course_discovery.resilience import SEARCH_TIMEOUT_SECONDS, is_transient
 
 
 logger = get_logger(__name__)
@@ -22,7 +24,9 @@ async def tavily_search_worker_node(state: AgentState) -> dict:
         extra={"event": "tavily.search_start", "run_id": run_id, "query": query},
     )
     try:
-        results = await TavilyClient().search(query, max_results=5)
+        results = await asyncio.wait_for(
+            TavilyClient().search(query, max_results=5), SEARCH_TIMEOUT_SECONDS
+        )
         logger.info(
             "tavily_search_complete",
             extra={
@@ -39,6 +43,8 @@ async def tavily_search_worker_node(state: AgentState) -> dict:
             "tavily_calls": 1,
         }
     except Exception as exc:  # noqa: BLE001
+        if is_transient(exc):
+            raise
         err = sanitize_error(exc)
         logger.warning(
             "tavily_search_error",

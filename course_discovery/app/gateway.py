@@ -13,6 +13,7 @@ from course_discovery.observability.logging import (
     sanitize_error,
     truncate_text,
 )
+from course_discovery.resilience import is_transient
 
 
 logger = get_logger(__name__)
@@ -119,6 +120,8 @@ def gateway_node(state: AgentState) -> dict:
             "error": None,
         }
     except Exception as exc:  # noqa: BLE001
+        if is_transient(exc):
+            raise
         err = sanitize_error(exc)
         logger.error(
             "gateway_error",

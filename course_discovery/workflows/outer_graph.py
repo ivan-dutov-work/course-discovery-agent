@@ -17,6 +17,7 @@ from course_discovery.review.router import (
     publish_node,
     router_node,
 )
+from course_discovery.resilience import transient_retry
 from course_discovery.workflows.research_graph import build_research_graph
 
 
@@ -37,14 +38,15 @@ def build_graph(checkpointer=None, research_compile_kwargs=None):
     start_ts = time.perf_counter()
     builder = StateGraph(AgentState)
 
-    builder.add_node("gateway", gateway_node)
+    retry = transient_retry()
+    builder.add_node("gateway", gateway_node, retry_policy=retry)
     builder.add_node("research_agent", build_research_graph(**(research_compile_kwargs or {})))
     builder.add_node("review_gate", review_gate_node)
     builder.add_node("router", router_node)
     builder.add_node("augment_dispatch", augment_dispatch_node)
-    builder.add_node("publish_node", publish_node)
+    builder.add_node("publish_node", publish_node, retry_policy=retry)
     builder.add_node("discard_node", discard_node)
-    builder.add_node("user_memory_update", user_memory_update_node)
+    builder.add_node("user_memory_update", user_memory_update_node, retry_policy=retry)
 
     builder.set_entry_point("gateway")
     builder.add_conditional_edges(

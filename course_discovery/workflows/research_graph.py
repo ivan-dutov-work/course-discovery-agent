@@ -18,6 +18,7 @@ from course_discovery.research_agent.planning.nodes import (
     research_planner_node,
 )
 from course_discovery.research_agent.search.nodes import tavily_search_worker_node
+from course_discovery.resilience import transient_retry
 from course_discovery.research_agent.synthesis.nodes import synthesizer_node
 from course_discovery.research_agent.validation.nodes import (
     aggregate_node,
@@ -67,13 +68,14 @@ def build_research_graph(**compile_kwargs):
     builder.add_node("user_memory_lookup", user_memory_lookup_node)
     builder.add_node("course_cache_lookup", course_cache_lookup_node)
     builder.add_node("research_planner", research_planner_node)
-    builder.add_node("tavily_search_worker", tavily_search_worker_node)
+    retry = transient_retry()
+    builder.add_node("tavily_search_worker", tavily_search_worker_node, retry_policy=retry)
     builder.add_node("candidate_extractor", candidate_extractor_node)
     builder.add_node("aggregate", aggregate_node)
     builder.add_node("dedup", dedup_node)
     builder.add_node("evidence_validator", evidence_validator_node)
     builder.add_node("replanner", replanner_node)
-    builder.add_node("course_cache_upsert", course_cache_upsert_node)
+    builder.add_node("course_cache_upsert", course_cache_upsert_node, retry_policy=retry)
     builder.add_node("synthesizer", synthesizer_node)
     builder.add_node("research_done", lambda _: {})
 

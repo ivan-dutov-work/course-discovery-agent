@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from typing import Any, Iterator
 
 from course_discovery.observability.logging import get_logger
+from course_discovery.resilience import DB_CONNECT_TIMEOUT_SECONDS, DB_STATEMENT_TIMEOUT_MS
 
 
 logger = get_logger(__name__)
@@ -27,8 +28,18 @@ def connect() -> Iterator[Any]:
         yield None
         return
 
-    conn = psycopg.connect(database_url)
+    conn = open_connection(database_url)
     try:
         yield conn
     finally:
         conn.close()
+
+
+def open_connection(database_url: str):
+    import psycopg  # type: ignore[import-not-found]
+
+    return psycopg.connect(
+        database_url,
+        connect_timeout=DB_CONNECT_TIMEOUT_SECONDS,
+        options=f"-c statement_timeout={DB_STATEMENT_TIMEOUT_MS}",
+    )
