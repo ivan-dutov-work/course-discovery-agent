@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 import os
 import unittest
 import uuid
@@ -8,13 +7,12 @@ from unittest.mock import patch
 
 import psycopg
 from langchain_core.runnables import RunnableConfig
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
-from pydantic import BaseModel
 
 from course_discovery.app.cli import _initial_state
-from course_discovery.domain import models as domain_models
+from course_discovery.domain.models import DeliveryStatus
+from course_discovery.effects.factory import set_gateway
+from course_discovery.persistence.checkpointer import build_serde, memory_saver
 from course_discovery.research_agent.cache import nodes as cache_nodes
 from course_discovery.workflows.outer_graph import build_graph
 
@@ -34,17 +32,8 @@ def _view(values: dict) -> dict:
     return {key: values.get(key) for key in STATE_KEYS}
 
 
-def _domain_model_allowlist() -> list[tuple[str, str]]:
-    return [
-        (cls.__module__, cls.__name__)
-        for _, cls in inspect.getmembers(domain_models, inspect.isclass)
-        if issubclass(cls, BaseModel) and cls.__module__ == domain_models.__name__
-    ]
-
-
 def _durable_saver():
-    serde = JsonPlusSerializer(allowed_msgpack_modules=_domain_model_allowlist())
-    return AsyncPostgresSaver.from_conn_string(TEST_DATABASE_URL, serde=serde)
+    return AsyncPostgresSaver.from_conn_string(TEST_DATABASE_URL, serde=build_serde())
 
 
 def _thread(thread_id: str) -> RunnableConfig:
@@ -91,6 +80,8 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
         env.start()
         self.addCleanup(env.stop)
         os.environ.pop("OPENROUTER_API_KEY", None)
+        set_gateway(None)
+        self.addCleanup(set_gateway, None)
 
         self.conn = psycopg.connect(TEST_DATABASE_URL, autocommit=True)
         self.addCleanup(self.conn.close)
@@ -111,7 +102,7 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_main_path_persists_courses_and_feedback(self):
         _, _, result = await self._run_to_publish("run-main")
 
-        self.assertTrue(result["published"])
+        self.assertEqual(result["publish_status"], DeliveryStatus.DELIVERED)
         self.assertGreater(len(result["valid_courses"]), 0)
         self.assertGreater(_count(self.conn, "SELECT count(*) FROM courses"), 0)
         self.assertGreater(_count(self.conn, "SELECT count(*) FROM course_evidence"), 0)
@@ -144,7 +135,7 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_replay_from_subgraph_checkpoint_reruns_only_that_node(self):
-        saver = MemorySaver()
+        saver = memory_saver()
         graph = build_graph(checkpointer=saver)
         config = _thread("run-sub")
         await graph.ainvoke(_initial_state(QUERY, "run-sub"), config)
@@ -193,14 +184,14 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
             await second.aupdate_state(config, {"manager_feedback": "approve"})
             result = await second.ainvoke(None, config)
 
-        self.assertTrue(result["published"])
+        self.assertEqual(result["publish_status"], DeliveryStatus.DELIVERED)
         self.assertEqual(
             _count(self.conn, "SELECT count(*) FROM recommendation_events"),
             len(result["valid_courses"]),
         )
 
     async def test_interrupt_inside_subgraph_pauses_resumes_and_replays(self):
-        saver = MemorySaver()
+        saver = memory_saver()
         graph = build_graph(
             checkpointer=saver,
             research_compile_kwargs={"interrupt_before": ["course_cache_upsert"]},

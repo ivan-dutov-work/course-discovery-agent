@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from langchain_core.runnables import RunnableConfig
 
-from course_discovery.domain.models import ResearchRunMetrics, RoutingAction
+from course_discovery.domain.models import DeliveryStatus, ResearchRunMetrics, RoutingAction
 from course_discovery.domain.state import AgentState
 from course_discovery.observability.logging import (
     classify_feedback,
@@ -16,6 +16,7 @@ from course_discovery.observability.logging import (
     get_logger,
     truncate_text,
 )
+from course_discovery.persistence.checkpointer import open_checkpointer
 from course_discovery.workflows.outer_graph import build_graph
 
 
@@ -51,7 +52,7 @@ def _initial_state(query: str, run_id: str) -> AgentState:
         "run_id": run_id,
         "active_search_query": None,
         "error": None,
-        "published": False,
+        "publish_status": None,
         "discard_reason": None,
     }
 
@@ -65,9 +66,13 @@ async def main() -> None:
     if dotenv is not None:
         dotenv.load_dotenv()
     configure_logging()
-    logger = get_logger(__name__)
 
-    graph = build_graph()
+    async with open_checkpointer() as saver:
+        await _run(build_graph(checkpointer=saver))
+
+
+async def _run(graph) -> None:
+    logger = get_logger(__name__)
 
     query = (
         input("Enter query (leave blank for default): ").strip()
@@ -138,7 +143,7 @@ async def main() -> None:
             },
         )
 
-        graph.update_state(config, {"manager_feedback": pm_feedback})
+        await graph.aupdate_state(config, {"manager_feedback": pm_feedback})
         logger.info(
             "invoke_resume",
             extra={
@@ -149,8 +154,9 @@ async def main() -> None:
         )
         result = await graph.ainvoke(None, config)
 
-        if result.get("published"):
-            print("Digest published.")
+        publish_status = result.get("publish_status")
+        if publish_status:
+            print(f"Digest {DeliveryStatus(publish_status).value}.")
             logger.info(
                 "run_complete",
                 extra={
@@ -174,7 +180,7 @@ async def main() -> None:
             },
         )
 
-    if not result.get("published") and result.get("routing_decision") in {
+    if not result.get("publish_status") and result.get("routing_decision") in {
         "DISCARD",
         RoutingAction.DISCARD,
     }:

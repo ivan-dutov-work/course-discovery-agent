@@ -10,6 +10,9 @@ from course_discovery.app.llm import build_llm, llm_enabled
 from course_discovery.app.prompts import ROUTER_SYSTEM_PROMPT
 from course_discovery.domain.models import RoutingAction, RoutingDecision
 from course_discovery.domain.state import AgentState
+from course_discovery.effects.factory import get_gateway
+from course_discovery.effects.handlers import PUBLISH_DIGEST
+from course_discovery.effects.models import Effect
 from course_discovery.observability.logging import (
     get_logger,
     sanitize_error,
@@ -168,18 +171,30 @@ def augment_dispatch_node(state: AgentState) -> dict:
 
 
 def publish_node(state: AgentState) -> dict:
+    run_id = state["run_id"]
+    effect = Effect(
+        key=f"publish:{run_id}",
+        kind=PUBLISH_DIGEST,
+        payload={
+            "run_id": run_id,
+            "user_id": state.get("user_id"),
+            "query": state.get("user_query"),
+            "digest": state.get("digest") or "",
+            "course_urls": [course.url for course in state.get("valid_courses", [])],
+        },
+    )
+    status = get_gateway().submit(effect)
     logger.info(
         "publish",
         extra={
-            "event": "publish.complete",
-            "run_id": state.get("run_id", "unknown"),
+            "event": "publish.submitted",
+            "run_id": run_id,
+            "effect_key": effect.key,
+            "publish_status": status,
             "digest_len": len(state.get("digest") or ""),
         },
     )
-    print("\n=== PUBLISH (stdout stub) ===")
-    print(state.get("digest", ""))
-    print("=== END PUBLISH ===\n")
-    return {"published": True}
+    return {"publish_status": status}
 
 
 def discard_node(state: AgentState) -> dict:
@@ -193,4 +208,4 @@ def discard_node(state: AgentState) -> dict:
         },
     )
     print(f"\n[DISCARD] {reason}\n")
-    return {"published": False}
+    return {"publish_status": None}
