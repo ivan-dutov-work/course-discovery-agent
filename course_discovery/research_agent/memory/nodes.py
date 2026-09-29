@@ -36,6 +36,7 @@ def user_memory_update_node(state: AgentState) -> dict:
         state.get("user_query", ""),
         accepted=accepted,
         feedback_text=feedback,
+        run_id=state.get("run_id"),
     )
     logger.info(
         "user_memory_update_complete",
