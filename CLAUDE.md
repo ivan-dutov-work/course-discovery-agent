@@ -116,3 +116,9 @@ All LLM nodes go through `course_discovery/app/llm.py:build_llm()`, which return
 > LangGraph is the control shell for a bounded, personalized research agent — but the article's actual subject is the LangGraph mechanics themselves: reducers, `Send` fan-out, subgraphs, `interrupt_before`, checkpointer durability, `Store` vs. thread-scoped memory, node-level retry/cache policies, and Runnable-level provider fallback. The course-discovery domain gives every pattern something concrete and narratively coherent to attach to.
 
 The article is NOT a LangGraph basics tutorial, and it is NOT a course-search product spec. Search is intentionally mocked so the domain never becomes the story. LangGraph features are introduced where they illustrate a production-relevant principle, with a small real snippet from this codebase — not a fully productized feature.
+
+## Writing Style
+
+When drafting or editing article prose, load the `course-article-style` skill
+(in `.claude/skills/course-article-style/SKILL.md`) for the voice and
+architectural-level conventions used throughout this repo's specs.

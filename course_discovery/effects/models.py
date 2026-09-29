@@ -28,6 +28,7 @@ class OutboxRecord:
     next_attempt_at: datetime
     locked_until: datetime | None = None
     last_error: str | None = None
+    delivered_at: datetime | None = None
 
 
 class PermanentEffectError(Exception):

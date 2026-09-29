@@ -215,6 +215,52 @@ class OutboxContract:
         self.clock.advance(60)
         self.assertEqual(len(self.store.claim(self.clock(), 10, 30.0)), 1)
 
+    def test_list_dead_returns_only_dead_records(self):
+        self.store.enqueue(effect("a"), self.clock())
+        self.store.enqueue(effect("b"), self.clock())
+        self.store.claim(self.clock(), 10, 30.0)
+        self.store.mark_dead("a", "boom")
+        self.store.mark_delivered("b", self.clock())
+
+        dead = self.store.list_dead(10)
+
+        self.assertEqual([r.effect.key for r in dead], ["a"])
+        self.assertEqual(dead[0].last_error, "boom")
+
+    def test_requeue_resets_a_dead_record_and_it_is_redelivered(self):
+        handler = Recorder(PermanentEffectError("bad"))
+        self.store.enqueue(effect(), self.clock())
+        worker = self.worker(handler)
+        worker.run_once()
+
+        self.assertTrue(self.store.requeue("publish:run-1", self.clock()))
+        record = self.store.get("publish:run-1")
+        self.assertEqual((record.status, record.attempts), (RecordStatus.QUEUED, 0))
+
+        self.assertEqual(worker.run_once().delivered, 1)
+
+    def test_requeue_refuses_non_dead_records(self):
+        self.store.enqueue(effect(), self.clock())
+
+        self.assertFalse(self.store.requeue("publish:run-1", self.clock()))
+        self.assertFalse(self.store.requeue("missing", self.clock()))
+
+    def test_prune_deletes_only_old_delivered_records(self):
+        for key in ("old", "new", "dead", "queued"):
+            self.store.enqueue(effect(key), self.clock())
+        self.store.claim(self.clock(), 3, 30.0)
+        self.store.mark_delivered("old", self.clock())
+        self.clock.advance(86400 * 10)
+        self.store.mark_delivered("new", self.clock())
+        self.store.mark_dead("dead", "x")
+
+        removed = self.store.prune_delivered(self.clock() - timedelta(days=5))
+
+        self.assertEqual(removed, 1)
+        self.assertIsNone(self.store.get("old"))
+        for key in ("new", "dead", "queued"):
+            self.assertIsNotNone(self.store.get(key))
+
     def test_outbox_gateway_queues_without_delivering(self):
         handler = Recorder()
         gateway = OutboxGateway(self.store, self.clock)

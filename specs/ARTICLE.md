@@ -5,7 +5,7 @@ either drafted prose or an explicit placeholder naming what's pending — nothin
 silently missing. Placeholders are marked `[NOT DRAFTED]` so a partial read never
 gets mistaken for a finished section.
 
-Drafted so far: §2.2, §3.2, §3.3, §4.1, §4.2, §4.3, §5.1–§5.6, §6.1–§6.5, §7.1–§7.4, §8.2, §9.1, §9.2 (OpenRouter half), §9.3, §11.1, §11.2, §11.4, §12, §13.
+Drafted so far: §2.2, §3.2, §3.3, §4.1, §4.2, §4.3, §5.1–§5.6, §6.1–§6.5, §7.1–§7.4, §8.1, §8.2 (OpenRouter half), §8.3, §8.4, §10.1, §10.2, §10.4, §11, §12.
 Everything else is outline-only — see `specs/ARTICLE_OUTLINE.md` for what each
 pending section needs to say.
 
@@ -214,7 +214,7 @@ What LangGraph doesn't give you, briefly:
   an app-level lock to build, not something the checkpointer arbitrates.
 - The same `update_state` call can write the feedback that opens the publish
   gate, so who may resume a thread is an access question as well as a UX one
-  (§11.4).
+  (§10.4).
 
 ### 4.4 `recursion_limit` as a structural safety net
 
@@ -278,6 +278,16 @@ background write lands is a race. For ordinary failures (exceptions, not
 signals), all three modes behave identically: the exception is itself a
 superstep boundary, so even "write on exit" checkpoints before it propagates.
 
+What the coarse mode gives up on an ordinary failure is history. In a measured
+run against Postgres with a late transient failure, the per-step modes wrote
+twelve to fourteen checkpoints and "write on exit" wrote two, yet all three
+resumed the failed run without redoing finished nodes. Fewer checkpoints means
+fewer points to replay from or inspect, and nothing at all if the process dies
+instead of raising. The practical decision rule: durability is chosen per
+invocation, not per node, so a run that ends in an effect belongs under
+per-step writes, and only a run that can restart from scratch on a kill earns
+the cheaper mode.
+
 ### 5.3 Replay determinism
 
 Because a node is an atomic unit, deterministic replay only holds at node
@@ -292,8 +302,23 @@ nondeterministic work (LLM calls, API requests) in earlier nodes that are
 checkpointed before their output reaches the effect. Keep effect nodes pure —
 they read from checkpointed state and produce no nondeterministic calls of
 their own. Temperature 0 is not a substitute for this architecture: model
-providers can change output between runs, and provider fallback (§9.1) produces
-the same class of divergence.
+providers can change output between runs, and provider fallback (§8.1) produces
+the same class of divergence. The same holds for a search provider whose
+snippets change between calls, which is the more likely source of divergence in
+a pipeline where extraction and validation are deterministic code.
+
+The rule has a consequence for review flows. If the effect node reads the
+reviewed artifact from checkpointed state, what the human approved is what gets
+submitted, because nothing between the review and the effect re-runs the
+generator. Route crash recovery back through the generator and the approval
+attaches to text the reviewer never saw. This holds by construction in the
+graph described here; it was not tested end to end.
+
+Not every replay difference matters, and auditing them by whether they exist is
+the wrong test. A write that stamps `now()` differs between a run and its
+replay, which is harmless when the only reader is a tie-break ordering. A
+status that reads `delivered` in one run and `queued` in its replay is harmless
+until something branches on it. Audit replay differences by what reads them.
 
 ### 5.4 Intra-node memoization
 
@@ -320,12 +345,27 @@ A subgraph's internal replay does not benefit from memoization of its parent's
 scope. This aligns with the principle in §5.3 — the reliable seam is the node
 boundary, not the call boundary inside a node.
 
+Two smaller limits shape how far to trust it. The memo is scoped to a
+superstep, so a replan loop that revisits a node gets fresh executions, and
+replaying from an older checkpoint re-runs the calls. And the stored result has
+to deserialize: a return type outside the checkpointer's msgpack allowlist
+(§10.2) comes back as a plain dict, not the model that went in. These were
+observed on langgraph 1.1.2, not taken from the docs, and the subgraph behavior
+in particular has no identified mechanism, so reproduce it before relying on
+it.
+
 ### 5.5 Encapsulation cost: subgraph resume
 
 A subgraph is one node to its parent. When a subgraph node is interrupted and
 resumed, the entire subgraph re-runs — including already-successful parallel
 workers that a standalone graph would skip. The parent has no visibility into
 which subgraph workers completed.
+
+The cost is spend, not correctness. Re-running a sibling worker repeats its
+search or model call, but reducer-backed channels do not double-count: after a
+resumed run the number of completed calls still equals the number of unique
+queries. Whether the repeat is noise or a budget problem depends on what one
+worker costs.
 
 This is a known behavior with a documented root cause: subgraph task IDs are
 derived from the parent checkpoint ID, and that ID changes when the parent forks
@@ -401,15 +441,37 @@ store.get(("user_prefs", user_id), "profile")
 store.put(("user_prefs", user_id), "profile", {"goal": new_goal})
 ```
 
-Cross-thread memory — user profiles, preferences, historical data — lives in a
-separate store. The framework provides one, but it is also common to use a
-plain database table for the same purpose. The key distinction is scope: the
-checkpointer is implied by the graph itself and invisible to node code, while
-cross-thread storage requires explicit reads and writes. Conflating the two is
-a common source of confusion — the checkpointer persists state, so the instinct
-is to treat it as long-term memory, but its lifetime is bounded by the thread's
-checkpoint history. The durability that makes graphs resumable is also a
-retention liability (§11.1) with no built-in TTL or redaction.
+Cross-thread memory — user profiles, preferences, accumulated history — belongs
+in the `Store`, which is compiled in beside the checkpointer and keyed by
+namespace instead of thread. A node receives it only if it asks:
+
+```python
+graph = builder.compile(checkpointer=checkpointer, store=store)
+
+def update_profile(state: AgentState, *, store: BaseStore):
+    store.put(("user_prefs", state["user_id"]), "profile", {"goal": new_goal})
+```
+
+Two threads for the same user read the same item, where the checkpointer would
+give each its own history. That is the key distinction: the checkpointer is
+implied by the graph and invisible to node code, while the `Store` is explicit
+reads and writes. Conflating the two is a common source of confusion — the
+checkpointer persists state, so the instinct is to treat it as long-term
+memory, but its lifetime is bounded by the thread's checkpoint history.
+
+Worth naming: a `Store` write from a node is an effect, and replay re-runs it.
+`put` is an upsert on namespace and key, so it is replay-safe when the value
+derives from checkpointed state, and unsafe when the node reads a counter from
+the `Store` and writes it back incremented. The rule from §6.1 applies
+unchanged, and the write shares no transaction with the checkpoint (§6.2).
+
+A plain table keyed by user does the same job, and is often the better one
+when the profile needs joins, constraints or a transaction with domain data.
+The `Store` earns its place through namespacing, an optional embedding index
+over items, and one backend shared with the checkpointer. Retention is the
+other cost: the checkpointer keeps history until someone deletes it, and the
+Postgres-backed `Store` supports a per-item TTL that is opt-in, not a default
+(§10.1).
 
 ---
 
@@ -449,12 +511,36 @@ executes — a key generated at runtime (a new UUID) produces a different value 
 each replay and defeats the purpose. The run's own identifier, minted before the
 graph starts, is the natural source.
 
+The two key shapes encode different meanings for a re-run. A content-identity
+key with `DO UPDATE` treats a re-fetch as a correction: the latest snippet for a
+source replaces the old one, so replay converges on one row. The cost is
+history, since last write wins and nothing records what the row said before. A
+run-derived key with `DO NOTHING` treats a re-run as a no-op and keeps the
+first result, which is the right shape for events that must be recorded once
+and never revised.
+
 The second approach is to fail closed. A write that encounters an unexpected
 error (a constraint violation, a missing foreign key) should propagate the
 failure rather than swallowing it into a log line. The graph pauses at the
 failed node's checkpoint, and the state is preserved for inspection. A silent
 drop of a write that "mostly works" is worse than a visible failure that stops
 the run.
+
+Fail-closed has a counterpart, and where the line falls is a design decision,
+not a default. A read-side dependency can often degrade: a search that fails
+permanently for one query becomes a note on state, and the run continues with
+what it has. That is only correct if the degradation is visible where a human
+decides, so the note and a limitation line travel into the digest the reviewer
+approves (§4.3). A write cannot degrade this way, because a dropped write is a
+loss no reviewer sees. The practical decision rule: degrade where a fallback is
+still correct and the reviewer can see it happened; fail where it would hide a
+loss. The retry boundary follows the same split: transient errors propagate so
+`RetryPolicy` can act on them, and only permanent ones become state (§7.1).
+
+The cost is visible in what a note can carry. It is free text, only the most
+recent few reach the digest, and a failed query does not change how confident
+the ranking looks, so a run that degraded five times and one that degraded once
+can read alike.
 
 ### 6.2 Outbox pattern
 
@@ -500,11 +586,21 @@ be attached to the effect's identity, not its position in a list — replay
 reconstructs the list from checkpointed state and may produce a different
 order. No ordering between effects is guaranteed.
 
+Worth being precise about what a duplicate key does: with `DO NOTHING` the
+first payload wins. If replay recomputes a different payload for the same key,
+the store keeps the original and the difference disappears without a trace.
+That is the behavior you want when the payload derives from checkpointed state,
+and a warning sign when it does not. An adapter that attempts delivery during
+submit adds a wrinkle, since replay may attempt it again for a record that is
+still queued, so the consumer stays idempotent either way. This follows from
+the gateway's semantics; it was not exercised with more than one effect per
+node.
+
 ### 6.4 Operational gaps
 
 The patterns above handle submission, delivery, and dedup for a
-single-process, single-worker setup. What they do not address — dead-letter
-handling, handler timeouts, lease preemption, pruning — are problems that
+single-process, single-worker setup. What they do not address — handler timeouts and lease
+preemption above all — are problems that
 real queue infrastructure (SQS, RabbitMQ, Kafka) solves natively. The dividing
 line is scale: the outbox is for "a few effects per run, running in one
 process." When the system grows to the point where a handler can outlive its
@@ -518,6 +614,28 @@ outbox pattern to grow up — it requires the outbox pattern to hand off to
 something that already has these primitives. The outbox's job is deterministic
 submission; the queue's job is reliable execution. Conflating the two into a
 single component that tries to do both is where the gaps appear.
+
+Dead rows and old data need an operator path, and it belongs outside the
+delivery loop. A worker that also deletes is the same conflation of submission
+and execution that the queue hand-off avoids. Retention is worth its own
+answer, since the checkpointer never expires anything (§10.1).
+
+The consumer side is where the guarantee actually ends. At-least-once delivery
+moves the dedup boundary to the receiver: a lease can expire mid-handler, a
+second worker claims the row, and the effect is delivered twice. Deterministic
+keys make duplicate submission harmless; they do nothing for duplicate
+delivery unless the key travels with it as an idempotency key. Extending leases
+and timing out handlers is queue territory. Forwarding the key is the one piece
+the outbox can do itself, and a receiver that ignores it turns the guarantee
+into a hope.
+
+Recovering a dead record is a human replay. The row stopped because retries
+were exhausted or the payload was permanently bad, and requeueing it is an
+operator's answer to that stop. It is only safe for the same reason everything
+else here is: the key makes the redelivery idempotent. The cost is visible in
+the attempt counter. Resetting it gives the record a fresh budget and discards
+the failure history; keeping the history means a schema that separates lifetime
+attempts from current ones.
 
 ### 6.5 When a different architecture fits better
 
@@ -561,6 +679,14 @@ A node that catches every exception makes `RetryPolicy` a no-op — the policy n
 
 When the policy's attempts are exhausted, the error propagates out of the graph — not into state — and the run stays resumable from its last checkpoint. The checkpoint preserves the state of every completed node; only the failed node re-executes on resume (§5.1).
 
+A structured-output parse failure is the clearest permanent error. The classifier
+above does not match it, so `RetryPolicy` leaves it alone, which is the right
+call: at temperature 0 a second attempt mostly reproduces the same malformed
+output and spends budget on the way. What the node does instead is fail closed,
+turning the parse failure into structured error state rather than letting a
+half-typed object flow downstream. The failure is also information about the
+provider, which is where it goes next (§8.4).
+
 The contrast to hold explicitly: `RetryPolicy` means "the call failed," a domain replanning loop means "the call succeeded but the result was insufficient." Retry is a policy on the node; replanning is a domain loop inside the graph. Two different failure classes, two different mechanisms. Conflating them is how a transient-error handler ends up hiding a bad answer, or a replanning loop ends up absorbing a timeout.
 
 ### 7.2 Timeouts and async nodes
@@ -598,41 +724,15 @@ The distinction is worth naming as a design choice. "Framework cache for same-in
 
 LangGraph gives you per-node retry and nothing at the graph level for a circuit breaker. If the same downstream API keeps failing, every affected node exhausts its own policy independently — each on its own clock, each unaware of the other's failures. An outbox worker (§6.2) can provide per-effect backoff with dead-lettering after N attempts, but that covers only effects that go through the outbox; nodes that call external APIs directly still have no shared failure state.
 
-The practical options: a hand-rolled failure counter in state checked before dispatching the next parallel worker, or delegating circuit breaking to a gateway or client library that sits in front of the API. Either way, the gap is worth naming as a mental-model point: the graph's resilience knobs are per-node, not per-dependency. If you need per-dependency circuit breaking, it belongs one layer down (the HTTP client, the gateway) or one layer up (a state field that gates fan-out dispatch), not in the node's `RetryPolicy` configuration. §12.1 covers the cross-worker architecture.
+The practical options: a hand-rolled failure counter in state checked before dispatching the next parallel worker, or delegating circuit breaking to a gateway or client library that sits in front of the API. Either way, the gap is worth naming as a mental-model point: the graph's resilience knobs are per-node, not per-dependency. If you need per-dependency circuit breaking, it belongs one layer down (the HTTP client, the gateway) or one layer up (a state field that gates fan-out dispatch), not in the node's `RetryPolicy` configuration. §11.1 covers the cross-worker architecture.
 
 ---
 
-## 8. API Brittleness by Design
+## 8. Provider-Level Resilience and Spend Control
 
-[NOT DRAFTED] — see outline §8 (8.1, 8.3). Only §8.2 is drafted below.
+[NOT DRAFTED] — §8.5 (guardrails) and the LiteLLM half of §8.2 are pending; see outline §8. §8.5 starts from the limit §8.4 leaves open: schema validation catches malformed output, not well-formed output that an attacker shaped.
 
-### 8.2 Rate limiting
-
-LangChain chat models accept any `BaseRateLimiter` through a `rate_limiter=`
-argument, which smooths the rate at which calls start. It matters when several
-nodes share one provider quota within a run, and more so when several runs share
-it.
-
-The limiter has to outlive the call. A limiter built per call never sees the
-previous one, so the instance lives at module level and is handed to every node
-that draws on the same quota. The node worth showing is the one called
-repeatedly within a run, such as a review router hit once per round trip,
-because that is where a shared bucket earns its keep. Bucket sizes in a demo are
-placeholders, not tuned values.
-
-Two boundaries worth stating. `InMemoryRateLimiter` is a token bucket inside one
-process: it knows nothing about a second worker or a second user's run against
-the same key, and real cross-process limiting belongs at the gateway or provider
-account (§9.2). And it limits the rate of *starting* calls; it says nothing
-about whether a call succeeded, which is the retry question in §7.1.
-
----
-
-## 9. Provider-Level Resilience and Spend Control
-
-[NOT DRAFTED] — §9.4 (guardrails) and the LiteLLM half of §9.2 are pending; see outline §9.
-
-### 9.1 Where call-level resilience lives
+### 8.1 Where call-level resilience lives
 
 The graph decides which node runs next. What happens when the model behind a
 node is down is not a graph concern, and LangGraph doesn't try to make it one:
@@ -646,9 +746,9 @@ other Runnable" — no LangGraph glue. One correction worth making explicitly:
 `init_chat_model()` does not take a fallback list.
 
 A third option moves the fallback out of the process entirely, to a gateway
-(§9.2), so the LangChain side still sees exactly one chat model object.
+(§8.2), so the LangChain side still sees exactly one chat model object.
 
-### 9.2 OpenRouter as the single gateway
+### 8.2 OpenRouter as the single gateway
 
 A gateway such as OpenRouter moves fallback out of the process. Every node
 builds its chat model through one factory, and the request carries an ordered
@@ -686,9 +786,29 @@ practical.
 The argument for a gateway isn't fallback; `.with_fallbacks()` gives you that
 in-process. It's one bill, one rate-limit surface, and per-key spend caps across
 providers. The cost is a hop through a third party: every prompt now transits
-OpenRouter, which matters for §11.1.
+OpenRouter, which matters for §10.1.
 
-### 9.3 When the gateway isn't enough
+### 8.3 Rate limiting
+
+LangChain chat models accept any `BaseRateLimiter` through a `rate_limiter=`
+argument, which smooths the rate at which calls start. It matters when several
+nodes share one provider quota within a run, and more so when several runs share
+it.
+
+The limiter has to outlive the call. A limiter built per call never sees the
+previous one, so the instance lives at module level and is handed to every node
+that draws on the same quota. The node worth showing is the one called
+repeatedly within a run, such as a review router hit once per round trip,
+because that is where a shared bucket earns its keep. Bucket sizes in a demo are
+placeholders, not tuned values.
+
+Two boundaries worth stating. `InMemoryRateLimiter` is a token bucket inside one
+process: it knows nothing about a second worker or a second user's run against
+the same key, and real cross-process limiting belongs at the gateway or provider
+account (§8.2). And it limits the rate of *starting* calls; it says nothing
+about whether a call succeeded, which is the retry question in §7.1.
+
+### 8.4 When the gateway isn't enough
 
 A gateway or LiteLLM covers the common case, and most graphs should stop there.
 Both implement one idea: when a call fails at the provider (rate limit,
@@ -714,6 +834,17 @@ result = await primary.ainvoke(payload)
 if not meets_evidence_bar(result):
     result = await stronger.ainvoke(payload)
 ```
+
+The same blind spot hides a provider that changes its output shape. The gateway
+still returns 200, so the only record of the change is the application's own
+validation failures, and they count only if something counts them. Fed into a
+failure rate over a window, they become the signal for the volumetric response:
+when the rate crosses a threshold the primary is swapped for the alternative,
+and a probe polls the old one for recovery. That is the circuit breaker of §11.1
+with a parse failure as its failure event. The limit is that a rate catches
+shape, not meaning. A model that keeps the schema but starts judging more
+leniently produces no failures at all, and catching that takes an evaluation
+set, not a breaker.
 
 **Scores must be comparable within a run.** A gateway switches models per
 request. If a run ranks candidates with one model and a rate limit moves half of
@@ -745,7 +876,7 @@ the gateway.
 
 **A silent substitution is itself a defect.** In audited or regulated flows, a
 reviewer approving output should know it came from the fallback, and the record
-should say which model produced what. A gateway can log the served model (§9.2);
+should say which model produced what. A gateway can log the served model (§8.2);
 putting it in the review payload, or refusing to substitute without a human, is
 application logic. This is the same boundary as §4.3: the interrupt is where a
 degraded result has to become visible.
@@ -753,7 +884,7 @@ degraded result has to become visible.
 The cost of writing this yourself is that you now own the failure taxonomy (what
 retries, what escalates, what degrades), the state that carries it, and the
 tests. One part gets easier, not harder: a provider outage can't be summoned on
-demand (§9.2), but a validation-triggered fallback can be forced with a stub
+demand (§8.2), but a validation-triggered fallback can be forced with a stub
 model, so that branch is testable in a way the gateway's never is.
 
 The practical decision rule: keep the gateway for provider failure and add
@@ -765,15 +896,15 @@ different failure classes, the same distinction as retry versus replanning
 
 ---
 
-## 10. Observability
+## 9. Observability
 
-[NOT DRAFTED] — see outline §10 (10.1–10.3).
+[NOT DRAFTED] — see outline §9 (9.1–9.3).
 
 ---
 
-## 11. What LangGraph Doesn't Own
+## 10. What LangGraph Doesn't Own
 
-### 11.1 GDPR / data retention
+### 10.1 GDPR / data retention
 
 LangGraph has zero built-in compliance tooling, and that's worth framing as a
 layer-of-abstraction point rather than a gap to fill.
@@ -781,12 +912,23 @@ layer-of-abstraction point rather than a gap to fill.
 The checkpointer and `Store` (see §5.6) are, mechanically, just a database of
 user state. Whatever personal data flows through the state object (search
 queries, stored preferences, career goals, completed-course history) gets
-persisted at every superstep the checkpointer writes. There's no built-in TTL,
-no redaction primitive, no right-to-erasure call. Deleting a user's data means
+persisted at every superstep the checkpointer writes. The checkpointer has no
+retention policy of its own, `Store` expiry is an opt-in per-item TTL on the
+Postgres backend, and there is no redaction primitive and no right-to-erasure
+call. Deleting a user's data means
 writing `DELETE WHERE thread_id = ...` (checkpointer) or `store.delete(...)`
 (`Store`) yourself; LangGraph gives you the durability, not the retention policy
 on top of it. Worth stating plainly: this durability is also a retention
 liability you now own.
+
+The same gap shows up as plain housekeeping. Checkpoints accumulate at every
+superstep (a dozen or so per run under per-step durability), and the saver
+exposes deletion by `thread_id` but no way to enumerate threads or expire them
+by age. Pruning means querying the checkpoint tables yourself to pick the
+threads, then deleting through the saver. The selector has to be age-based, and
+an age cutoff cannot tell a finished run from one parked at a review gate; a
+long-lived review boundary (§4) and aggressive pruning pull in opposite
+directions. The outbox has the same growth problem on a smaller scale (§6.4).
 
 The actual compliance lever sits one layer down, at the model-provider
 boundary — zero-data-retention flags, DPAs, which region processes the
@@ -797,7 +939,7 @@ PII-filtering features distinct from their data-retention policy (not-logging
 vs. actively detecting/stripping PII are different guarantees) — don't conflate
 the two without checking the specific provider's current docs.
 
-### 11.2 Checkpoint and graph versioning
+### 10.2 Checkpoint and graph versioning
 
 Two distinct failure modes worth naming separately, not one bucket:
 
@@ -812,6 +954,10 @@ rather than through a migration-aware layer.
 checkpointed thread from the old graph shape, even when `AgentState` itself
 didn't change — the checkpoint records *where* execution was parked, and that
 position may no longer exist in the new graph.
+
+The drift meant here is drift in the state the graph owns. A provider returning
+a different shape at the model boundary is a separate failure with a separate
+answer, a failure rate rather than a migration (§8.4).
 
 Schema drift shows up first as a serializer complaint, not a crash. With
 `langgraph-checkpoint` 4.2.0 a durable saver logs a "Deserializing unregistered
@@ -828,11 +974,11 @@ Structural versioning is the half without evidence here. Nothing persists a
 thread under one topology and resumes it under another, so that risk is
 described, not observed.
 
-### 11.3 Security/guardrail primitives
+### 10.3 Security/guardrail primitives
 
-[NOT DRAFTED] — see outline §13.3 (cross-references §9.4 once drafted).
+[NOT DRAFTED] — see outline §10.3 (cross-references §8.5 once drafted).
 
-### 11.4 Access control on `thread_id`
+### 10.4 Access control on `thread_id`
 
 A `thread_id` is a capability, not an identity. Whoever can present it can read
 the thread with `get_state`, patch it with `update_state`, or resume it with
@@ -857,13 +1003,13 @@ LangGraph won't remind you.
 
 ---
 
-## 12. Cross-Worker Coordination at Scale
+## 11. Cross-Worker Coordination at Scale
 
 The patterns so far assume one execution at a time. A checkpointed graph that handles one user's request is durable. A fan-out of `Send` workers that share one process is concurrent.
 
 Production is a different class of concurrency: multiple processes, multiple machines, competing for the same downstream resources and the same shared state. The mechanisms below don't come from LangGraph — they come from running any stateful workflow system in a multi-worker deployment. What the framework gives you is the substrate to attach them: the `Store` for shared state, the checkpointer as a coordination point, and the discipline of deterministic keys.
 
-### 12.1 Circuit breaking across workers
+### 11.1 Circuit breaking across workers
 
 A retry policy handles one node's failure in isolation. When every worker shares the same failing dependency — a search provider returning 503s, a model endpoint timing out — each node burns through its own retry budget independently, on its own clock, unaware that the other nineteen workers are doing the same thing. The result is a thundering herd of retries against an already-down service, followed by a wave of exhausted-attempt failures that all surface at once.
 
@@ -877,7 +1023,7 @@ When the cooldown expires, a probe request — the first run that reaches the fa
 
 Circuit breaking and retry compose, not overlap. Retry handles the single transient failure that recovers in milliseconds. Circuit breaking handles the sustained outage where retrying is worse than not trying. A `RetryPolicy` with three attempts on a node whose dependency is behind a circuit breaker serves the first two attempts normally; the breaker only trips after a pattern of failures that the retry policy could not resolve.
 
-### 12.2 Outbox leasing at scale
+### 11.2 Outbox leasing at scale
 
 The outbox pattern (§6.2) gives each effect a stable key and a separate worker for delivery. In a single-worker deployment the delivery is straightforward: one process claims unprocessed rows, dispatches them, and marks them done.
 
@@ -901,7 +1047,7 @@ RETURNING *;
 
 The cost is visible in the failure mode: a handler that outlives its `locked_until` can be claimed by a second worker before the first finishes. The consumer of the effect must be idempotent, because at-least-once delivery with lease-based coordination is exactly that — at least once. The outbox buys you deterministic submission; it does not buy you exactly-once delivery.
 
-### 12.3 Concurrent resume
+### 11.3 Concurrent resume
 
 `graph.update_state(...)` followed by `ainvoke(None, config)` resumes a paused thread. Nothing in the checkpointer prevents two callers from doing this simultaneously on the same `thread_id`.
 
@@ -911,7 +1057,7 @@ The fix is an application-level advisory lock, keyed on `thread_id`, acquired be
 
 ---
 
-## 13. Scope, Limitations and Verification
+## 12. Scope, Limitations and Verification
 
 This is not a production case study. Nothing in this article comes from
 operating this agent under real traffic — no load data, no incident log, no
@@ -938,6 +1084,11 @@ here, read from source, or taken from docs. Known untested: `durability="async"`
 under a hard kill, a changed graph topology against a persisted thread, strict
 msgpack mode for a type outside the schema, and everything under real load.
 
+The delivery handler is a stub that prints; the submit, lease, retry and
+dead-letter machinery around it is what the tests exercise. The outbox row and
+the domain write are separate transactions, not the shared one §6.2 describes
+as possible.
+
 Model tiering by task difficulty — a cheap model for easy nodes, a strong model
 for hard ones — is explicitly out of scope. It's a cost/quality policy
 decision, orthogonal to LangGraph's actual job of wiring control flow. Each
@@ -947,9 +1098,9 @@ where per-node model binding is already discussed.
 
 ---
 
-## 14. What's Next
+## 13. What's Next
 
-[NOT DRAFTED] — see outline §11.
+[NOT DRAFTED] — see outline §13.
 
 ---
 

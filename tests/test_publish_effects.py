@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import unittest
 from unittest.mock import patch
@@ -11,6 +13,7 @@ from course_discovery.domain.models import DeliveryStatus
 from course_discovery.effects.factory import build_gateway, set_gateway
 from course_discovery.effects.gateway import InlineGateway, OutboxGateway
 from course_discovery.effects.memory_store import InMemoryOutboxStore
+from course_discovery.effects.handlers import deliver_digest
 from course_discovery.effects.models import Effect
 from course_discovery.effects.worker import OutboxWorker
 from course_discovery.review.router import discard_node, publish_node
@@ -156,6 +159,19 @@ class PublishNodeTests(unittest.TestCase):
 
     def test_discard_node_clears_publish_status(self):
         self.assertEqual(discard_node({"run_id": "r1"}), {"publish_status": None})
+
+
+class DeliverDigestTests(unittest.TestCase):
+    def test_idempotency_key_reaches_the_receiver_on_every_delivery(self):
+        effect = Effect(key="publish:r1", kind="publish_digest", payload={"digest": "d"})
+        outputs = []
+        for _ in range(2):
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                deliver_digest(effect)
+            outputs.append(buffer.getvalue())
+
+        self.assertTrue(all("idempotency-key=publish:r1" in out for out in outputs))
 
 
 class FactoryTests(unittest.TestCase):

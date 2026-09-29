@@ -18,6 +18,7 @@ from course_discovery.effects.gateway import OutboxGateway
 from course_discovery.effects.models import RecordStatus
 from course_discovery.effects.postgres_store import PostgresOutboxStore
 from course_discovery.effects.worker import OutboxWorker
+from course_discovery.persistence.checkpointer import prune_checkpoints
 from course_discovery.workflows.outer_graph import build_graph
 from test_integration_postgres import QUERY, _durable_saver, _thread
 
@@ -157,3 +158,37 @@ class PublishThroughPostgresOutboxTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.outbox_rows(), 1)
         self.assertEqual(self.worker().run_once().delivered, 0)
         self.assertEqual(self.handler.delivered, [f"publish:{thread_id}"])
+
+
+@unittest.skipUnless(TEST_DATABASE_URL, "TEST_DATABASE_URL not set")
+class CheckpointPruneTests(unittest.IsolatedAsyncioTestCase):
+    async def test_prunes_only_threads_older_than_cutoff(self):
+        from datetime import datetime, timedelta, timezone
+
+        env = patch.dict(os.environ, {"DATABASE_URL": TEST_DATABASE_URL})
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop("OPENROUTER_API_KEY", None)
+        set_gateway(OutboxGateway(PostgresOutboxStore(TEST_DATABASE_URL)))
+        self.addCleanup(set_gateway, None)
+        prefix = uuid.uuid4().hex
+        old, fresh = f"{prefix}-old", f"{prefix}-fresh"
+
+        async with _durable_saver() as saver:
+            await saver.setup()
+            graph = build_graph(checkpointer=saver)
+            for thread in (old, fresh):
+                await graph.ainvoke(_initial_state(QUERY, thread), _thread(thread))
+
+            future = datetime.now(timezone.utc) + timedelta(days=60)
+            pruned = await prune_checkpoints(saver, 30, now=future)
+            self.assertIn(old, pruned)
+            self.assertIn(fresh, pruned)
+
+            await graph.ainvoke(_initial_state(QUERY, f"{prefix}-c"), _thread(f"{prefix}-c"))
+            pruned_now = await prune_checkpoints(saver, 30)
+            self.assertNotIn(f"{prefix}-c", pruned_now)
+            remaining = [c async for c in saver.alist(_thread(f"{prefix}-c"))]
+            self.assertTrue(remaining)
+            gone = [c async for c in saver.alist(_thread(old))]
+            self.assertEqual(gone, [])

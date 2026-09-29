@@ -58,6 +58,11 @@ class OutboxWorker:
         stats = WorkerStats()
         for record in self.store.claim(self.clock(), self.batch_size, self.lease_seconds):
             self._process(record, stats)
+        if stats.dead:
+            logger.error(
+                "effects_dead_lettered",
+                extra={"event": "outbox.effects_dead_lettered", "dead": stats.dead},
+            )
         return stats
 
     def run_forever(self, stop: threading.Event, poll_seconds: float = 1.0) -> None:

@@ -20,8 +20,8 @@ walkthrough of the repo.
 node. Resume re-runs the interrupted node from the top, so the production
 question is what happens across that seam: what replays, what must not run
 twice, and where non-determinism is allowed to live. §5 (durability) and §6
-(effects) carry this; §7 (retries, timeouts, caches) and §8-§9 (brittleness,
-providers) are the surrounding machinery.
+(effects) carry this; §7 (retries, timeouts, caches) and §8 (providers
+and spend) are the surrounding machinery.
 
 **Claim labels.** Each mechanism claim in the article is one of: observed here
 (a test or experiment in this repo, on the stated langgraph version), read from
@@ -38,15 +38,15 @@ headers below; sections 1, 12, and 13 are framing/meta and carry no tag.
 
 | Concern | Where it's covered |
 |---|---|---|
-| `[performance]` | §3.2 Send fan-out, §5.2 durability modes, §5.5 subgraph resume cost, §7.3 CachePolicy, §7.2 async nodes, §10.2 stream_mode, §12.3 concurrent resume |
-| `[ux]` | §4.3 interrupt UX gaps, §10.2 stream_mode |
+| `[performance]` | §3.2 Send fan-out, §5.2 durability modes, §5.5 subgraph resume cost, §7.3 CachePolicy, §7.2 async nodes, §9.2 stream_mode, §11.3 concurrent resume |
+| `[ux]` | §4.3 interrupt UX gaps, §9.2 stream_mode |
 | `[durability]` | §4.1 interrupt_before, §5.1-§5.4 checkpoints, durability modes, replay, `@task` |
-| `[reliability]` | §6.2 outbox, §7.1 RetryPolicy, §7.2 timeouts, §7.4 circuit breaking, §8.2 rate limiting, §9.1 provider fallback, §9.3 custom fallback, §11.2 checkpoint/graph versioning, §12.1 circuit breaking across workers, §12.2 outbox leasing |
-| `[correctness]` | §2.2 reducers, §5.3 replay determinism, §6.1 idempotent writes, §8.3 schema-drift validation, §12.3 concurrent resume |
-| `[cost]` | §5.5 subgraph resume cost, §7.1 retry multiplication, §8.2 rate limiting, §9.2 OpenRouter/LiteLLM |
-| `[security]` | §9.4 guardrails, §11.3 security primitives, §11.4 thread access control |
-| `[compliance]` | §5.6 Store vs. checkpointer / retention, §11.1 GDPR |
-| `[observability]` | §10.1 OpenTelemetry |
+| `[reliability]` | §6.2 outbox, §7.1 RetryPolicy, §7.2 timeouts, §7.4 circuit breaking, §8.3 rate limiting, §8.1 provider fallback, §8.4 custom fallback, §10.2 checkpoint/graph versioning, §11.1 circuit breaking across workers, §11.2 outbox leasing |
+| `[correctness]` | §2.2 reducers, §5.3 replay determinism, §6.1 idempotent writes, §7.1 schema-failure classification, §11.3 concurrent resume |
+| `[cost]` | §5.5 subgraph resume cost, §7.1 retry multiplication, §8.3 rate limiting, §8.2 OpenRouter/LiteLLM |
+| `[security]` | §8.5 guardrails, §10.3 security primitives, §10.4 thread access control |
+| `[compliance]` | §5.6 Store vs. checkpointer / retention, §10.1 GDPR |
+| `[observability]` | §9.1 OpenTelemetry |
 | `[maintainability]` | §3.3 subgraphs |
 | `[safety]` | §4.4 recursion_limit |
 
@@ -168,7 +168,7 @@ app-layer: LangGraph gives `get_state(config)` to poll, not a push mechanism.
 One-paragraph sketch, not a protocol design. `update_state()` lets a reviewer
 patch state before resuming, not just approve/reject. Nothing stops two callers
 resuming the same `thread_id` concurrently — an app-level lock. Cross-reference
-§11.4: the same `update_state` call can write the feedback that opens the
+§10.4: the same `update_state` call can write the feedback that opens the
 publish gate, so who may resume is an access question, not only a UX one.
 
 **4.4 `recursion_limit` as a structural safety net** `[safety]`
@@ -265,7 +265,10 @@ was half-idempotent and is now keyed on `(course_id, source_url)` with
 (trade-off: last write wins, no history); `recommendation_events` carries an
 `idempotency_key`; the write that swallowed its own FK failure now re-raises,
 so a missing `users` row surfaces instead of silently dropping feedback. Fail
-closed, visibly.
+closed, visibly. Counterpart: read-side failures may degrade into a note on
+state if the reviewer sees it in the digest; writes never degrade. Notes are
+free text, capped in the digest, and do not lower the ranking's apparent
+confidence.
 
 **6.2 Outbox behind a port** `[reliability]`
 
@@ -317,7 +320,9 @@ client-level retries (the chat client ships its own) multiply with
 `RetryPolicy`, so `build_llm` defaults to 0 and only nodes without a policy opt
 back in; exhausted retries raise out of the graph and the run stays resumable
 from its checkpoint. Retrying a mutation is safe only because `submit` is keyed
-(§6).
+(§6). A structured-output parse failure is a permanent error the classifier does
+not match: not retried, converted to fail-closed error state, and counted as a
+provider signal (§8.4).
 
 **7.2 Timeouts and async nodes** `[reliability]` `[performance]`
 
@@ -345,32 +350,9 @@ the next `Send`) or delegated to a client library or gateway. Not implemented.
 
 ---
 
-## 8. API Brittleness by Design `[reliability]` `[correctness]` (~350 words)
+## 8. Provider-Level Resilience and Spend Control `[reliability]` `[cost]` `[security]` (~450 words)
 
-**8.1 Graceful degradation as the baseline**
-
-Lead with worked examples: LLM nodes falling back to deterministic parsing when
-no API key is present (no call attempted); the cache falling back to an
-in-memory seed when no database is configured; the search worker recording a
-visible note instead of collapsing the run. "Fail closed with a visible
-limitation." Distinguish this from the read/write paths that re-raise (§6.1):
-degrade where a fallback is correct, fail where it would hide data loss.
-
-**8.2 Rate limiting** `[cost]` `[reliability]`
-
-`rate_limiter=` on chat models smooths outbound call rate when several nodes
-share a provider quota; in-process only, does not coordinate across workers.
-
-**8.3 Schema drift / structured-output validation** `[correctness]`
-
-Pydantic structured output fails loudly when a provider's output changes shape.
-It does not catch well-formed but malicious output (§9.4).
-
----
-
-## 9. Provider-Level Resilience and Spend Control `[reliability]` `[cost]` `[security]` (~450 words)
-
-**9.1 `.with_fallbacks()` vs. `ModelFallbackMiddleware`** `[reliability]`
+**8.1 `.with_fallbacks()` vs. `ModelFallbackMiddleware`** `[reliability]`
 
 `Runnable.with_fallbacks()` (`langchain_core.runnables`, not LangGraph-specific)
 tries fallback runnables in order until one succeeds. `ModelFallbackMiddleware`
@@ -380,7 +362,7 @@ graph owns structural control flow; the Runnable layer owns call-level
 resilience. `init_chat_model()` does not natively take a fallback list. Tie back
 to §5.3: a fallback provider is one more reason replay output can differ.
 
-**9.2 OpenRouter and LiteLLM** `[cost]`
+**8.2 OpenRouter and LiteLLM** `[cost]`
 
 OpenRouter via `langchain-openrouter`; its `models: [...]` priority array
 retries on context-length errors, moderation flags, rate limits or downtime,
@@ -392,7 +374,14 @@ live; say so. LiteLLM has two shapes: SDK in-process (`ChatLiteLLM`,
 common production pattern and spend/cache-token billing accuracy is a known
 rough edge.
 
-**9.3 When the gateway isn't enough** `[reliability]` `[cost]` `[compliance]`
+**8.3 Rate limiting** `[cost]` `[reliability]`
+
+`rate_limiter=` on chat models smooths outbound call rate when several nodes
+share a provider quota; the limiter must be a module-level instance to outlive
+the call. In-process only: it does not coordinate across workers (that belongs
+at the gateway, §8.2) and limits the rate of starting calls, not their success.
+
+**8.4 When the gateway isn't enough** `[reliability]` `[cost]` `[compliance]`
 
 Custom fallback logic layered on top of the gateway, not instead of it. A gateway
 defines failure as a provider error and the substitute as another model; name the
@@ -400,12 +389,15 @@ business requirements that break that default: a wrong answer worse than a faile
 call (validation-triggered escalation), scores that must stay comparable within a
 run, a substitute that is not a model (stale cache, template, parked run),
 per-tenant or per-data-class provider rules, a budget or deadline scoped to the
-run, and substitution that must be visible to a reviewer (§4.3). Cost: you own the
+run, and substitution that must be visible to a reviewer (§4.3). A changed output
+shape is invisible to the gateway (it returns 200), so validation failures are
+counted into a failure rate that drives the §11.1 breaker; a rate catches shape,
+not meaning, which takes an eval set. Cost: you own the
 failure taxonomy and its tests; a validation-triggered fallback is testable with
 a stub model where a real provider outage is not. Decision rule: gateway for
 provider failure, custom logic only for these cases.
 
-**9.4 Guardrails and security** `[security]`
+**8.5 Guardrails and security** `[security]`
 
 Same wrap-the-Runnable shape as fallback: no native prompt-injection or
 PII-guardrail primitive in LangChain/LangGraph core. Concrete instantiation: an
@@ -416,38 +408,38 @@ integration test asserting the guardrail fires on a known case. Not implemented.
 
 ---
 
-## 10. Observability `[observability]` `[performance]` `[ux]` (~400 words)
+## 9. Observability `[observability]` `[performance]` `[ux]` (~400 words)
 
-**10.1 OpenTelemetry via LangSmith** `[observability]`
+**9.1 OpenTelemetry via LangSmith** `[observability]`
 
 LangSmith has native end-to-end OTel support — `LANGSMITH_OTEL_ENABLED=true`
 plus standard OTLP endpoint/headers env vars; traces can route to
 Datadog/Grafana/Jaeger over plain OTLP. (OpenInference/Traceloop bridges exist
 for LangSmith-independent setups.) Not wired in this repo.
 
-**10.2 `stream_mode`** `[performance]` `[ux]`
+**9.2 `stream_mode`** `[performance]` `[ux]`
 
 Current modes: `"values"`, `"updates"`, `"messages"`, `"custom"`, `"debug"`,
 `"checkpoints"`, `"tasks"`. A list yields `(mode, chunk)` tuples; a single string
 yields bare chunks. How a client gets partial progress without polling. Note
 `"tasks"` and `"updates"` also expose `@task` boundaries (§5.4).
 
-**10.3 Domain metrics as a light example**
+**9.3 Domain metrics as a light example**
 
 Brief and short: cache hit rate, calls-per-run, latency, token count as
 instances of the general "what to measure" question.
 
 ---
 
-## 11. What LangGraph Doesn't Own `[compliance]` `[security]` (~400 words)
+## 10. What LangGraph Doesn't Own `[compliance]` `[security]` (~400 words)
 
-**11.1 GDPR / data retention**
+**10.1 GDPR / data retention**
 
 Cross-reference §5.6: the checkpointer and `Store` persist whatever PII flows
 through state at every superstep, with no built-in compliance tooling. The
 compliance lever sits at the model-provider boundary.
 
-**11.2 Checkpoint and graph versioning** `[reliability]`
+**10.2 Checkpoint and graph versioning** `[reliability]`
 
 Two distinct failure modes: state schema versioning (a changed state shape can
 break deserialization of old checkpoints; already hit in small form as the
@@ -455,11 +447,11 @@ msgpack allowlist and enum warnings, and it is also a deserialization-safety
 control) versus graph structural versioning (changed topology can break
 in-flight threads even when state did not change; not tested here).
 
-**11.3 Security/guardrail primitives**
+**10.3 Security/guardrail primitives**
 
-Cross-reference §9.4 rather than re-explain.
+Cross-reference §8.5 rather than re-explain.
 
-**11.4 Access control on `thread_id`** `[security]`
+**10.4 Access control on `thread_id`** `[security]`
 
 A `thread_id` is a bearer capability. `update_state` on `manager_feedback` can
 open the publish gate that `interrupt_before` guards, so whoever can resume can
@@ -469,23 +461,23 @@ Not implemented; the CLI has one user.
 
 ---
 
-## 12. Cross-Worker Coordination at Scale `[reliability]` `[correctness]` `[performance]` (~400 words)
+## 11. Cross-Worker Coordination at Scale `[reliability]` `[correctness]` `[performance]` (~400 words)
 
-**12.1 Circuit breaking across workers** `[reliability]`
+**11.1 Circuit breaking across workers** `[reliability]`
 
 Circuit state in Store (cross-worker, global). Checked at queue-consumer boundary before graph execution, also at subgraph entry for runs already in progress. Half-open probe requests. Composes with `RetryPolicy` (§7.1): retry handles single call failures, circuit breaker handles sustained outage. Thundering herd prevention emerges from the shared failure counter — one worker probes instead of twenty retrying simultaneously.
 
-**12.2 Outbox leasing at scale** `[reliability]`
+**11.2 Outbox leasing at scale** `[reliability]`
 
 `FOR UPDATE SKIP LOCKED` row claiming so multiple workers don't deliver the same effect. Crashed worker's lease expires and rows are reclaimed. Attempt counting at claim time for crash-loop dead-lettering. Cost: a handler that outlives `locked_until` can be claimed twice — consumer must be idempotent.
 
-**12.3 Concurrent resume** `[correctness]` `[performance]`
+**11.3 Concurrent resume** `[correctness]` `[performance]`
 
 Nothing prevents two callers resuming the same `thread_id` simultaneously. Risk is double work (LLM calls, synthesis), not corruption (deterministic keys make re-submit a no-op). Application-level advisory lock (`pg_advisory_xact_lock`) before `ainvoke`, not inside the graph.
 
 ---
 
-## 13. Scope, Limitations and Verification (~250 words)
+## 12. Scope, Limitations and Verification (~250 words)
 
 - Not a production case study — no load data, no incident log, no
   cost-at-scale numbers. A demonstration of mechanics using a domain-shaped
@@ -504,7 +496,7 @@ Nothing prevents two callers resuming the same `thread_id` simultaneously. Risk 
 
 ---
 
-## 14. What's Next (~150 words)
+## 13. What's Next (~150 words)
 
 Next steps that add surfaces and infrastructure around the mechanics shown,
 none of which change the core patterns: a real delivery handler and
@@ -547,12 +539,11 @@ count, and validation summary, then prompts for review. Type `approve`,
 | 5. Durability | 800 |
 | 6. Effects | 700 |
 | 7. Node-Level Resilience | 450 |
-| 8. API Brittleness by Design | 350 |
-| 9. Provider-Level Resilience | 450 |
-| 10. Observability | 400 |
-| 11. What LangGraph Doesn't Own | 400 |
-| 12. Cross-Worker Coordination at Scale | 400 |
-| 13. Scope, Limitations and Verification | 250 |
-| 14. What's Next | 150 |
+| 8. Provider-Level Resilience | 500 |
+| 9. Observability | 400 |
+| 10. What LangGraph Doesn't Own | 400 |
+| 11. Cross-Worker Coordination at Scale | 400 |
+| 12. Scope, Limitations and Verification | 250 |
+| 13. What's Next | 150 |
 | Appendix | 100 |
-| **Total** | **~6,200** |
+| **Total** | **~6,150** |

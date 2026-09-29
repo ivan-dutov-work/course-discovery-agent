@@ -451,7 +451,7 @@ resume path.
   `publish_node` without passing through `review_gate` — verify the graph
   topology still forces that after this node is inserted.
 
-### Step 32 — OpenRouter as the single LLM gateway (§9.1, §9.2)
+### Step 32 — OpenRouter as the single LLM gateway (§8.1, §8.2)
 
 **Files:** `pyproject.toml`, new `course_discovery/app/llm.py`, `app/gateway.py`,
 `review/router.py`, `research_agent/synthesis/nodes.py`, `CLAUDE.md`, `README.md`,
@@ -475,7 +475,7 @@ resume path.
 - `tests/test_llm.py` asserts the outgoing request carries the priority list
   with the primary first, and that a missing key fails closed.
 
-### Step 33 — Rate limiter on `router_node`'s LLM (§8.2)
+### Step 33 — Rate limiter on `router_node`'s LLM (§8.3)
 
 **File:** `course_discovery/review/router.py`
 
@@ -487,7 +487,7 @@ called repeatedly within a single run — once per `PUBLISH`/`REWRITE`/
 `AUGMENT`/`RESET`/`DISCARD` review round-trip — so it's the most honest
 "shared quota under repeated calls" example.
 
-### Step 34 — Hand-rolled guardrail around `synthesizer` (§9.4)
+### Step 34 — Hand-rolled guardrail around `synthesizer` (§8.5)
 
 **Files:** new `course_discovery/research_agent/synthesis/guardrails.py`,
 `course_discovery/research_agent/synthesis/nodes.py`, new
@@ -513,7 +513,7 @@ graph mechanics, not NLP tooling):
   prompt-injection string and a canned PII pattern — the "verified, not just
   wired in" bar from `ARTICLE_TODO.md`.
 
-### Step 35 — OpenTelemetry via LangSmith (§10.1, no code)
+### Step 35 — OpenTelemetry via LangSmith (§9.1, no code)
 
 **Files:** `README.md`, `CLAUDE.md` Environment section
 
@@ -522,7 +522,7 @@ Document `LANGSMITH_TRACING=true`, `LANGSMITH_OTEL_ENABLED=true`,
 `OTEL_EXPORTER_OTLP_HEADERS` as optional env vars. No source change — that's
 the substance of the section, not a gap in it.
 
-### Step 36 — `stream_mode` in the CLI (§10.2)
+### Step 36 — `stream_mode` in the CLI (§9.2)
 
 **File:** `course_discovery/app/cli.py`
 
