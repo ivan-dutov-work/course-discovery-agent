@@ -11,9 +11,5 @@ dependencies = [
 	"python-dotenv>=1.1.1",
 	"psycopg[binary]>=3.2",
 	"langchain-openrouter>=0.2.9",
-]
-
-[dependency-groups]
-dev = [
-    "langgraph-checkpoint-postgres>=3.1.2",
+	"langgraph-checkpoint-postgres>=3.1.2",
 ]

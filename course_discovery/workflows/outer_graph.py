@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import time
 
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
 from course_discovery.app.gateway import gateway_node
 from course_discovery.domain.models import RoutingAction
 from course_discovery.domain.state import AgentState
 from course_discovery.observability.logging import get_logger
+from course_discovery.persistence.checkpointer import memory_saver
 from course_discovery.research_agent.memory.nodes import user_memory_update_node
 from course_discovery.review.nodes import review_gate_node
 from course_discovery.review.router import (
@@ -74,7 +74,7 @@ def build_graph(checkpointer=None, research_compile_kwargs=None):
     builder.add_edge("discard_node", END)
 
     graph = builder.compile(
-        checkpointer=checkpointer or MemorySaver(),
+        checkpointer=checkpointer or memory_saver(),
         interrupt_before=["review_gate"],
     )
 
