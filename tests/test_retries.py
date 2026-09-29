@@ -20,6 +20,7 @@ from course_discovery.effects.memory_store import InMemoryOutboxStore
 from course_discovery.effects.worker import OutboxWorker
 from course_discovery.persistence import postgres
 from course_discovery.persistence.checkpointer import memory_saver
+from course_discovery.research_agent.cache import nodes as cache_nodes
 from course_discovery.research_agent.memory import nodes as memory_nodes
 from course_discovery.research_agent.search import nodes as search_nodes
 from course_discovery.research_agent.search.tavily_client import TavilyClient
@@ -232,6 +233,37 @@ class GraphRetryTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(memory_nodes, "record_feedback", record):
             with self.assertRaises(psycopg.errors.CheckViolation):
                 await graph.ainvoke(None, config)
+
+        self.assertEqual(calls["n"], 1)
+
+    async def test_memory_read_is_retried_on_transient_db_error(self):
+        calls = Counter()
+        failures = [psycopg.OperationalError("connection lost")] * 2
+        real = memory_nodes.load_user_memory
+
+        def load(user_id):
+            calls["n"] += 1
+            if failures:
+                raise failures.pop(0)
+            return real(user_id)
+
+        with patch.object(memory_nodes, "load_user_memory", load):
+            await build_graph().ainvoke(_initial_state(QUERY, "r-read"), _config("r-read"))
+
+        self.assertEqual(calls["n"], 3)
+
+    async def test_cache_read_failure_propagates_instead_of_returning_empty(self):
+        calls = Counter()
+
+        def search(*args, **kwargs):
+            calls["n"] += 1
+            raise psycopg.errors.UndefinedTable("courses")
+
+        with patch.object(cache_nodes, "search_course_cache", search):
+            with self.assertRaises(psycopg.errors.UndefinedTable):
+                await build_graph().ainvoke(
+                    _initial_state(QUERY, "r-cache-read"), _config("r-cache-read")
+                )
 
         self.assertEqual(calls["n"], 1)
 

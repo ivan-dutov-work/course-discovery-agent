@@ -48,7 +48,7 @@ def load_user_memory(user_id: str | None) -> UserMemory:
                 "user_memory_load_error",
                 extra={"event": "persistence.user_memory_load_error", **sanitize_error(exc)},
             )
-            return UserMemory()
+            raise
 
 
 def record_feedback(

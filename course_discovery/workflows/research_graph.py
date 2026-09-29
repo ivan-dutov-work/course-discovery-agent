@@ -65,10 +65,10 @@ def build_research_graph(**compile_kwargs):
     builder = StateGraph(AgentState)
 
     builder.add_node("research_entry", research_entry_node)
-    builder.add_node("user_memory_lookup", user_memory_lookup_node)
-    builder.add_node("course_cache_lookup", course_cache_lookup_node)
-    builder.add_node("research_planner", research_planner_node)
     retry = transient_retry()
+    builder.add_node("user_memory_lookup", user_memory_lookup_node, retry_policy=retry)
+    builder.add_node("course_cache_lookup", course_cache_lookup_node, retry_policy=retry)
+    builder.add_node("research_planner", research_planner_node)
     builder.add_node("tavily_search_worker", tavily_search_worker_node, retry_policy=retry)
     builder.add_node("candidate_extractor", candidate_extractor_node)
     builder.add_node("aggregate", aggregate_node)
