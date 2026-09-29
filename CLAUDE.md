@@ -61,7 +61,9 @@ course_discovery/
   domain/           AgentState, Pydantic models (state contract)
   research_agent/   memory, cache, planner, search, extraction, validator, synthesizer
   review/           review_gate, router
-  persistence/      Postgres adapter
+  persistence/      Postgres adapter, checkpointer factory + msgpack allowlist
+  effects/          EffectGateway port, outbox stores, worker (publish goes through here)
+  resilience.py     transient-error classification, RetryPolicy, timeout settings
   observability/    structured logging
   app/              CLI, prompts, gateway
 migrations/         SQL schema (Postgres + pgvector)
@@ -84,6 +86,18 @@ uv sync
 uv run python main.py
 ```
 
+Optional local Postgres (pgvector) and the integration tests:
+
+```bash
+docker compose up -d
+export TEST_DATABASE_URL=postgresql://course:course@localhost:55432/course_discovery
+uv run python -m unittest discover tests
+```
+
+Without `TEST_DATABASE_URL` the integration tests skip. `docker-compose.yml` applies `migrations/` on a fresh volume only; apply a new migration by hand to an existing one.
+
+With `DATABASE_URL` set, the CLI checkpoints to Postgres (`open_checkpointer`). `EFFECT_GATEWAY=inline` (default) delivers the publish effect during `publish_node`; `EFFECT_GATEWAY=outbox` only queues it, and `python -m course_discovery.effects` runs the delivery worker.
+
 ## LLM
 
 All LLM nodes go through `course_discovery/app/llm.py:build_llm()`, which returns a `ChatOpenRouter` (`langchain-openrouter`) with `temperature=0` and structured output via Pydantic. Primary model is `deepseek/deepseek-v4.1-flash`; OpenRouter's server-side `models` priority array falls back to `google/gemini-2.5-flash-lite`. Do not build chat models anywhere else, and do not add providers without updating both code and article.
@@ -94,7 +108,8 @@ All LLM nodes go through `course_discovery/app/llm.py:build_llm()`, which return
 - **Loop budget.** `max_research_iterations` caps the replanning loop (default: 2–3).
 - **Evidence over claims.** Treat missing evidence as `uncertain`, not `valid`.
 - **Cache first.** The search worker is only dispatched for gaps, freshness checks, or new topics.
-- **Fail closed.** Gateway parsing, DB access, and search failures all fail closed with structured error state — no silent fallback to hallucination.
+- **Fail closed.** Gateway parsing, DB access, and search failures all fail closed with structured error state — no silent fallback to hallucination. DB writers re-raise; never swallow a write failure into a log line.
+- **No direct side effects in nodes.** External effects go through `EffectGateway.submit` with a key derived from `run_id`, never generated at execution time. Add `RetryPolicy` only to nodes that are read-only or idempotent, and let transient errors propagate so it can fire.
 
 ## Article Framing
 
