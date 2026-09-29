@@ -20,7 +20,7 @@ class _Result:
 class _FakeConn:
     def __init__(self):
         self.events: dict[str, tuple] = {}
-        self.evidence: set[tuple] = set()
+        self.evidence: dict[tuple, str] = {}
         self.users: set[str] = set()
         self.fail_on: str | None = None
 
@@ -42,10 +42,10 @@ class _FakeConn:
             else:
                 self.events[object()] = params
         elif "INSERT INTO course_evidence" in sql:
-            row = (params[0], params[1], params[2])
-            if "ON CONFLICT (course_id, source_url, quote_or_summary) DO NOTHING" not in sql:
-                row += (object(),)
-            self.evidence.add(row)
+            key = (params[0], params[1])
+            if "ON CONFLICT (course_id, source_url) DO UPDATE" not in sql:
+                key += (object(),)
+            self.evidence[key] = params[2]
         return _Result((1,))
 
 
@@ -93,6 +93,22 @@ class IdempotentWriteTests(unittest.TestCase):
                 upsert_courses([_course()], [])
 
         self.assertEqual(len(conn.evidence), 1)
+
+    def test_reresearch_with_changed_snippet_updates_evidence_in_place(self):
+        conn = _FakeConn()
+
+        @contextmanager
+        def fake_connect():
+            yield conn
+
+        changed = _course()
+        changed.evidence[0].quote_or_summary = "Now paid, certificate included"
+
+        with patch("course_discovery.research_agent.cache.repository.connect", fake_connect):
+            upsert_courses([_course()], [])
+            upsert_courses([changed], [])
+
+        self.assertEqual(list(conn.evidence.values()), ["Now paid, certificate included"])
 
     def test_record_feedback_creates_the_user_row_first(self):
         conn = _FakeConn()
