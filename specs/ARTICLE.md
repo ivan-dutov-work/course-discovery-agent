@@ -278,6 +278,16 @@ background write lands is a race. For ordinary failures (exceptions, not
 signals), all three modes behave identically: the exception is itself a
 superstep boundary, so even "write on exit" checkpoints before it propagates.
 
+What the coarse mode gives up on an ordinary failure is history. In a measured
+run against Postgres with a late transient failure, the per-step modes wrote
+twelve to fourteen checkpoints and "write on exit" wrote two, yet all three
+resumed the failed run without redoing finished nodes. Fewer checkpoints means
+fewer points to replay from or inspect, and nothing at all if the process dies
+instead of raising. The practical decision rule: durability is chosen per
+invocation, not per node, so a run that ends in an effect belongs under
+per-step writes, and only a run that can restart from scratch on a kill earns
+the cheaper mode.
+
 ### 5.3 Replay determinism
 
 Because a node is an atomic unit, deterministic replay only holds at node
@@ -293,7 +303,22 @@ checkpointed before their output reaches the effect. Keep effect nodes pure —
 they read from checkpointed state and produce no nondeterministic calls of
 their own. Temperature 0 is not a substitute for this architecture: model
 providers can change output between runs, and provider fallback (§9.1) produces
-the same class of divergence.
+the same class of divergence. The same holds for a search provider whose
+snippets change between calls, which is the more likely source of divergence in
+a pipeline where extraction and validation are deterministic code.
+
+The rule has a consequence for review flows. If the effect node reads the
+reviewed artifact from checkpointed state, what the human approved is what gets
+submitted, because nothing between the review and the effect re-runs the
+generator. Route crash recovery back through the generator and the approval
+attaches to text the reviewer never saw. This holds by construction in the
+graph described here; it was not tested end to end.
+
+Not every replay difference matters, and auditing them by whether they exist is
+the wrong test. A write that stamps `now()` differs between a run and its
+replay, which is harmless when the only reader is a tie-break ordering. A
+status that reads `delivered` in one run and `queued` in its replay is harmless
+until something branches on it. Audit replay differences by what reads them.
 
 ### 5.4 Intra-node memoization
 
@@ -320,12 +345,27 @@ A subgraph's internal replay does not benefit from memoization of its parent's
 scope. This aligns with the principle in §5.3 — the reliable seam is the node
 boundary, not the call boundary inside a node.
 
+Two smaller limits shape how far to trust it. The memo is scoped to a
+superstep, so a replan loop that revisits a node gets fresh executions, and
+replaying from an older checkpoint re-runs the calls. And the stored result has
+to deserialize: a return type outside the checkpointer's msgpack allowlist
+(§11.2) comes back as a plain dict, not the model that went in. These were
+observed on langgraph 1.1.2, not taken from the docs, and the subgraph behavior
+in particular has no identified mechanism, so reproduce it before relying on
+it.
+
 ### 5.5 Encapsulation cost: subgraph resume
 
 A subgraph is one node to its parent. When a subgraph node is interrupted and
 resumed, the entire subgraph re-runs — including already-successful parallel
 workers that a standalone graph would skip. The parent has no visibility into
 which subgraph workers completed.
+
+The cost is spend, not correctness. Re-running a sibling worker repeats its
+search or model call, but reducer-backed channels do not double-count: after a
+resumed run the number of completed calls still equals the number of unique
+queries. Whether the repeat is noise or a budget problem depends on what one
+worker costs.
 
 This is a known behavior with a documented root cause: subgraph task IDs are
 derived from the parent checkpoint ID, and that ID changes when the parent forks
@@ -401,15 +441,37 @@ store.get(("user_prefs", user_id), "profile")
 store.put(("user_prefs", user_id), "profile", {"goal": new_goal})
 ```
 
-Cross-thread memory — user profiles, preferences, historical data — lives in a
-separate store. The framework provides one, but it is also common to use a
-plain database table for the same purpose. The key distinction is scope: the
-checkpointer is implied by the graph itself and invisible to node code, while
-cross-thread storage requires explicit reads and writes. Conflating the two is
-a common source of confusion — the checkpointer persists state, so the instinct
-is to treat it as long-term memory, but its lifetime is bounded by the thread's
-checkpoint history. The durability that makes graphs resumable is also a
-retention liability (§11.1) with no built-in TTL or redaction.
+Cross-thread memory — user profiles, preferences, accumulated history — belongs
+in the `Store`, which is compiled in beside the checkpointer and keyed by
+namespace instead of thread. A node receives it only if it asks:
+
+```python
+graph = builder.compile(checkpointer=checkpointer, store=store)
+
+def update_profile(state: AgentState, *, store: BaseStore):
+    store.put(("user_prefs", state["user_id"]), "profile", {"goal": new_goal})
+```
+
+Two threads for the same user read the same item, where the checkpointer would
+give each its own history. That is the key distinction: the checkpointer is
+implied by the graph and invisible to node code, while the `Store` is explicit
+reads and writes. Conflating the two is a common source of confusion — the
+checkpointer persists state, so the instinct is to treat it as long-term
+memory, but its lifetime is bounded by the thread's checkpoint history.
+
+Worth naming: a `Store` write from a node is an effect, and replay re-runs it.
+`put` is an upsert on namespace and key, so it is replay-safe when the value
+derives from checkpointed state, and unsafe when the node reads a counter from
+the `Store` and writes it back incremented. The rule from §6.1 applies
+unchanged, and the write shares no transaction with the checkpoint (§6.2).
+
+A plain table keyed by user does the same job, and is often the better one
+when the profile needs joins, constraints or a transaction with domain data.
+The `Store` earns its place through namespacing, an optional embedding index
+over items, and one backend shared with the checkpointer. Retention is the
+other cost: the checkpointer keeps history until someone deletes it, and the
+Postgres-backed `Store` supports a per-item TTL that is opt-in, not a default
+(§11.1).
 
 ---
 
@@ -448,6 +510,14 @@ The key rule is that the idempotency key must be determinable before the node
 executes — a key generated at runtime (a new UUID) produces a different value on
 each replay and defeats the purpose. The run's own identifier, minted before the
 graph starts, is the natural source.
+
+The two key shapes encode different meanings for a re-run. A content-identity
+key with `DO UPDATE` treats a re-fetch as a correction: the latest snippet for a
+source replaces the old one, so replay converges on one row. The cost is
+history, since last write wins and nothing records what the row said before. A
+run-derived key with `DO NOTHING` treats a re-run as a no-op and keeps the
+first result, which is the right shape for events that must be recorded once
+and never revised.
 
 The second approach is to fail closed. A write that encounters an unexpected
 error (a constraint violation, a missing foreign key) should propagate the
@@ -500,11 +570,21 @@ be attached to the effect's identity, not its position in a list — replay
 reconstructs the list from checkpointed state and may produce a different
 order. No ordering between effects is guaranteed.
 
+Worth being precise about what a duplicate key does: with `DO NOTHING` the
+first payload wins. If replay recomputes a different payload for the same key,
+the store keeps the original and the difference disappears without a trace.
+That is the behavior you want when the payload derives from checkpointed state,
+and a warning sign when it does not. An adapter that attempts delivery during
+submit adds a wrinkle, since replay may attempt it again for a record that is
+still queued, so the consumer stays idempotent either way. This follows from
+the gateway's semantics; it was not exercised with more than one effect per
+node.
+
 ### 6.4 Operational gaps
 
 The patterns above handle submission, delivery, and dedup for a
-single-process, single-worker setup. What they do not address — dead-letter
-handling, handler timeouts, lease preemption, pruning — are problems that
+single-process, single-worker setup. What they do not address — handler timeouts and lease
+preemption above all — are problems that
 real queue infrastructure (SQS, RabbitMQ, Kafka) solves natively. The dividing
 line is scale: the outbox is for "a few effects per run, running in one
 process." When the system grows to the point where a handler can outlive its
@@ -518,6 +598,28 @@ outbox pattern to grow up — it requires the outbox pattern to hand off to
 something that already has these primitives. The outbox's job is deterministic
 submission; the queue's job is reliable execution. Conflating the two into a
 single component that tries to do both is where the gaps appear.
+
+Dead rows and old data need an operator path, and it belongs outside the
+delivery loop. A worker that also deletes is the same conflation of submission
+and execution that the queue hand-off avoids. Retention is worth its own
+answer, since the checkpointer never expires anything (§11.1).
+
+The consumer side is where the guarantee actually ends. At-least-once delivery
+moves the dedup boundary to the receiver: a lease can expire mid-handler, a
+second worker claims the row, and the effect is delivered twice. Deterministic
+keys make duplicate submission harmless; they do nothing for duplicate
+delivery unless the key travels with it as an idempotency key. Extending leases
+and timing out handlers is queue territory. Forwarding the key is the one piece
+the outbox can do itself, and a receiver that ignores it turns the guarantee
+into a hope.
+
+Recovering a dead record is a human replay. The row stopped because retries
+were exhausted or the payload was permanently bad, and requeueing it is an
+operator's answer to that stop. It is only safe for the same reason everything
+else here is: the key makes the redelivery idempotent. The cost is visible in
+the attempt counter. Resetting it gives the record a fresh budget and discards
+the failure history; keeping the history means a schema that separates lifetime
+attempts from current ones.
 
 ### 6.5 When a different architecture fits better
 
@@ -781,12 +883,23 @@ layer-of-abstraction point rather than a gap to fill.
 The checkpointer and `Store` (see §5.6) are, mechanically, just a database of
 user state. Whatever personal data flows through the state object (search
 queries, stored preferences, career goals, completed-course history) gets
-persisted at every superstep the checkpointer writes. There's no built-in TTL,
-no redaction primitive, no right-to-erasure call. Deleting a user's data means
+persisted at every superstep the checkpointer writes. The checkpointer has no
+retention policy of its own, `Store` expiry is an opt-in per-item TTL on the
+Postgres backend, and there is no redaction primitive and no right-to-erasure
+call. Deleting a user's data means
 writing `DELETE WHERE thread_id = ...` (checkpointer) or `store.delete(...)`
 (`Store`) yourself; LangGraph gives you the durability, not the retention policy
 on top of it. Worth stating plainly: this durability is also a retention
 liability you now own.
+
+The same gap shows up as plain housekeeping. Checkpoints accumulate at every
+superstep (a dozen or so per run under per-step durability), and the saver
+exposes deletion by `thread_id` but no way to enumerate threads or expire them
+by age. Pruning means querying the checkpoint tables yourself to pick the
+threads, then deleting through the saver. The selector has to be age-based, and
+an age cutoff cannot tell a finished run from one parked at a review gate; a
+long-lived review boundary (§4) and aggressive pruning pull in opposite
+directions. The outbox has the same growth problem on a smaller scale (§6.4).
 
 The actual compliance lever sits one layer down, at the model-provider
 boundary — zero-data-retention flags, DPAs, which region processes the
@@ -937,6 +1050,11 @@ durability mode. Where it matters the text says whether a finding was observed
 here, read from source, or taken from docs. Known untested: `durability="async"`
 under a hard kill, a changed graph topology against a persisted thread, strict
 msgpack mode for a type outside the schema, and everything under real load.
+
+The delivery handler is a stub that prints; the submit, lease, retry and
+dead-letter machinery around it is what the tests exercise. The outbox row and
+the domain write are separate transactions, not the shared one §6.2 describes
+as possible.
 
 Model tiering by task difficulty — a cheap model for easy nodes, a strong model
 for hard ones — is explicitly out of scope. It's a cost/quality policy
