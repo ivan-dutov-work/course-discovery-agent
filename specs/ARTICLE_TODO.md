@@ -11,8 +11,8 @@ code — implementation and article coverage are tracked separately).
 
 ## Status snapshot — implemented in code vs. next up
 
-Implemented and tested, **not yet written into ARTICLE.md** (details in the items
-below). Integration tests need `docker compose up -d` and
+Implemented and tested, and now written into ARTICLE.md §5–§6 (details in the items
+below; the "not yet in the article" notes on individual items are stale). Integration tests need `docker compose up -d` and
 `TEST_DATABASE_URL=postgresql://course:course@localhost:55432/course_discovery`.
 
 - Replay-safe writes: `migrations/002_idempotent_writes.sql`, `ON CONFLICT` on
@@ -57,7 +57,9 @@ below). Integration tests need `docker compose up -d` and
 
 **Still open:**
 
-- `Store` vs. checkpointer: untouched.
+- `Store` vs. checkpointer: drafted in §5.6, doc-and-experiment only (node injection,
+  cross-thread visibility and Postgres TTL checked on langgraph 1.1.2); the repo still
+  uses a hand-rolled `UserMemory` table.
 - Same-transaction outbox write with `recommendation_events` is not done; the
   outbox row and the domain write are separate transactions.
 - Handler for `publish_digest` still prints to stdout; only the delivery machinery
@@ -165,7 +167,7 @@ below). Integration tests need `docker compose up -d` and
       parameter; its signature is `defer, metadata, input_schema, retry_policy,
       cache_policy, destinations`. Don't claim node-level timeouts without checking the
       version the article targets.
-- [ ] **Durability modes** — `durability=` on `invoke`/`stream`, values `"exit"`
+- [x] **Durability modes** — `durability=` on `invoke`/`stream`, values `"exit"`
       (checkpoint only at graph exit, fastest/least safe), `"async"` (background
       checkpoint, balanced), `"sync"` (checkpoint before every step, safest/slowest).
       Frame as a tuning knob: candidate-extraction steps don't need `"sync"`; a
@@ -181,7 +183,7 @@ below). Integration tests need `docker compose up -d` and
       `sync` resumes without re-running `evidence_validator`, while `exit` has written
       no checkpoints and restarts from scratch. The safety difference, not only the
       granularity, is demonstrated.)*
-- [ ] **`Store` vs. checkpointer — the memory-scope distinction.** Checkpointer =
+- [x] **`Store` vs. checkpointer — the memory-scope distinction.** Checkpointer =
       thread-scoped run state, wired in via `compile(checkpointer=...)`, is what makes
       `interrupt_before` resumable. `Store` = cross-thread long-term memory (e.g.
       user_id-scoped), requires explicit `store.get`/`store.put` in node code. Our
@@ -290,7 +292,7 @@ brittleness, not just the mechanical knobs.
       failure-count field in state, checked before dispatching the next `Send`) or
       delegated to the client library/gateway in front of the API.
       *(Drafted in ARTICLE.md §7.4.)*
-- [ ] **Idempotency under checkpoint replay.** If a node crashes mid-execution and the
+- [x] **Idempotency under checkpoint replay.** If a node crashes mid-execution and the
       graph resumes from the last checkpoint, does re-running that node do something
       unsafe (double-charge, double-publish, duplicate insert)? `course_cache_upsert`
       is a good example of a node that's naturally idempotent (upsert semantics); a
@@ -321,7 +323,7 @@ brittleness, not just the mechanical knobs.
       end to end, and a `CHECK (false)` constraint proving the failure surfaces, the run
       stays paused at `user_memory_update`, and no partial rows land. Good concrete
       example for the "fail closed, visibly" point.
-- [ ] **Out-of-process effects: outbox behind a port.** *(Implemented in
+- [x] **Out-of-process effects: outbox behind a port.** *(Implemented in
       `course_discovery/effects/`; not yet in the article. Departures from the sketch
       below: the port also has `status(key)`; the worker leases rows
       (`locked_until`) so a crashed worker's rows are reclaimed, attempts are counted at
@@ -383,7 +385,7 @@ brittleness, not just the mechanical knobs.
 Checkpoints land at superstep boundaries. Completed nodes are not re-run on resume;
 the interrupted node is re-run from the top. Everything below follows from that.
 
-- [ ] **Keep non-determinism out of effect nodes.** An effect node should derive its
+- [x] **Keep non-determinism out of effect nodes.** An effect node should derive its
       payload only from checkpointed state; the LLM/search call that produced the input
       lives in an earlier node, so a checkpoint lands between them. Audit of this repo
       (read `publish_node`, `course_cache_upsert_node`, `user_memory_update_node`): all
@@ -393,7 +395,7 @@ the interrupted node is re-run from the top. Everything below follows from that.
       says "LLM" for them; the TODO's rate-limiting note already records this), so the
       fragility below is about a real search provider returning changing snippets, not
       about an LLM.
-- [ ] **Multiple effects in one node.** Not implemented (`publish_node` is the only
+- [x] **Multiple effects in one node.** Not implemented (`publish_node` is the only
       `submit` call site). Reasoning from `OutboxGateway`/`InlineGateway`, not tested:
       each effect has its own key; replay re-submits all, and existing keys are no-ops;
       the worker owns retry, so replay does not retry a delivered/queued/dead effect,
@@ -401,7 +403,7 @@ the interrupted node is re-run from the top. Everything below follows from that.
       record (whether that targets the key or any due row is unchecked). Keys must be
       stable per effect (not list position). `DO NOTHING` keeps the first payload if a
       replay recomputes a different one. No ordering between effects.
-- [ ] **`@task` intra-node memoization — observed on langgraph 1.1.2** (subagent
+- [x] **`@task` intra-node memoization — observed on langgraph 1.1.2** (subagent
       experiments, scripts not kept in the repo; each crash timing run once):
   - Works inside a plain `StateGraph` node, sync or async, no `@entrypoint`. On a
     top-level node, completed tasks short-circuit on resume and return the identical
@@ -424,38 +426,41 @@ the interrupted node is re-run from the top. Everything below follows from that.
     a plain dict.
   - `@task(retry_policy=...)` is in-run only; `cache_policy` is key-based and
     cross-thread; neither is the resume memoization.
-- [ ] **Resume cost in a subgraph.** Resuming re-runs already-successful sibling `Send`
+- [x] **Resume cost in a subgraph.** Resuming re-runs already-successful sibling `Send`
       workers (extra search/LLM spend; `tests/test_retries.py` counts calls). Checked
       whether this double-counts reducer output: it does not. After a subgraph resume
       `tavily_calls == len(set(completed_queries))`, same as standalone. (Ten results
       for five unique URLs in both cases is the mock catalog returning the same
       entries for two queries, not a resume artifact.)
-- [ ] **Approved digest equals published digest.** `publish_node` reads `digest` from
+- [x] **Approved digest equals published digest.** `publish_node` reads `digest` from
       checkpointed state, so what the reviewer saw is what is submitted, provided
       nothing re-runs the synthesizer between review and publish. The router LLM can
       classify differently if it is re-run after a crash, but the reviewer's text is
       already stored in `manager_feedback`. Not tested end to end.
-- [ ] **Small replay side effects, checked.** `course_cache_upsert` uses `now()` for
+- [x] **Small replay side effects, checked.** `course_cache_upsert` uses `now()` for
       `last_seen_at`/`updated_at`; the only reader is an `ORDER BY ... last_seen_at
       DESC` tie-break in cache lookup, so a replay reordering ties is benign.
       `publish_status` can differ between a run and its replay under `InlineGateway`
       (`DELIVERED` vs `QUEUED`); `user_memory_update` treats both as accepted, so
       nothing breaks, but any future branch on it would be replay-sensitive.
 
-## Operations the article should name (not built)
+## Operations the article should name
 
-- [ ] **Dead letters:** the worker marks rows `dead` and logs `effect_dead`; there is no
-      alerting, listing or requeue path (checked by grep in `course_discovery/effects/`).
-- [ ] **Lease vs handler duration:** a handler that outlives `locked_until` can be
-      claimed by a second worker, giving duplicate delivery; the consumer must be
-      idempotent. `deliver_digest` reads only the payload and does not forward the effect
-      key downstream.
-- [ ] **Growth:** no code deletes outbox rows or checkpoints (grep found no `DELETE`/prune
-      in `effects/`); checkpoints are 12–14 per run in `sync`.
+- [x] **Dead letters:** built. Worker logs `effects_dead_lettered` at error level;
+      `python -m course_discovery.effects dead` lists rows, `requeue <key>` resets
+      attempts to 0 (attempt history is lost). No pager/alert sink.
+- [x] **Lease vs handler duration:** not built by design (queue territory). A handler
+      that outlives `locked_until` can be claimed by a second worker. The effect key is
+      now printed by `deliver_digest` as an idempotency key; the stdout stub has no
+      receiver to dedup.
+- [x] **Growth:** built. `prune --older-than-days N [--checkpoints]` deletes delivered
+      outbox rows and, with the flag, whole threads whose newest checkpoint `ts` is
+      older than N days (`adelete_thread`). Age-based, so a run parked at review longer
+      than N days is deleted too.
 - [ ] **Access control on `thread_id`** — drafted in ARTICLE.md §11.4: the id is a bearer
   capability, and `update_state` on `manager_feedback` can open the publish gate.
   Not implemented; the CLI has one user.
-- [ ] **When not LangGraph:** Temporal/Restate/DBOS give durable execution at the
+- [x] **When not LangGraph:** Temporal/Restate/DBOS give durable execution at the
   activity level, which is what the outbox plus keys approximate by hand. Worth a
   short "when to reach for it instead" paragraph, not a comparison.
 - [ ] **Testing story:** the SIGKILL child-process test is the strongest evidence in the
