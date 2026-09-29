@@ -1,16 +1,24 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import os
-from urllib import request
+import re
 
 from course_discovery.domain.models import TavilySearchResult
+from course_discovery.research_agent.search.mock_catalog import CATALOG, MockListing
+
+
+def _tokenize(text: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9]+", text.lower()))
 
 
 class TavilyClient:
-    def __init__(self, api_key: str | None = None) -> None:
-        self.api_key = api_key or os.getenv("TAVILY_API_KEY")
+    """Deterministic stand-in for the Tavily search API.
+
+    The article is about LangGraph's control-flow patterns (fan-out, reducers,
+    replanning), not about web search. A production build would swap this class
+    for a real Tavily/Serper/Brave client behind the same `search()` signature
+    without touching any graph or node code.
+    """
 
     async def search(
         self,
@@ -18,44 +26,29 @@ class TavilyClient:
         *,
         max_results: int = 5,
     ) -> list[TavilySearchResult]:
-        if not self.api_key:
-            raise RuntimeError("TAVILY_API_KEY is required for Tavily search")
         return await asyncio.to_thread(self._search_sync, query, max_results)
 
     def _search_sync(self, query: str, max_results: int) -> list[TavilySearchResult]:
-        payload = json.dumps(
-            {
-                "api_key": self.api_key,
-                "query": query,
-                "max_results": max_results,
-                "search_depth": "basic",
-                "include_answer": False,
-                "include_raw_content": False,
-            }
-        ).encode("utf-8")
-        req = request.Request(
-            "https://api.tavily.com/search",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with request.urlopen(req, timeout=15) as response:  # noqa: S310
-            data = json.loads(response.read().decode("utf-8"))
+        query_tokens = _tokenize(query)
+        scored: list[tuple[float, MockListing]] = []
+        for listing in CATALOG:
+            listing_tokens = _tokenize(" ".join(listing.keywords) + " " + listing.title)
+            overlap = len(query_tokens & listing_tokens)
+            if overlap == 0:
+                continue
+            score = overlap / max(len(query_tokens), 1)
+            scored.append((score, listing))
 
-        results = []
-        for item in data.get("results", []):
-            results.append(
-                TavilySearchResult(
-                    query=query,
-                    title=item.get("title") or "Untitled result",
-                    url=item.get("url") or "",
-                    snippet=item.get("content") or item.get("snippet") or "",
-                    score=item.get("score"),
-                    raw_metadata={
-                        key: value
-                        for key, value in item.items()
-                        if key not in {"title", "url", "content", "snippet", "score"}
-                    },
-                )
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        results = [
+            TavilySearchResult(
+                query=query,
+                title=listing.title,
+                url=listing.url,
+                snippet=listing.snippet,
+                score=round(score, 3),
+                raw_metadata={"mock": True},
             )
-        return [result for result in results if result.url]
+            for score, listing in scored[:max_results]
+        ]
+        return results
