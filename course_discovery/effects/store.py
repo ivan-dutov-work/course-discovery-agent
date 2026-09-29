@@ -20,3 +20,11 @@ class OutboxStore(Protocol):
     def mark_dead(self, key: str, error: str) -> None: ...
 
     def get(self, key: str) -> OutboxRecord | None: ...
+
+    def list_dead(self, limit: int) -> list[OutboxRecord]: ...
+
+    def requeue(self, key: str, now: datetime) -> bool:
+        """Reset a dead record for redelivery; False if the key is not dead."""
+
+    def prune_delivered(self, older_than: datetime) -> int:
+        """Delete delivered records delivered before the cutoff; return the count."""

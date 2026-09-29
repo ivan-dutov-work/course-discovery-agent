@@ -57,7 +57,13 @@ class InMemoryOutboxStore:
             return claimed
 
     def mark_delivered(self, key: str, now: datetime) -> None:
-        self._update(key, status=RecordStatus.DELIVERED, locked_until=None, last_error=None)
+        self._update(
+            key,
+            status=RecordStatus.DELIVERED,
+            locked_until=None,
+            last_error=None,
+            delivered_at=now,
+        )
 
     def release(self, key: str, error: str, retry_at: datetime) -> None:
         self._update(
@@ -74,6 +80,34 @@ class InMemoryOutboxStore:
     def get(self, key: str) -> OutboxRecord | None:
         with self._lock:
             return self._records.get(key)
+
+    def list_dead(self, limit: int) -> list[OutboxRecord]:
+        with self._lock:
+            dead = [r for r in self._records.values() if r.status == RecordStatus.DEAD]
+        return sorted(dead, key=lambda r: r.effect.key)[:limit]
+
+    def requeue(self, key: str, now: datetime) -> bool:
+        with self._lock:
+            record = self._records.get(key)
+            if record is None or record.status != RecordStatus.DEAD:
+                return False
+            self._records[key] = replace(
+                record, status=RecordStatus.QUEUED, attempts=0, next_attempt_at=now
+            )
+            return True
+
+    def prune_delivered(self, older_than: datetime) -> int:
+        with self._lock:
+            stale = [
+                key
+                for key, record in self._records.items()
+                if record.status == RecordStatus.DELIVERED
+                and record.delivered_at is not None
+                and record.delivered_at < older_than
+            ]
+            for key in stale:
+                del self._records[key]
+        return len(stale)
 
     def _update(self, key: str, **changes) -> None:
         with self._lock:
