@@ -16,8 +16,9 @@ from course_discovery.effects.models import Effect
 from course_discovery.observability.logging import (
     get_logger,
     sanitize_error,
-    truncate_text,
+    preview,
 )
+from course_discovery.observability.metrics import record_degradation, record_review_decision
 
 
 logger = get_logger(__name__)
@@ -34,6 +35,14 @@ def _coerce_routing_decision(value: Any) -> RoutingDecision:
 
 
 def router_node(state: AgentState) -> dict:
+    update = _route(state)
+    decision = update.get("routing_decision")
+    if decision is not None:
+        record_review_decision(RoutingAction(decision).value)
+    return update
+
+
+def _route(state: AgentState) -> dict:
     run_id = state.get("run_id", "unknown")
     feedback = (state.get("manager_feedback") or "").strip()
     logger.info(
@@ -44,11 +53,12 @@ def router_node(state: AgentState) -> dict:
             "iteration_count": state.get("iteration_count", 0),
             "max_iterations": state.get("max_iterations", 3),
             "feedback_len": len(feedback),
-            "feedback_preview": truncate_text(feedback, max_len=80),
+            "feedback_preview": preview(feedback, max_len=80),
         },
     )
 
     if state.get("iteration_count", 0) >= state.get("max_iterations", 3):
+        record_degradation("router", "max_iterations_reached")
         logger.warning(
             "router_early_exit",
             extra={
@@ -63,6 +73,7 @@ def router_node(state: AgentState) -> dict:
         }
 
     if not feedback:
+        record_degradation("router", "no_feedback")
         logger.warning(
             "router_early_exit",
             extra={
@@ -151,6 +162,7 @@ def router_node(state: AgentState) -> dict:
             "iteration_count": state.get("iteration_count", 0) + 1,
         }
     except Exception as exc:  # noqa: BLE001
+        record_degradation("router", "classification_failed")
         logger.error(
             "router_error",
             extra={
@@ -204,7 +216,7 @@ def discard_node(state: AgentState) -> dict:
         extra={
             "event": "discard.complete",
             "run_id": state.get("run_id", "unknown"),
-            "reason": truncate_text(reason, max_len=160),
+            "reason": preview(reason, max_len=160),
         },
     )
     print(f"\n[DISCARD] {reason}\n")

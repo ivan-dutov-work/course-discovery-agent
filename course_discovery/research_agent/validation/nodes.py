@@ -7,6 +7,7 @@ from course_discovery.domain.models import (
 )
 from course_discovery.domain.state import AgentState
 from course_discovery.observability.logging import get_logger
+from course_discovery.observability.metrics import record_degradation, record_validation
 
 
 logger = get_logger(__name__)
@@ -101,6 +102,7 @@ def evidence_validator_node(state: AgentState) -> dict:
             "unsupported_claim_count": sum(len(item.missing_evidence) for item in validations),
         }
     )
+    record_validation(valid=len(valid), rejected=len(rejected), uncertain=len(uncertain))
     logger.info(
         "evidence_validation_complete",
         extra={
@@ -127,4 +129,15 @@ def enough_valid(state: AgentState):
         return "course_cache_upsert"
     if state.get("research_iteration", 0) < state.get("max_research_iterations", 2):
         return "replanner"
+    record_degradation("research", "replan_budget_exhausted")
+    logger.warning(
+        "replan_budget_exhausted",
+        extra={
+            "event": "validator.replan_budget_exhausted",
+            "run_id": state.get("run_id", "unknown"),
+            "valid_count": len(state.get("valid_courses", [])),
+            "min_valid": min_valid,
+            "research_iteration": state.get("research_iteration", 0),
+        },
+    )
     return "course_cache_upsert"

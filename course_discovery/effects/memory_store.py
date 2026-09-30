@@ -4,7 +4,7 @@ import threading
 from dataclasses import replace
 from datetime import datetime, timedelta
 
-from course_discovery.effects.models import Effect, OutboxRecord, RecordStatus
+from course_discovery.effects.models import Effect, OutboxRecord, OutboxStats, RecordStatus
 
 
 class InMemoryOutboxStore:
@@ -22,6 +22,7 @@ class InMemoryOutboxStore:
                 status=RecordStatus.QUEUED,
                 attempts=0,
                 next_attempt_at=now,
+                created_at=now,
             )
             self._records[effect.key] = record
             return record
@@ -108,6 +109,19 @@ class InMemoryOutboxStore:
             for key in stale:
                 del self._records[key]
         return len(stale)
+
+    def stats(self, now: datetime) -> OutboxStats:
+        with self._lock:
+            records = list(self._records.values())
+        undelivered = [
+            r for r in records if r.status in (RecordStatus.QUEUED, RecordStatus.IN_PROGRESS)
+        ]
+        created = [r.created_at for r in undelivered if r.created_at is not None]
+        return OutboxStats(
+            pending=len(undelivered),
+            dead=sum(1 for r in records if r.status == RecordStatus.DEAD),
+            oldest_pending_age_seconds=(now - min(created)).total_seconds() if created else 0.0,
+        )
 
     def _update(self, key: str, **changes) -> None:
         with self._lock:

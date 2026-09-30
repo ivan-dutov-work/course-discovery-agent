@@ -198,7 +198,24 @@ below; the "not yet in the article" notes on individual items are stale). Integr
       raises `GraphRecursionError`) as a backstop *underneath* our own
       `max_research_iterations` domain-level budget — two independent guardrails
       against runaway loops, one generic/structural, one domain-aware.
-- [ ] **OpenTelemetry integration.** *Verified*: LangSmith has native end-to-end OTel
+- [ ] **OpenTelemetry integration.** *(Implemented, not yet in the article:
+      `observability/tracing.py`, vendor-neutral OTel SDK + OpenInference LangChain
+      instrumentor + psycopg instrumentor, OTLP/HTTP to Jaeger via the `tracing` compose
+      profile. Observed on langgraph 1.1.2: every node is a span, the `Send` workers are
+      siblings under `research_agent`, and `interrupt_before` splits a run into two traces
+      (`run.start`, `run.resume`) that share `course.run_id`. `traceparent` is stored in
+      the outbox payload, so `effect.deliver` in the worker joins the trace of the
+      `effect.submit` that queued it. Content is redacted by default
+      (`OTEL_CAPTURE_CONTENT`), exporter failure is fail-open and tested, log lines carry
+      `trace_id`/`span_id`. Verified live against Jaeger: LLM spans show model and token
+      counts, inputs/outputs `__REDACTED__`. Chose this over `LANGSMITH_OTEL_ENABLED`
+      because prompts and state would leave for a third party (§11.1). Metrics are in
+      `observability/metrics.py` (cache hit/miss, run duration by outcome, run and review
+      outcomes, degraded paths by component/reason, search, LLM calls/errors/fallbacks/
+      latency/tokens on the GenAI conventions, outbox outcomes and backlog gauges), opt-in
+      via `OTEL_METRICS_EXPORTER`. `tavily.*` log events carry `query_len`, not the query.
+      Spans flush at each run segment end and batch every 1s, so a SIGKILL loses at most
+      the last second plus spans still open; not eliminated.)* *Verified*: LangSmith has native end-to-end OTel
       support — `LANGSMITH_OTEL_ENABLED=true` plus standard
       `OTEL_EXPORTER_OTLP_ENDPOINT`/`OTEL_EXPORTER_OTLP_HEADERS`; traces can route to
       Datadog/Grafana/Jaeger over plain OTLP, no bridging library required.

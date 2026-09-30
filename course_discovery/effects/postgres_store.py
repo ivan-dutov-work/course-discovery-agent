@@ -4,11 +4,11 @@ from datetime import datetime, timedelta
 
 from psycopg.types.json import Jsonb
 
-from course_discovery.effects.models import Effect, OutboxRecord, RecordStatus
+from course_discovery.effects.models import Effect, OutboxRecord, OutboxStats, RecordStatus
 from course_discovery.persistence.postgres import open_connection
 
 
-_COLUMNS = "key, kind, payload, status, attempts, next_attempt_at, locked_until, last_error, delivered_at"
+_COLUMNS = "key, kind, payload, status, attempts, next_attempt_at, locked_until, last_error, delivered_at, created_at"
 
 
 def _record(row) -> OutboxRecord:
@@ -20,6 +20,7 @@ def _record(row) -> OutboxRecord:
         locked_until=row[6],
         last_error=row[7],
         delivered_at=row[8],
+        created_at=row[9],
     )
 
 
@@ -31,11 +32,11 @@ class PostgresOutboxStore:
         with open_connection(self.database_url) as conn:
             conn.execute(
                 """
-                INSERT INTO outbox (key, kind, payload, next_attempt_at)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO outbox (key, kind, payload, next_attempt_at, created_at)
+                VALUES (%s, %s, %s, %s, %s)
                 ON CONFLICT (key) DO NOTHING
                 """,
-                (effect.key, effect.kind, Jsonb(effect.payload), now),
+                (effect.key, effect.kind, Jsonb(effect.payload), now, now),
             )
             row = conn.execute(
                 f"SELECT {_COLUMNS} FROM outbox WHERE key = %s", (effect.key,)
@@ -124,6 +125,22 @@ class PostgresOutboxStore:
                 (older_than,),
             )
             return cursor.rowcount
+
+    def stats(self, now: datetime) -> OutboxStats:
+        with open_connection(self.database_url) as conn:
+            pending, dead, oldest = conn.execute(
+                """
+                SELECT count(*) FILTER (WHERE status IN ('queued', 'in_progress')),
+                       count(*) FILTER (WHERE status = 'dead'),
+                       min(created_at) FILTER (WHERE status IN ('queued', 'in_progress'))
+                FROM outbox
+                """
+            ).fetchone()
+        return OutboxStats(
+            pending=pending,
+            dead=dead,
+            oldest_pending_age_seconds=(now - oldest).total_seconds() if oldest else 0.0,
+        )
 
     def _execute(self, sql: str, params: tuple) -> None:
         with open_connection(self.database_url) as conn:

@@ -7,10 +7,14 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
+from opentelemetry import trace
+
 
 _SECRET_PATTERNS = [
     re.compile(r"sk-[A-Za-z0-9_\-]{12,}"),
     re.compile(r"Bearer\s+[A-Za-z0-9_\-\.]{12,}", re.IGNORECASE),
+    re.compile(r"postgres(?:ql)?://[^:\s/]+:[^@\s]+@"),
+    re.compile(r"(?i)(api[_-]?key|password|secret|token)=[^\s&]+"),
 ]
 
 
@@ -38,6 +42,7 @@ class JsonFormatter(logging.Formatter):
         "processName",
         "relativeCreated",
         "stack_info",
+        "taskName",
         "thread",
         "threadName",
     }
@@ -49,6 +54,11 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
             "message": record.getMessage(),
         }
+
+        context = trace.get_current_span().get_span_context()
+        if context.is_valid:
+            payload["trace_id"] = format(context.trace_id, "032x")
+            payload["span_id"] = format(context.span_id, "016x")
 
         for key, value in record.__dict__.items():
             if key in self._BASE_ATTRS:
@@ -79,6 +89,10 @@ def configure_logging() -> None:
     root._course_agent_logging_configured = True  # type: ignore[attr-defined]
 
 
+def capture_content() -> bool:
+    return os.getenv("OTEL_CAPTURE_CONTENT", "").lower() == "true"
+
+
 def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(name)
 
@@ -99,6 +113,10 @@ def truncate_text(value: str | None, *, max_len: int = 120) -> str | None:
     return f"{cleaned[:max_len]}..."
 
 
+def preview(value: str | None, *, max_len: int = 120) -> str | None:
+    return truncate_text(value, max_len=max_len) if capture_content() else None
+
+
 def classify_feedback(feedback: str) -> str:
     lower = feedback.strip().lower()
     if lower in {"approve", "approved", "publish", "looks good"}:
@@ -114,7 +132,7 @@ def classify_feedback(feedback: str) -> str:
     return "freeform"
 
 
-def sanitize_error(exc: Exception) -> dict[str, str]:
+def sanitize_error(exc: BaseException) -> dict[str, str]:
     return {
         "error_type": type(exc).__name__,
         "error_message": truncate_text(str(exc), max_len=240) or "",

@@ -10,6 +10,7 @@ from course_discovery.domain.models import (
     UserMemory,
 )
 from course_discovery.observability.logging import get_logger, sanitize_error
+from course_discovery.observability.metrics import record_db_error
 from course_discovery.persistence.postgres import connect
 from course_discovery.research_agent.cache.seed_data import seed_cache
 
@@ -68,6 +69,7 @@ def search_course_cache(
                 ),
             ).fetchall()
         except Exception as exc:  # noqa: BLE001
+            record_db_error("course_cache_search")
             logger.error(
                 "course_cache_search_error",
                 extra={"event": "persistence.course_cache_search_error", **sanitize_error(exc)},
@@ -188,6 +190,7 @@ def upsert_courses(
                         )
             conn.commit()
         except Exception as exc:  # noqa: BLE001
+            record_db_error("course_cache_upsert")
             logger.error(
                 "course_cache_upsert_error",
                 extra={"event": "persistence.course_cache_upsert_error", **sanitize_error(exc)},

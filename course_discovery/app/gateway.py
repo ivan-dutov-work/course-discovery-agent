@@ -11,8 +11,9 @@ from course_discovery.domain.state import AgentState
 from course_discovery.observability.logging import (
     get_logger,
     sanitize_error,
-    truncate_text,
+    preview,
 )
+from course_discovery.observability.metrics import record_degradation
 from course_discovery.resilience import is_transient
 
 
@@ -62,7 +63,7 @@ def gateway_node(state: AgentState) -> dict:
             extra={
                 "event": "gateway.parse_start",
                 "run_id": run_id,
-                "query_preview": truncate_text(query_for_parsing, max_len=100),
+                "query_preview": preview(query_for_parsing, max_len=100),
                 "query_len": len(query_for_parsing),
                 "is_reset": state.get("routing_decision") == RoutingAction.RESET,
                 "has_existing_filters": state.get("search_filters") is not None,
@@ -123,6 +124,7 @@ def gateway_node(state: AgentState) -> dict:
         if is_transient(exc):
             raise
         err = sanitize_error(exc)
+        record_degradation("gateway", "parse_failed")
         logger.error(
             "gateway_error",
             extra={

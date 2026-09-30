@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Protocol
 
-from course_discovery.effects.models import Effect, OutboxRecord
+from course_discovery.effects.models import Effect, OutboxRecord, OutboxStats
 
 
 class OutboxStore(Protocol):
@@ -28,3 +28,6 @@ class OutboxStore(Protocol):
 
     def prune_delivered(self, older_than: datetime) -> int:
         """Delete delivered records delivered before the cutoff; return the count."""
+
+    def stats(self, now: datetime) -> OutboxStats:
+        """Backlog size, dead-letter count and the age of the oldest undelivered record."""

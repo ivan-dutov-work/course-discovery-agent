@@ -9,8 +9,14 @@ import threading
 from course_discovery.effects.handlers import default_handlers
 from course_discovery.effects.maintenance import list_dead, prune_outbox, requeue
 from course_discovery.effects.postgres_store import PostgresOutboxStore
-from course_discovery.effects.worker import OutboxWorker
+from course_discovery.effects.worker import OutboxWorker, utcnow
 from course_discovery.observability.logging import configure_logging
+from course_discovery.observability.metrics import (
+    configure_metrics,
+    register_outbox_gauges,
+    shutdown_metrics,
+)
+from course_discovery.observability.tracing import configure_tracing, shutdown_tracing
 from course_discovery.persistence.checkpointer import open_checkpointer, prune_checkpoints
 
 
@@ -33,7 +39,14 @@ def _run_worker(store: PostgresOutboxStore) -> None:
     stop = threading.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.set())
-    worker.run_forever(stop)
+    configure_tracing("course-agent-outbox-worker")
+    configure_metrics("course-agent-outbox-worker")
+    register_outbox_gauges(lambda: store.stats(utcnow()))
+    try:
+        worker.run_forever(stop)
+    finally:
+        shutdown_tracing()
+        shutdown_metrics()
 
 
 async def _prune_checkpoints(days: float) -> list[str]:

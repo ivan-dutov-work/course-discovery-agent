@@ -14,9 +14,22 @@ from course_discovery.observability.logging import (
     classify_feedback,
     configure_logging,
     get_logger,
-    truncate_text,
+    preview,
+)
+from course_discovery.observability.metrics import (
+    configure_metrics,
+    record_review_wait,
+    record_run_outcome,
+    shutdown_metrics,
+)
+from course_discovery.observability.tracing import (
+    configure_tracing,
+    annotate_run,
+    run_span,
+    shutdown_tracing,
 )
 from course_discovery.persistence.checkpointer import open_checkpointer
+from course_discovery.resilience import RECURSION_LIMIT
 from course_discovery.workflows.outer_graph import build_graph
 
 
@@ -66,9 +79,49 @@ async def main() -> None:
     if dotenv is not None:
         dotenv.load_dotenv()
     configure_logging()
+    configure_tracing("course-agent-cli")
+    configure_metrics("course-agent-cli")
 
-    async with open_checkpointer() as saver:
-        await _run(build_graph(checkpointer=saver))
+    try:
+        async with open_checkpointer() as saver:
+            try:
+                await _run(build_graph(checkpointer=saver))
+            except Exception:
+                record_run_outcome("error")
+                raise
+    finally:
+        shutdown_tracing()
+        shutdown_metrics()
+
+
+def _print_progress(namespace: tuple[str, ...], mode: str, chunk) -> None:
+    prefix = "  " * len(namespace)
+    if mode == "updates":
+        for node in chunk:
+            if not node.startswith("__"):
+                print(f"{prefix}- {node}")
+    elif mode == "custom":
+        print(f"{prefix}  {chunk}")
+
+
+async def _stream_until_pause(graph, graph_input, config: RunnableConfig, *, resume: bool) -> dict:
+    run_id = config["configurable"]["thread_id"]
+    with run_span(
+        "run.resume" if resume else "run.start",
+        run_id=run_id,
+        thread_id=run_id,
+        resume=resume,
+    ) as span:
+        async for namespace, mode, chunk in graph.astream(
+            graph_input,
+            config,
+            stream_mode=["updates", "custom"],
+            subgraphs=True,
+        ):
+            _print_progress(namespace, mode, chunk)
+        snapshot = await graph.aget_state(config)
+        annotate_run(span, snapshot.values)
+    return snapshot.values
 
 
 async def _run(graph) -> None:
@@ -80,8 +133,15 @@ async def _run(graph) -> None:
     )
 
     run_id = str(uuid4())
-    config: RunnableConfig = {"configurable": {"thread_id": run_id}}
+    config: RunnableConfig = {
+        "configurable": {"thread_id": run_id},
+        "recursion_limit": RECURSION_LIMIT,
+    }
     start_ts = time.perf_counter()
+    review_wait = 0.0
+
+    def active_ms() -> int:
+        return int((time.perf_counter() - start_ts - review_wait) * 1000)
 
     logger.info(
         "run_start",
@@ -89,7 +149,7 @@ async def _run(graph) -> None:
             "event": "main.run_start",
             "run_id": run_id,
             "thread_id": run_id,
-            "query_preview": truncate_text(query, max_len=100),
+            "query_preview": preview(query, max_len=100),
             "query_len": len(query),
         },
     )
@@ -97,7 +157,9 @@ async def _run(graph) -> None:
     print(f"\nRun ID: {run_id}")
     print("\nStarting graph execution...\n")
 
-    result = await graph.ainvoke(_initial_state(query, run_id), config)
+    result = await _stream_until_pause(
+        graph, _initial_state(query, run_id), config, resume=False
+    )
 
     for _ in range(10):
         routing_decision = result.get("routing_decision")
@@ -128,9 +190,13 @@ async def _run(graph) -> None:
             f"Uncertain: {len(result.get('uncertain_courses', []))}"
         )
 
+        wait_start = time.perf_counter()
         pm_feedback = input(
             "PM feedback (approve | rewrite: ... | augment: ... | reset: ... | discard): "
         ).strip()
+        waited = time.perf_counter() - wait_start
+        review_wait += waited
+        record_review_wait(waited)
 
         logger.info(
             "feedback_received",
@@ -138,7 +204,7 @@ async def _run(graph) -> None:
                 "event": "main.feedback_received",
                 "run_id": run_id,
                 "feedback_type": classify_feedback(pm_feedback),
-                "feedback_preview": truncate_text(pm_feedback, max_len=80),
+                "feedback_preview": preview(pm_feedback, max_len=80),
                 "feedback_len": len(pm_feedback),
             },
         )
@@ -152,30 +218,34 @@ async def _run(graph) -> None:
                 "thread_id": run_id,
             },
         )
-        result = await graph.ainvoke(None, config)
+        result = await _stream_until_pause(graph, None, config, resume=True)
 
         publish_status = result.get("publish_status")
         if publish_status:
             print(f"Digest {DeliveryStatus(publish_status).value}.")
+            record_run_outcome("publish", delivery=DeliveryStatus(publish_status).value)
             logger.info(
                 "run_complete",
                 extra={
                     "event": "main.run_complete",
                     "run_id": run_id,
                     "final_action": "PUBLISH",
-                    "duration_ms": int((time.perf_counter() - start_ts) * 1000),
+                    "duration_ms": active_ms(),
+                    "review_wait_ms": int(review_wait * 1000),
                     "iterations": result.get("iteration_count", 0),
                 },
             )
             break
     else:
         print("Stopped after loop safety limit.")
+        record_run_outcome("loop_stop")
         logger.warning(
             "run_loop_safety_stop",
             extra={
                 "event": "main.run_loop_safety_stop",
                 "run_id": run_id,
-                "duration_ms": int((time.perf_counter() - start_ts) * 1000),
+                "duration_ms": active_ms(),
+                "review_wait_ms": int(review_wait * 1000),
                 "iterations": result.get("iteration_count", 0),
             },
         )
@@ -184,16 +254,18 @@ async def _run(graph) -> None:
         "DISCARD",
         RoutingAction.DISCARD,
     }:
+        record_run_outcome("discard")
         logger.info(
             "run_complete",
             extra={
                 "event": "main.run_complete",
                 "run_id": run_id,
                 "final_action": "DISCARD",
-                "discard_reason": truncate_text(
+                "discard_reason": preview(
                     result.get("discard_reason"), max_len=140
                 ),
-                "duration_ms": int((time.perf_counter() - start_ts) * 1000),
+                "duration_ms": active_ms(),
+                "review_wait_ms": int(review_wait * 1000),
                 "iterations": result.get("iteration_count", 0),
             },
         )

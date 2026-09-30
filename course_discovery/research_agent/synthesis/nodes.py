@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections import Counter
 from typing import Any
 from datetime import datetime
 
@@ -11,7 +12,11 @@ from course_discovery.app.llm import build_llm, llm_enabled
 from course_discovery.app.prompts import SYNTHESIZER_SYSTEM_PROMPT
 from course_discovery.domain.models import CourseCandidate, RoutingAction
 from course_discovery.domain.state import AgentState
-from course_discovery.observability.logging import get_logger, sanitize_error
+from course_discovery.observability.logging import get_logger, preview, sanitize_error
+from course_discovery.observability.metrics import (
+    record_degradation,
+    record_digest_sources,
+)
 
 
 logger = get_logger(__name__)
@@ -92,7 +97,7 @@ def _highlight_with_retry(
                 "event": "synthesizer.llm_call_attempt",
                 "run_id": run_id,
                 "course_idx": course_idx,
-                "course_title": course.title,
+                "course_title": preview(course.title, max_len=80),
                 "attempt": 1,
                 "duration_ms": int((time.perf_counter() - call_start) * 1000),
                 "rewrite_present": bool(rewrite_instructions),
@@ -106,7 +111,7 @@ def _highlight_with_retry(
                 "event": "synthesizer.llm_retry",
                 "run_id": run_id,
                 "course_idx": course_idx,
-                "course_title": course.title,
+                "course_title": preview(course.title, max_len=80),
                 "attempt": 2,
                 **sanitize_error(first_exc),
             },
@@ -120,7 +125,7 @@ def _highlight_with_retry(
                     "event": "synthesizer.llm_call_attempt",
                     "run_id": run_id,
                     "course_idx": course_idx,
-                    "course_title": course.title,
+                    "course_title": preview(course.title, max_len=80),
                     "attempt": 2,
                     "duration_ms": int((time.perf_counter() - retry_start) * 1000),
                     "rewrite_present": bool(rewrite_instructions),
@@ -128,13 +133,14 @@ def _highlight_with_retry(
             )
             return result
         except Exception as retry_exc:  # noqa: BLE001
+            record_degradation("synthesizer", "template_fallback")
             logger.error(
                 "synthesizer_fallback_used",
                 extra={
                     "event": "synthesizer.fallback_used",
                     "run_id": run_id,
                     "course_idx": course_idx,
-                    "course_title": course.title,
+                    "course_title": preview(course.title, max_len=80),
                     **sanitize_error(retry_exc),
                 },
             )
@@ -160,6 +166,8 @@ def synthesizer_node(state: AgentState) -> dict:
             "rewrite_present": bool(rewrite_instructions),
         },
     )
+
+    record_digest_sources(Counter(course.source for course in top_courses))
 
     llm = build_llm("synthesizer", max_retries=2) if llm_enabled() else None
     lines: list[str] = []

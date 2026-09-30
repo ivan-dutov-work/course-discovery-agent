@@ -29,6 +29,14 @@ class OutboxRecord:
     locked_until: datetime | None = None
     last_error: str | None = None
     delivered_at: datetime | None = None
+    created_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class OutboxStats:
+    pending: int
+    dead: int
+    oldest_pending_age_seconds: float
 
 
 class PermanentEffectError(Exception):
