@@ -240,13 +240,32 @@ It narrows the window between a call and its effect without closing it: the memo
 
 ### 5.5 Encapsulation cost: subgraph resume
 
-A subgraph is one node to its parent. When it is interrupted and resumed, the entire subgraph re-runs, including parallel workers that already succeeded, and the parent cannot see which. The cost is spend, not correctness: reducer-backed channels don't double-count, so completed calls still equal unique queries. Whether the repeat is noise or a budget problem depends on what one worker costs.
+A subgraph is one node to its parent. When a subgraph node is interrupted and
+resumed, the entire subgraph re-runs — including already-successful parallel
+workers that a standalone graph would skip. The parent has no visibility into
+which subgraph workers completed.
 
-The cause is documented. Subgraph task IDs derive from the parent checkpoint ID, which changes when the parent forks for resume, so the mechanism that re-attaches cached writes (`skip_done_tasks`) finds nothing for the new instance. Open issues #6792 and #8458, and #6050 whose fix doesn't cover every case, track it.
+The cost is spend, not correctness. Re-running a sibling worker repeats its
+search or model call, but reducer-backed channels do not double-count: after a
+resumed run the number of completed calls still equals the number of unique
+queries. Whether the repeat is noise or a budget problem depends on what one
+worker costs.
 
-Flattening the graph fixes it at the cost of exposing internal topology. Within the framework, the options are partial:
+This is a known behavior with a documented root cause: subgraph task IDs are
+derived from the parent checkpoint ID, and that ID changes when the parent forks
+for resume. The mechanism that re-attaches cached writes from completed nodes
+(`skip_done_tasks` / `_reapply_writes_to_succeeded_nodes`) keys on task IDs and
+finds nothing for the new subgraph instance — so every internal node looks
+incomplete. Three open GitHub issues track the problem in different
+configurations (#6792, #8458, and the resolved #6050 whose fix doesn't cover
+all cases).
 
-- **State-based dedup.** The worker short-circuits when its query is already in a reducer-backed `completed_queries` list, avoiding the expensive call but not the scheduling:
+The obvious alternative — flattening the graph — works but at the cost of
+exposing internal topology. There are also intermediate approaches within the
+framework worth weighing explicitly:
+
+**1. State-based dedup.** Track completed workers with a reducer-backed list and
+check before re-doing work:
 
 ```python
 def search_worker(state: AgentState, config):
@@ -257,10 +276,38 @@ def search_worker(state: AgentState, config):
     return {"tavily_results": results, "completed_queries": [query]}
 ```
 
-- **`checkpointer=True` on the subgraph.** State accumulates across calls, but an interrupted node still re-executes, and per-thread subgraphs collide under a parallel `Send` fan-out.
-- **Interrupt before the subgraph, not inside it.** The subgraph runs atomically and the reviewer judges the whole result, at the cost of mid-pipeline visibility.
+The worker still runs — LangGraph dispatches it, the function is called, it just
+short-circuits. This avoids the LLM call but not the scheduler overhead or the
+subgraph namespace problem. Useful when workers are expensive but idempotent.
 
-None closes the gap to a flat graph's node-level skip, because the namespace itself is the problem. The practical decision rule: if subgraph resume is rare, re-running workers is noise and encapsulation wins. If it happens on every run (always-on review inside the subgraph), flatten or interrupt before the subgraph.
+**2. Per-thread subgraph checkpointing.** A subgraph compiled with
+`checkpointer=True` gets its own thread-scoped namespace. State accumulates
+across calls instead of starting fresh each time. This does not, however, fix
+interrupt/resume within a single call: the subgraph still re-executes any node
+that contained the interrupt. Worse, per-thread subgraphs cannot be called in
+parallel — two concurrent invocations collide on the same namespace, which is
+why a parallel `Send` fan-out would break under this approach.
+
+**3. Interrupt-aware nodes.** The config carries `config["configurable"]["checkpoint_id"]`
+on resume. A node could detect it and skip work, but the namespace invalidation
+issue means there is no framework API to read "what did this node output in the
+previous, interrupted run." The node can only skip re-doing work it already
+sees in state, which converges with approach 1.
+
+**4. Separate the interrupt boundary.** Instead of interrupting inside the
+subgraph, interrupt *before* the subgraph. The subgraph runs atomically — either
+it completes or it doesn't — and the human reviews after the fact. This avoids
+subgraph resume entirely but forces the reviewer to accept or reject the full
+result, not inspect its internals mid-pipeline. The choice maps to how much
+internal visibility the human needs.
+
+None of these fully closes the gap to what a flat graph gives you — individual
+node-level skip on resume — because the checkpoint namespace itself is the
+problem, and only the LangGraph runtime can fix that. The practical decision
+rule: if subgraph resume happens rarely (a few percent of runs), the cost of
+re-running successful workers is noise and the encapsulation benefit dominates.
+If it happens on every run (always-on human review inside the subgraph),
+flattening or approach 4 may be the better bet.
 
 ### 5.6 Long-term vs. thread-scoped memory
 
