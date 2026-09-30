@@ -1,7 +1,7 @@
 # Skill: course-article-style
 
 Write prose for this repo's article (and related specs) in the same voice as the
-existing draft of `specs/ARTICLE.md`. The voice is architectural-level analysis,
+existing draft of `specs/article/DRAFT.md`. The voice is architectural-level analysis,
 not a tutorial — "1,000 km up" — where every paragraph serves a single point,
 every claim is scoped, and every tradeoff is named.
 
@@ -94,7 +94,7 @@ Do not write vendor comparisons, option lists, decision tables or "how X works"
 primers for generic infrastructure. A subsection should answer "what does this
 LangGraph mechanism force on me", not "what are my options for this tool".
 
-Respect the section budget in `specs/ARTICLE_OUTLINE.md`. Before drafting, read
+Respect the section budget in `specs/article/OUTLINE.md`. Before drafting, read
 the outline entry and its word count. If the draft is running well past it, or
 the section has grown subsections the outline doesn't have, stop and ask the
 user whether the scope is meant to change. If it is, update the outline and the

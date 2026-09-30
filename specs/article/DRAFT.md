@@ -1,12 +1,12 @@
 # LangGraph for Agentic Workflows: Production Patterns
 
-Draft in progress. Structure follows `specs/ARTICLE_OUTLINE.md`. Sections below are
+Draft in progress. Structure follows `specs/article/OUTLINE.md`. Sections below are
 either drafted prose or an explicit placeholder naming what's pending — nothing is
 silently missing. Placeholders are marked `[NOT DRAFTED]` so a partial read never
 gets mistaken for a finished section.
 
 Drafted so far: §2.2, §3.2, §3.3, §4, §5, §6, §7, §8.1–§8.4, §9, §10.1, §10.2, §10.4, §11, §12.
-Everything else is outline-only — see `specs/ARTICLE_OUTLINE.md` for what each
+Everything else is outline-only — see `specs/article/OUTLINE.md` for what each
 pending section needs to say.
 
 ---
@@ -82,7 +82,7 @@ def _dispatch_search_queries(state: AgentState):
     if not plan or not plan.search_queries:
         return "aggregate"
     return [
-        Send("tavily_search_worker", {**state, "active_search_query": query})
+        Send("search_web_for_courses", {**state, "active_search_query": query})
         for query in plan.search_queries
     ]
 ```
@@ -143,7 +143,7 @@ What the boundary costs is in §5.5.
 ```python
 graph = builder.compile(
     checkpointer=checkpointer or memory_saver(),
-    interrupt_before=["review_gate"],
+    interrupt_before=["await_human_review"],
 )
 ```
 
@@ -189,7 +189,7 @@ The checkpointer is a pluggable backend:
 checkpointer = AsyncPostgresSaver(...) if DATABASE_URL else MemorySaver()
 graph = builder.compile(
     checkpointer=checkpointer,
-    interrupt_before=["review_gate"],
+    interrupt_before=["await_human_review"],
 )
 # run-time: checkpointing is automatic
 result = await graph.ainvoke(input, {"configurable": {"thread_id": "..."}})
@@ -669,11 +669,11 @@ class AgentState(TypedDict):
 
 LLM = external("llm:openrouter", accepts=frozenset({"subject"}))
 
-"gateway": flow(
+"parse_user_request": flow(
     reads={"user_query", "manager_feedback"}, writes={"search_filters"},
     sinks=(LLM,), redacts={"user_query", "manager_feedback"},
 ),
-"evidence_validator": flow(
+"verify_course_claims": flow(
     reads={"search_filters", "user_memory", "deduplicated_courses"},
     writes={"valid_courses"},
     declassifies={"valid_courses": "catalog rows; memory only filters them"},
@@ -684,7 +684,7 @@ LLM = external("llm:openrouter", accepts=frozenset({"subject"}))
 
 ```
 [sink-accepts] synthesizer: 'raw' data reaches external sink 'llm:openrouter':
-  research_notes <- (course_cache_lookup) <- user_memory
+  research_notes <- (find_known_courses) <- user_memory
 ```
 
 Propagation is conservative by construction, which makes the declassification the reviewable unit: each one is a written claim that the checker accepts and cannot verify.
@@ -813,6 +813,6 @@ The delivery handler is a stub that prints; the submit, lease, retry and dead-le
 ## Appendix: Running the Demo
 
 [NOT DRAFTED] — see outline appendix. (The old M1 appendix in
-`specs/ARCHIVE_ARTICLE_M1_DRAFT.md` describes a different CLI surface —
+`archive/ARTICLE_M1_DRAFT.md` describes a different CLI surface —
 `telegram_gate`, `worker_a/b/c` — and should not be reused verbatim; the
 current CLI/router action set is PUBLISH/REWRITE/AUGMENT/RESET/DISCARD.)
