@@ -490,9 +490,24 @@ Chat models accept a `BaseRateLimiter` through `rate_limiter=`, which smooths th
 
 ### 8.4 When the gateway isn't enough
 
-A gateway covers the common case, and most graphs should stop there. It implements one idea: when a call fails at the provider, send the same request to the next model. The deciding question isn't "do we need fallback" but "what counts as a failure, and what is an acceptable substitute." A gateway answers both with a fixed default: failure is a provider error, and the substitute is another model. Three requirements break that default because the answer lives in graph state.
+A gateway or LiteLLM covers the common case, and most graphs should stop there.
+Both implement one idea: when a call fails at the provider (rate limit,
+downtime, context length, a moderation flag), send the same request to the next
+model. Writing your own fallback logic is justified only when a business
+requirement can't be expressed that way. The deciding question isn't "do we need
+fallback" but "what counts as a failure, and what is an acceptable substitute."
+A gateway answers both with a fixed default: failure is a provider error, and
+the substitute is another model.
 
-**A wrong answer is worse than a failed call.** The gateway sees a 200 and moves on; it can't know the output failed a schema check, cited no evidence, or contradicts the user's filters. When correctness is what the business is buying, the trigger for fallback is the application's own validation, and the fallback is an escalation, not an outage substitute:
+Worth naming the cases where that default breaks, each as a requirement rather
+than a technical limit:
+
+**A wrong answer is worse than a failed call.** The gateway sees a 200 and moves
+on. It can't know the output failed a schema check, cited no evidence, or
+contradicts the user's filters. When correctness is what the business is buying,
+the trigger for fallback is the application's own validation, and the fallback
+is an escalation (a stronger model, a different prompt), not an outage
+substitute:
 
 ```python
 result = await primary.ainvoke(payload)
@@ -500,15 +515,64 @@ if not meets_evidence_bar(result):
     result = await stronger.ainvoke(payload)
 ```
 
-The same blind spot hides a provider that changes its output shape. Counted over a window, validation failures become the signal for a breaker with a parse failure as its failure event (§11.1). The limit is that a rate catches shape, not meaning: a model that keeps the schema but judges more leniently produces no failures, and catching that takes an evaluation set.
+The same blind spot hides a provider that changes its output shape. The gateway
+still returns 200, so the only record of the change is the application's own
+validation failures, and they count only if something counts them. Fed into a
+failure rate over a window, they become the signal for the volumetric response:
+when the rate crosses a threshold the primary is swapped for the alternative,
+and a probe polls the old one for recovery. That is the circuit breaker of §11.1
+with a parse failure as its failure event. The limit is that a rate catches
+shape, not meaning. A model that keeps the schema but starts judging more
+leniently produces no failures at all, and catching that takes an evaluation
+set, not a breaker.
 
-**Scores must be comparable within a run.** A gateway switches models per request. If a rate limit moves half a batch of candidates to another model, the scores aren't on one scale and the ranking is quietly wrong. The fallback decision belongs to the run: pin one model per batch, or fail the whole batch over together.
+**Scores must be comparable within a run.** A gateway switches models per
+request. If a run ranks candidates with one model and a rate limit moves half of
+them to another, the scores aren't on the same scale and the ranking is quietly
+wrong. The requirement is consistency inside a unit of work, so the fallback
+decision belongs to the run: pin one model per batch, or fail the whole batch
+over together.
 
-**The budget or deadline belongs to the run, not the call.** Per-key caps bound a key. "No single run may cost more than X" or "the digest must arrive within N seconds" spans several calls and nodes, and the decision to drop to a cheaper model or skip an optional step needs the run's accumulated cost and elapsed time, which live in state.
+**The acceptable substitute isn't another model.** Some products would rather
+serve a stale-but-correct result than a fresh answer from a weaker model: the
+last known-good digest from a cache, a deterministic template, or a run parked
+for later. That is a fallback to a different kind of path, and only the graph
+knows which one is safe.
 
-Other cases have the same shape: residency rules keyed on tenant, a stale-but-correct cached result preferred over a weaker model's fresh one, and a silent substitution that a reviewer approving output should have seen (§4.3). Each is a decision the gateway can't see.
+**Who may see the data varies by request.** A gateway's fallback list is a list
+of providers. If residency or contract terms depend on the tenant or the data
+class (EU customer data may only reach EU-hosted models, this field may never go
+to a provider without a data-processing agreement), the list itself is a
+compliance decision computed per request. Provider-level filters, where a
+gateway offers them, help; a rule keyed on tenant or data class is application
+logic.
 
-The cost of writing this yourself is owning the failure taxonomy (what retries, what escalates, what degrades), the state that carries it, and the tests. One part gets easier: a provider outage can't be summoned on demand, but a validation-triggered fallback can be forced with a stub model. The practical decision rule: keep the gateway for provider failure and add custom logic only for these cases, layered on top. The custom layer decides *whether* to fall back and to what kind of path; the gateway handles the provider-level retry underneath. Two layers, two failure classes, the same distinction as retry versus replanning (§7.1).
+**The budget or the deadline belongs to the run, not the call.** Per-key spend
+caps bound a key. A requirement like "no single run may cost more than X" or
+"the review digest must arrive within N seconds" spans several calls and several
+nodes. The decision to drop to a cheaper model or skip an optional step needs
+the run's accumulated cost and elapsed time, which live in graph state, not in
+the gateway.
+
+**A silent substitution is itself a defect.** In audited or regulated flows, a
+reviewer approving output should know it came from the fallback, and the record
+should say which model produced what. A gateway can log the served model (§8.2);
+putting it in the review payload, or refusing to substitute without a human, is
+application logic. This is the same boundary as §4.3: the interrupt is where a
+degraded result has to become visible.
+
+The cost of writing this yourself is that you now own the failure taxonomy (what
+retries, what escalates, what degrades), the state that carries it, and the
+tests. One part gets easier, not harder: a provider outage can't be summoned on
+demand (§8.2), but a validation-triggered fallback can be forced with a stub
+model, so that branch is testable in a way the gateway's never is.
+
+The practical decision rule: keep the gateway for provider failure and add
+custom logic only for the cases above, layered on top rather than instead. The
+custom layer decides *whether* to fall back and to *what kind* of path; the
+gateway still handles the provider-level retry underneath. Two layers, two
+different failure classes, the same distinction as retry versus replanning
+(§7.1).
 
 ---
 
@@ -592,23 +656,29 @@ The check goes outside the graph, in the layer that calls it: compare the authen
 
 ## 11. Cross-Worker Coordination at Scale
 
-Everything so far assumes one execution at a time. Production runs many processes against the same downstream services and the same shared state, and the coordination that requires does not come from LangGraph. What the framework provides is the substrate to attach it to: the `Store` for shared state, the checkpointer as a coordination point, and deterministic keys.
+The patterns so far assume one execution at a time. A checkpointed graph that handles one user's request is durable. A fan-out of `Send` workers that share one process is concurrent.
+
+Production is a different class of concurrency: multiple processes, multiple machines, competing for the same downstream resources and the same shared state. The mechanisms below don't come from LangGraph — they come from running any stateful workflow system in a multi-worker deployment. What the framework gives you is the substrate to attach them: the `Store` for shared state, the checkpointer as a coordination point, and the discipline of deterministic keys.
 
 ### 11.1 Circuit breaking across workers
 
-A `RetryPolicy` sees one node's failure. When twenty workers share a failing dependency, each burns its own retry budget on its own clock, and the outage turns into a herd of retries followed by a wave of exhausted-attempt failures.
+A retry policy handles one node's failure in isolation. When every worker shares the same failing dependency — a search provider returning 503s, a model endpoint timing out — each node burns through its own retry budget independently, on its own clock, unaware that the other nineteen workers are doing the same thing. The result is a thundering herd of retries against an already-down service, followed by a wave of exhausted-attempt failures that all surface at once.
 
-The architectural response is a breaker in front of the dependency, not in the graph: a failure counter visible to every worker, tripped at a threshold, blocking attempts until a cooldown expires. The `Store` is where LangGraph enters, since worker A must write what worker B reads.
+A circuit breaker sits in front of the dependency, not in the graph. The architectural shape is a shared failure counter, visible to every worker, that trips when a threshold is crossed and blocks further attempts until a cooldown expires.
 
-```python
-store.put(("circuit", "search"), "state", {"status": "open", "opened_at": now, "failures": n})
-```
+Where LangGraph enters the picture is the `Store`. A circuit breaker needs cross-worker state — a "did this already fail N times" flag that worker A writes and worker B reads. The `Store` is a write-through key-value store that all graph executions in a deployment share (backed by Postgres, Redis, or equivalent). When worker A's search call fails, it writes `circuit:tavily = {status: open, opened_at: T, failure_count: N}` to the `Store`; worker B, checking the `Store` before dispatching its search, sees the open circuit and skips the call — either recording a research note and continuing with what it has, or pausing the run for human review.
 
-The check runs twice: at the queue boundary, so a doomed run is requeued instead of started, and at the entry of the research subgraph, for runs already in flight when the circuit tripped. After the cooldown one probe is let through, so a single worker tests the dependency instead of twenty. The two mechanisms compose: retry absorbs the blip that recovers in milliseconds, the breaker handles the outage where retrying is worse than not trying.
+The check happens twice. Once at the queue boundary, before the graph even starts — the queue worker reads circuit state from the `Store` and requeues the message with backoff rather than starting a run that will fail. And once at the entry of the research subgraph itself, for runs that were already in progress when the circuit tripped. The outer check avoids wasted graph overhead; the inner check protects against mid-run failures when a long graph started before the outage and hit the failing call after it began.
 
-### 11.2 Outbox leasing
+When the cooldown expires, a probe request — the first run that reaches the failing call after the circuit opens — is let through. If it succeeds, the circuit closes and normal execution resumes. If it fails, the timer resets. That probe is the only request that reaches the dependency during the outage, which is the entire point: one worker probes instead of twenty retrying simultaneously.
 
-The outbox (§6.2) gives an effect a stable key and a separate delivery worker. With several workers, the claim needs coordination, and the database does it: rows are claimed atomically under a time-limited lease.
+Circuit breaking and retry compose, not overlap. Retry handles the single transient failure that recovers in milliseconds. Circuit breaking handles the sustained outage where retrying is worse than not trying. A `RetryPolicy` with three attempts on a node whose dependency is behind a circuit breaker serves the first two attempts normally; the breaker only trips after a pattern of failures that the retry policy could not resolve.
+
+### 11.2 Outbox leasing at scale
+
+The outbox pattern (§6.2) gives each effect a stable key and a separate worker for delivery. In a single-worker deployment the delivery is straightforward: one process claims unprocessed rows, dispatches them, and marks them done.
+
+With multiple workers, the claim itself needs coordination. Two workers reading the same outbox table would both try to deliver the same effect. The pattern is row-level leasing: each worker claims rows atomically before processing them.
 
 ```sql
 UPDATE outbox
@@ -624,13 +694,17 @@ WHERE  id IN (
 RETURNING *;
 ```
 
-A worker that crashes leaves an expired lease for the next poll to reclaim, and attempts counted at claim time push a repeatedly crashing row toward the dead-letter threshold. The cost is visible in one failure: a handler that outlives its lease can be claimed by a second worker while the first is still running. Delivery is at-least-once, so the consumer of the effect must be idempotent.
+`FOR UPDATE SKIP LOCKED` is the key: it makes the database coordinate access, not the application. Each worker claims a batch of rows that nobody else has locked. A worker that crashes mid-delivery leaves rows with an expired `locked_until`, which the next polling cycle reclaims. Attempts are counted at claim time, not at submit time, so a row that repeatedly crashes its worker — because the downstream system is down, because the payload is malformed — increments toward a dead-letter threshold that eventually removes it from the queue.
+
+The cost is visible in the failure mode: a handler that outlives its `locked_until` can be claimed by a second worker before the first finishes. The consumer of the effect must be idempotent, because at-least-once delivery with lease-based coordination is exactly that — at least once. The outbox buys you deterministic submission; it does not buy you exactly-once delivery.
 
 ### 11.3 Concurrent resume
 
-Nothing in the checkpointer stops two callers from resuming the same `thread_id` at once. Deterministic keys (§6.1) make the second run's effects no-ops, so the risk is not corruption but double work: two digests synthesized, two sets of LLM calls billed.
+`graph.update_state(...)` followed by `ainvoke(None, config)` resumes a paused thread. Nothing in the checkpointer prevents two callers from doing this simultaneously on the same `thread_id`.
 
-The fix sits above the graph. The caller takes an advisory lock keyed on `thread_id` before resuming, and Postgres advisory locks release when the connection dies, so a crashed worker does not leak one.
+The first caller proceeds. The second caller also proceeds. Both run the same nodes, both call the same effect gateway with the same keys — the keys are deterministic (§6.1), so the second submit is a no-op, and the database writes are idempotent. The risk is not corruption. It is double work: two synthesized digests produced, two LLM calls billed, two sets of validation results that no one will read.
+
+The fix is an application-level advisory lock, keyed on `thread_id`, acquired before any resume and released when the run completes. Postgres `pg_advisory_xact_lock` is the natural fit when the checkpointer is Postgres: the lock auto-releases on transaction commit or abort, so a crashed worker does not leak a lock. The graph does not participate — the lock sits in the layer that calls `ainvoke`, not inside the graph itself.
 
 ---
 
