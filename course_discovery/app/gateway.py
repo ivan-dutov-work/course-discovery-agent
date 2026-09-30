@@ -8,6 +8,7 @@ from course_discovery.app.llm import build_llm, llm_enabled
 from course_discovery.app.prompts import GATEWAY_SYSTEM_PROMPT
 from course_discovery.domain.models import RoutingAction, SearchFilters
 from course_discovery.domain.state import AgentState
+from course_discovery.guardrails import redact_pii
 from course_discovery.observability.logging import (
     get_logger,
     sanitize_error,
@@ -57,7 +58,7 @@ def gateway_node(state: AgentState) -> dict:
     run_id = state.get("run_id", "unknown")
 
     try:
-        query_for_parsing = state["user_query"]
+        query_for_parsing = redact_pii(state["user_query"]) or ""
         logger.info(
             "gateway_parse_start",
             extra={
@@ -74,7 +75,8 @@ def gateway_node(state: AgentState) -> dict:
             "manager_feedback"
         ):
             query_for_parsing = (
-                f"{state['user_query']}\n\nReset overrides: {state['manager_feedback']}"
+                f"{query_for_parsing}\n\nReset overrides: "
+                f"{redact_pii(state['manager_feedback'])}"
             )
 
         parsed_filters = _parse_filters(query_for_parsing)
@@ -83,7 +85,7 @@ def gateway_node(state: AgentState) -> dict:
             extra={
                 "event": "gateway.filters_parsed",
                 "run_id": run_id,
-                "topic": parsed_filters.topic,
+                "topic_preview": preview(parsed_filters.topic, max_len=60),
                 "max_price": parsed_filters.max_price,
                 "min_rating": parsed_filters.min_rating,
                 "include_certificate": parsed_filters.include_certificate,

@@ -496,9 +496,9 @@ called repeatedly within a single run — once per `PUBLISH`/`REWRITE`/
 Only `synthesizer` both consumes content that traces back to untrusted
 external search results (`course.description`/`evidence`, built from mock
 Tavily snippets) *and* produces user-facing output — the one real
-injection-surface + leak-surface node, per the mismatch note above. No new
-dependency (Presidio/`llm-guard` would be scope creep for a demo article about
-graph mechanics, not NLP tooling):
+injection-surface + leak-surface node, per the mismatch note above. PII redaction
+superseded this regex approach and uses Presidio (`guardrails/pii.py`); the
+prompt-injection phrase list below is still unimplemented:
 
 - `guardrails.py`: `contains_prompt_injection(text: str) -> bool` (a short
   canned phrase list — "ignore previous instructions", "disregard the

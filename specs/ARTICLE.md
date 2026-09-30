@@ -628,6 +628,69 @@ LangGraph has no built-in compliance tooling, which is a layer-of-abstraction po
 
 The same gap shows up as housekeeping. The saver deletes by `thread_id` but cannot enumerate threads or expire them by age, so pruning means querying the checkpoint tables yourself. An age cutoff cannot tell a finished run from one parked at a review gate, so a long-lived review boundary (§4) and aggressive pruning pull in opposite directions. The outbox has the same growth problem on a smaller scale (§6.4).
 
+Personal data in a graph is a property of channels, and the graph's shape makes that property trackable. State is a fixed set of channels and nodes are the only writers, so a fact declared once about a channel can be followed through every node that reads it. That gives one place to say what is sensitive, and the controls that protect it (redaction, encryption, erasure) can be checked against that declaration instead of each being remembered separately.
+
+The abstraction has three parts.
+
+**Label the channel.** The state contract carries the fact, as `Annotated` metadata. LangGraph treats only a callable in `Annotated` as a reducer, so the marker is inert to the runtime and visible to tooling. It says whose data the channel holds and whether it was scrubbed on the way in.
+
+**Declare the node.** A node is opaque Python, so the graph cannot see what it does with what it reads. A declaration says: which channels it reads and writes, where data leaves the graph (a sink: a model call, a search API, a table), which inputs it scrubs before use, and which outputs are clean despite tainted input, with the reason. A sink states which labels it may receive.
+
+```python
+@dataclass(frozen=True)
+class Pii:
+    subject: str
+    redacted: bool = True
+
+@dataclass(frozen=True)
+class Sink:
+    name: str
+    kind: str                      # "store" | "external"
+    accepts: frozenset[str]        # labels this sink may receive
+
+@dataclass(frozen=True)
+class NodeFlow:
+    reads: frozenset[str]
+    writes: frozenset[str]
+    sinks: tuple[Sink, ...]
+    redacts: frozenset[str]        # inputs scrubbed before use
+    declassifies: dict[str, str]   # output channel -> why it is clean
+```
+
+```python
+class AgentState(TypedDict):
+    user_query: Annotated[str, Pii(subject="user_id")]
+    user_memory: Annotated[UserMemory | None, Pii(subject="user_id", redacted=False)]
+    ...
+
+LLM = external("llm:openrouter", accepts=frozenset({"subject"}))
+
+"gateway": flow(
+    reads={"user_query", "manager_feedback"}, writes={"search_filters"},
+    sinks=(LLM,), redacts={"user_query", "manager_feedback"},
+),
+"evidence_validator": flow(
+    reads={"search_filters", "user_memory", "deduplicated_courses"},
+    writes={"valid_courses"},
+    declassifies={"valid_courses": "catalog rows; memory only filters them"},
+),
+```
+
+**Check the graph.** Labels propagate along the declared reads and writes: a node that reads a labelled channel labels everything it writes, unless a declassification says otherwise, and a scrubbed input drops its `raw` label. Three rules run over the result, as ordinary predicates. A sink must accept every label that reaches it. A store that receives personal data must be one the erasure path covers. Every node in the compiled graph must have a declaration. A failure names the path:
+
+```
+[sink-accepts] synthesizer: 'raw' data reaches external sink 'llm:openrouter':
+  research_notes <- (course_cache_lookup) <- user_memory
+```
+
+Propagation is conservative by construction, which makes the declassification the reviewable unit: each one is a written claim that the checker accepts and cannot verify.
+
+**Enforce at the boundaries the checker refers to.** Three controls sit outside the graph, and each has a placement rule that comes from how checkpointing works. Input is checkpointed before any node runs, so scrubbing has to happen where the initial state is built, and again wherever new input enters, such as reviewer feedback on resume; a node that scrubs its own input has already let the raw text into the thread's first checkpoint. Encryption needs a wrapper as well as a serializer, because the Postgres saver stores primitive channel values as plaintext JSON beside the encrypted blobs; a wrapper over the saver's public methods seals those strings and works over any saver. Erasure needs an index the framework does not keep: `adelete_thread` is the primitive, a thread ID is opaque, and once state is encrypted the owner is unreadable, so the application records thread and user at run start and erases through that table. Erasure walks an explicit list of tables, and the second rule above is checked against that list, which ties the declaration to the erasure path.
+
+**Verify the claims with a canary.** A declaration is a claim about code the checker never reads. A test plants unique tokens in the query and in the stored profile, runs the graph to publish, and scans every checkpoint channel and the outbox payload; a token may appear only in channels the checker labelled. The failure this catches is a wrong declassification, typically a node that echoes its input into an output declared clean, as a search result that repeats its query does.
+
+The cost shows in the limits. Labels are per channel, not per field. A canary finds verbatim copies, and a model that paraphrases defeats it. Reads and sinks are declared, not observed, and branches a test run doesn't drive are unchecked. The practical decision rule: this pays off when several people add nodes to the graph, and for a handful of nodes a review checklist is cheaper.
+
 The actual compliance lever sits one layer down, at the model-provider boundary: zero-data-retention flags, DPAs, which region processes the request. The graph doesn't know what the Runnable under a node does with its payload. Not-logging and actively stripping PII are different guarantees, so check the specific provider's current docs before treating them as one.
 
 ### 10.2 Checkpoint and graph versioning
@@ -714,7 +777,7 @@ This is not a production case study. Nothing here comes from operating the agent
 
 Search is mocked, on purpose. Course listing pages are mostly JS/PHP-rendered and poorly indexed, so a real provider would add operational noise (rate limits, flaky results, API keys) unrelated to the article's subject. "Production would swap this one class" is a claim about the seam (`TavilyClient`'s `search()` signature), not a tested migration.
 
-How the claims were checked. One contract suite runs against both outbox stores; Postgres integration tests cover replay, parallel workers and concurrent submits; a SIGKILL child-process test covers crash recovery for each durability mode; app-level tests cover the trace split, outbox propagation and redaction, and the CLI was run live against Jaeger. Where it matters the text says whether a finding was observed here, read from source, or taken from docs.
+How the claims were checked. One contract suite runs against both outbox stores; Postgres integration tests cover replay, parallel workers and concurrent submits; a SIGKILL child-process test covers crash recovery for each durability mode; app-level tests cover the trace split, outbox propagation and redaction, canary tests plant unique tokens and scan every checkpoint channel and the outbox payload, and the CLI was run live against Jaeger. Where it matters the text says whether a finding was observed here, read from source, or taken from docs.
 
 Known untested or unbuilt:
 

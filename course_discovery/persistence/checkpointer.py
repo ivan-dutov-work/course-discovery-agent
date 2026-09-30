@@ -10,10 +10,20 @@ from typing import AsyncIterator
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langgraph.checkpoint.serde.base import SerializerProtocol
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+from psycopg import AsyncConnection
+from psycopg.rows import dict_row
 from pydantic import BaseModel
 
 from course_discovery.domain import models as domain_models
+from course_discovery.persistence.encryption import (
+    AesGcmCipher,
+    SealingSaver,
+    encrypt_serde,
+    keys_from_env,
+)
+from course_discovery.privacy.registry import forget_threads, stale_threads
 
 
 def msgpack_allowlist() -> list[tuple[str, str]]:
@@ -24,12 +34,18 @@ def msgpack_allowlist() -> list[tuple[str, str]]:
     ]
 
 
-def build_serde() -> JsonPlusSerializer:
-    return JsonPlusSerializer(allowed_msgpack_modules=msgpack_allowlist())
+def build_cipher() -> AesGcmCipher | None:
+    keys = keys_from_env()
+    return AesGcmCipher(keys) if keys else None
+
+
+def build_serde(cipher: AesGcmCipher | None = None) -> SerializerProtocol:
+    base = JsonPlusSerializer(allowed_msgpack_modules=msgpack_allowlist())
+    return encrypt_serde(base, cipher)
 
 
 def memory_saver() -> MemorySaver:
-    return MemorySaver(serde=build_serde())
+    return MemorySaver(serde=build_serde(build_cipher()))
 
 
 @asynccontextmanager
@@ -38,25 +54,23 @@ async def open_checkpointer(database_url: str | None = None) -> AsyncIterator[Ba
     if not url:
         yield memory_saver()
         return
-    async with AsyncPostgresSaver.from_conn_string(url, serde=build_serde()) as saver:
+    cipher = build_cipher()
+    serde = build_serde(cipher)
+    async with await AsyncConnection.connect(
+        url, autocommit=True, prepare_threshold=0, row_factory=dict_row
+    ) as conn:
+        saver = AsyncPostgresSaver(conn=conn, serde=serde)
         await saver.setup()
-        yield saver
+        yield SealingSaver(saver, cipher) if cipher else saver
 
 
 async def prune_checkpoints(
-    saver: AsyncPostgresSaver, older_than_days: float, now: datetime | None = None
+    saver: BaseCheckpointSaver, older_than_days: float, now: datetime | None = None
 ) -> list[str]:
+    saver = saver.inner if isinstance(saver, SealingSaver) else saver
     cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=older_than_days)
-    async with saver._cursor() as cur:
-        await cur.execute(
-            """
-            SELECT thread_id FROM checkpoints
-            GROUP BY thread_id
-            HAVING max((checkpoint ->> 'ts')::timestamptz) < %s
-            """,
-            (cutoff,),
-        )
-        thread_ids = [row["thread_id"] for row in await cur.fetchall()]
+    thread_ids = stale_threads(cutoff)
     for thread_id in thread_ids:
         await saver.adelete_thread(thread_id)
+    forget_threads(thread_ids)
     return thread_ids

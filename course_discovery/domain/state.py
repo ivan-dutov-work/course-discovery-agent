@@ -4,6 +4,7 @@ import operator
 from typing import Annotated
 from typing import TypedDict
 
+from course_discovery.domain.pii import Pii
 from course_discovery.domain.models import (
     CandidateValidation,
     CourseCandidate,
@@ -18,10 +19,10 @@ from course_discovery.domain.models import (
 
 
 class AgentState(TypedDict):
-    user_query: str
+    user_query: Annotated[str, Pii(subject="user_id")]
     user_id: str | None
     search_filters: SearchFilters | None
-    user_memory: UserMemory | None
+    user_memory: Annotated[UserMemory | None, Pii(subject="user_id", redacted=False)]
     cache_candidates: list[CourseCandidate]
     research_plan: ResearchPlan | None
     tavily_results: Annotated[list[TavilySearchResult], operator.add]
@@ -33,7 +34,7 @@ class AgentState(TypedDict):
     uncertain_courses: list[CourseCandidate]
     validation_results: list[CandidateValidation]
     digest: str | None
-    manager_feedback: str | None
+    manager_feedback: Annotated[str | None, Pii(subject="user_id")]
     rewrite_instructions: str | None
     routing_decision: RoutingAction | None
     iteration_count: int

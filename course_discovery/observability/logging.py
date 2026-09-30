@@ -9,6 +9,8 @@ from typing import Any
 
 from opentelemetry import trace
 
+from course_discovery.guardrails import PiiGuardrailError, redact_pii
+
 
 _SECRET_PATTERNS = [
     re.compile(r"sk-[A-Za-z0-9_\-]{12,}"),
@@ -104,10 +106,17 @@ def mask_secrets(value: str) -> str:
     return masked
 
 
+def _mask_pii(value: str) -> str:
+    try:
+        return redact_pii(value) or ""
+    except PiiGuardrailError:
+        return "[PII_REDACTION_UNAVAILABLE]"
+
+
 def truncate_text(value: str | None, *, max_len: int = 120) -> str | None:
     if value is None:
         return None
-    cleaned = mask_secrets(value)
+    cleaned = _mask_pii(mask_secrets(value))
     if len(cleaned) <= max_len:
         return cleaned
     return f"{cleaned[:max_len]}..."

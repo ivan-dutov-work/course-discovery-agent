@@ -61,8 +61,12 @@ course_discovery/
   domain/           AgentState, Pydantic models (state contract)
   research_agent/   memory, cache, planner, search, extraction, validator, synthesizer
   review/           review_gate, router
-  persistence/      Postgres adapter, checkpointer factory + msgpack allowlist
+  persistence/      Postgres adapter, checkpointer factory + msgpack allowlist, AES-GCM checkpoint encryption
+  privacy/          thread registry (`run_threads`) and per-user erasure (`python -m course_discovery.privacy erase`)
+                    plus a declared PII data-flow check (`flow.py`, `flow_specs.py`; `Pii` marker in `domain/pii.py`). Adding a node or state channel means updating `flow_specs.py`; `tests/test_flow_rules.py` fails otherwise
   effects/          EffectGateway port, outbox stores, worker (publish goes through here)
+  guardrails/       app-side PII port: `redact_pii`, `set_redactor`, fail-closed wrapper, `PII_GUARDRAIL` switch
+pii_redaction/      standalone package (no `course_discovery` imports): `Redactor` protocol, `PresidioRedactor`
   resilience.py     transient-error classification, RetryPolicy, timeout settings
   observability/    structured logging
   app/              CLI, prompts, gateway
@@ -110,6 +114,9 @@ All LLM nodes go through `course_discovery/app/llm.py:build_llm()`, which return
 - **Loop budget.** `max_research_iterations` caps the replanning loop (default: 2–3).
 - **Evidence over claims.** Treat missing evidence as `uncertain`, not `valid`.
 - **Cache first.** The search worker is only dispatched for gaps, freshness checks, or new topics.
+- **PII never persists raw.** User queries and review feedback go through `guardrails.redact_pii` (backed by `pii_redaction.PresidioRedactor`, local spaCy `en_core_web_sm`, no network; to move it out of process, add another `Redactor` implementation, e.g. an HTTP client, and return it from `guardrails/pii.py:_default_redactor`) before entering `AgentState`, the gateway LLM call, `record_feedback`, and log previews/error messages. Redaction failure raises `PiiGuardrailError`. `PII_GUARDRAIL=off` disables it for local debugging only. Person names in queries (e.g. an instructor) are redacted too.
+- **Encryption at rest.** With `CHECKPOINT_ENCRYPTION_KEYS` set (`<id>:<base64 32-byte key>[,<older id>:<key>...]`; first key encrypts, all decrypt, so rotation means prepending a key), the checkpointer seals serde blobs and writes with AES-GCM via `EncryptedSerializer`, and `SealingSaver` (a wrapper over any `BaseCheckpointSaver`, public API only) also seals string channel values, which the Postgres saver otherwise inlines as plaintext in `checkpoints.checkpoint`. `CHECKPOINT_ENCRYPTION_REQUIRED=true` refuses to start without keys. Plaintext rows written before enabling stay readable. Not covered: `checkpoints.metadata`, the `outbox.payload` JSONB, and the application tables.
+- **Erasure goes through `run_threads`.** Encrypted checkpoints cannot be searched by user, so every run registers `(thread_id, user_id)` at start (migrations `005_run_threads.sql` and `006_run_threads_activity.sql`, apply by hand to an existing volume). `prune --checkpoints` uses the same table (`last_activity_at`, bumped on every resume). `erase --user-id X` is a dry run; `--execute` deletes checkpoints via `adelete_thread` (never reads them, so it works without the key), then every table in `privacy/sources.py:USER_DATA_SOURCES` in one transaction, and exits 1 if anything remains. A new table must be added there or to `NOT_USER_DATA`; `tests/test_erasure.py` fails otherwise. Deleting a `users` row alone leaves `recommendation_events` behind (`ON DELETE SET NULL`).
 - **Fail closed.** Gateway parsing, DB access, and search failures all fail closed with structured error state — no silent fallback to hallucination. DB writers re-raise; never swallow a write failure into a log line.
 - **No direct side effects in nodes.** External effects go through `EffectGateway.submit` with a key derived from `run_id`, never generated at execution time. Add `RetryPolicy` only to nodes that are read-only or idempotent, and let transient errors propagate so it can fire.
 

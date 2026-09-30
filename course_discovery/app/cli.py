@@ -28,14 +28,16 @@ from course_discovery.observability.tracing import (
     run_span,
     shutdown_tracing,
 )
+from course_discovery.guardrails import redact_pii
 from course_discovery.persistence.checkpointer import open_checkpointer
+from course_discovery.privacy import register_thread
 from course_discovery.resilience import RECURSION_LIMIT
 from course_discovery.workflows.outer_graph import build_graph
 
 
 def _initial_state(query: str, run_id: str) -> AgentState:
     return {
-        "user_query": query,
+        "user_query": redact_pii(query) or "",
         "user_id": "cli-user",
         "search_filters": None,
         "user_memory": None,
@@ -157,9 +159,9 @@ async def _run(graph) -> None:
     print(f"\nRun ID: {run_id}")
     print("\nStarting graph execution...\n")
 
-    result = await _stream_until_pause(
-        graph, _initial_state(query, run_id), config, resume=False
-    )
+    initial_state = _initial_state(query, run_id)
+    register_thread(initial_state["user_id"], run_id)
+    result = await _stream_until_pause(graph, initial_state, config, resume=False)
 
     for _ in range(10):
         routing_decision = result.get("routing_decision")
@@ -209,7 +211,9 @@ async def _run(graph) -> None:
             },
         )
 
-        await graph.aupdate_state(config, {"manager_feedback": pm_feedback})
+        await graph.aupdate_state(
+            config, {"manager_feedback": redact_pii(pm_feedback)}
+        )
         logger.info(
             "invoke_resume",
             extra={
@@ -218,6 +222,7 @@ async def _run(graph) -> None:
                 "thread_id": run_id,
             },
         )
+        register_thread(initial_state["user_id"], run_id)
         result = await _stream_until_pause(graph, None, config, resume=True)
 
         publish_status = result.get("publish_status")
