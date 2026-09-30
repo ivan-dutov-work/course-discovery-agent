@@ -7,8 +7,10 @@ from unittest.mock import patch
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
+from course_discovery.domain import models as domain_models
 from course_discovery.domain.models import (
     DeliveryStatus,
+    ResearchPlan,
     ResearchRunMetrics,
     RoutingAction,
     SearchFilters,
@@ -40,6 +42,23 @@ class SerdeTests(unittest.TestCase):
                 restored = serde.loads_typed(serde.dumps_typed(value))
                 self.assertIs(type(restored), type(value))
                 self.assertEqual(restored, value)
+
+    def test_plan_checkpointed_with_the_removed_cache_query_field_still_loads(self):
+        legacy = type(
+            "ResearchPlan",
+            (ResearchPlan,),
+            {"__module__": domain_models.__name__, "__annotations__": {"cache_query": str}},
+        )
+        serde = build_serde()
+        payload = serde.dumps_typed(legacy(topic="python", cache_query="python"))
+        self.assertIn(b"cache_query", payload[1])
+
+        with self.assertNoLogs("langgraph.checkpoint.serde.jsonplus", "WARNING"):
+            restored = serde.loads_typed(payload)
+
+        self.assertIs(type(restored), ResearchPlan)
+        self.assertEqual(restored.topic, "python")
+        self.assertNotIn("cache_query", restored.model_dump())
 
 
 class OpenCheckpointerTests(unittest.IsolatedAsyncioTestCase):

@@ -46,6 +46,8 @@ class _FakeConn:
             if "ON CONFLICT (course_id, source_url) DO UPDATE" not in sql:
                 key += (object(),)
             self.evidence[key] = params[2]
+        if "INSERT INTO courses" in sql:
+            return _Result((1, []))
         return _Result((1,))
 
 
