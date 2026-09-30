@@ -898,7 +898,132 @@ different failure classes, the same distinction as retry versus replanning
 
 ## 9. Observability
 
-[NOT DRAFTED] — see outline §9 (9.1–9.3).
+### 9.1 Tracing a durable graph
+
+A graph run is a tree of nodes, and a trace is the natural picture of it. With
+an OpenTelemetry instrumentor for LangChain attached, every node becomes a
+span, and the parallel workers of a `Send` fan-out show up as siblings under
+the node that dispatched them. That is the fan-out from §3.2 made visible:
+which workers ran, how long each took, which one held up the join.
+
+Durability breaks that tree in two places, and each needs a deliberate fix.
+
+The first is the review boundary. `interrupt_before` ends the first invocation
+and the resume is a second one, possibly hours later and in another process
+(§4.1). A single trace cannot span that gap without a span held open for the
+whole wait. The alternative is two traces: one root span per invocation, both
+tagged with the same run ID, the second carrying a span *link* to the first.
+The run ID answers "show me everything this run did"; the link answers "which
+invocation came before this one".
+
+```python
+with tracer().start_as_current_span(
+    name,
+    attributes={"course.run_id": run_id, "course.resume": resume},
+    links=[Link(previous)] if previous else None,
+) as span:
+```
+
+The second is the outbox. The effect is submitted inside a node and delivered
+later by a worker with no shared call stack (§6.2). Trace context does not
+cross that gap on its own, so the W3C `traceparent` is serialized into the
+effect payload at submit time and extracted in the worker. Delivery then joins
+the trace of the submission that queued it, carried in the same row as the
+idempotency key.
+
+Splitting one run into several traces has a consequence for sampling. A ratio
+sampler decides per root, so it can keep the resume and drop the start, leaving
+a link that points nowhere. Keying the decision on the run ID, which is
+available as an attribute when the span is created, makes every segment of a
+run agree. The outbox case is the mirror image: a parent-based sampler in the
+worker inherits the sampled flag from the stored `traceparent`, but a
+tail-based collector that buffers traces for a bounded window may have decided
+before a delivery minutes later arrives. Which sampling strategy fits depends
+on where the run's boundaries fall, not on the tracing library.
+
+Replay is the other durability consequence. Recovery from a checkpoint
+re-executes the nodes after it (§5.3), so the recovered trace holds spans for
+work that already ran once. Without a marker, that duplication is
+indistinguishable from a busy day. Tagging the recovery root with its
+checkpoint and reason separates repeated work from unique work, and gives a
+sampler something to keep in full. This repo records everything with the SDK
+default and does not tag replays yet.
+
+Worth naming: the destination is an architectural choice too. Spans carry
+prompts and state, the data §10.1 calls a liability. Exporting them through a
+hosted tracing product adds a second third-party processor next to the model
+gateway (§8.2). Running the vendor-neutral SDK against your own collector keeps
+them in place, and content is redacted from spans unless an explicit switch
+turns capture on. The cost is that agent-aware views become yours to build; the
+split trace and the outbox context above were written by hand.
+
+The failure modes are the other cost. Exporter failure is fail-open, because
+telemetry must never fail a run, so a broken collector means missing traces
+rather than an error you will notice. Spans are batched, so a hard kill loses
+the last batch and any span still open. Flushing at the end of each run segment
+narrows that window without closing it.
+
+### 9.2 `stream_mode`
+
+Tracing is for the operator; `stream_mode` is for the client. Without it, a
+caller waits for the whole invocation to return, or polls state, to learn where
+a run stands. Passing a list of modes makes the stream yield `(mode, chunk)`
+tuples, and `subgraphs=True` prefixes each with the namespace of the subgraph
+that produced it.
+
+```python
+async for namespace, mode, chunk in graph.astream(
+    graph_input, config, stream_mode=["updates", "custom"], subgraphs=True
+):
+```
+
+The modes divide by what they expose. `"updates"` emits each node's state delta
+as the node finishes, which is enough for a progress line per step. `"custom"`
+carries whatever a node chooses to write, for progress inside a long node
+where no state update has happened yet. `"values"` sends the full state after
+every step, and `"debug"`, `"tasks"` and `"checkpoints"` expose the execution
+machinery itself, including `@task` boundaries (§5.4). Choosing a mode is
+choosing how much of the graph's internals a client is allowed to see, which
+matters once the client is not your own code.
+
+The stream ends at the interrupt like any other invocation, so the gaps around
+the review boundary (§4.3) are not something streaming closes.
+
+### 9.3 The other pillars: metrics, logs, profiles
+
+Traces answer "what happened in this run"; metrics answer "what is happening
+across runs". The instruments worth having are the ones that tie back to the
+mechanisms above: a counter for degraded paths, labelled by component and
+reason, is the metric form of the silent-fallback problem in §8.2, and outbox
+backlog and oldest-pending age catch the quietly growing queue that traces
+never show (§6.4). Cache hit rate is the one that tests the architecture's core
+claim, since a cache-first agent with a near-zero hit rate is a slower uncached
+agent.
+
+Metrics carry their own flush gap. They export on an interval, so counters
+recorded since the last flush are lost on a hard kill. If a number has to be
+exact, it belongs in the database, not in the telemetry pipeline.
+
+Logs earn their place by carrying the trace and span IDs on every line, so a
+log line found by grep opens the trace it belongs to. The same redaction rule
+applies: previews of queries and feedback are null unless content capture is on.
+
+Profiles are the pillar an I/O-bound agent needs least, and one failure makes
+them worth having. A node's time is mostly waiting on a model, and a profile of
+waiting says nothing. The exception is time a trace cannot attribute, and the
+fan-out from §3.2 produces it. Parallel `async def` workers overlap only while
+each one yields to the event loop (§7.2). One blocking call inside a worker (a
+synchronous driver, an in-process similarity scan, a large dedup) holds the
+loop, and the workers run one after another. The trace shows the symptom:
+sibling spans that should start together start staggered, each waiting for the
+previous to end. It does not show the cause, because the cause is CPU time on
+the loop thread, not a slow external call. A sampling profiler pointed at the
+running process names the function holding the loop. The cost is that a
+profile is a statistical picture of one process, so it explains where time went
+without saying which run it went in; the trace supplies that half. Not observed
+here: the mock's synchronous catalog scan is handed to `asyncio.to_thread`, which
+is the usual fix once a profile finds the culprit. It is the failure to expect
+when a real provider client or a local embedding step replaces the mock.
 
 ---
 
