@@ -63,6 +63,7 @@ course_discovery/
   review/           review_gate, router
   persistence/      Postgres adapter, checkpointer factory + msgpack allowlist, AES-GCM checkpoint encryption
   privacy/          thread registry (`run_threads`) and per-user erasure (`python -m course_discovery.privacy erase`)
+                    plus a declared PII data-flow check (`flow.py`, `flow_specs.py`; `Pii` marker in `domain/pii.py`). Adding a node or state channel means updating `flow_specs.py`; `tests/test_flow_rules.py` fails otherwise
   effects/          EffectGateway port, outbox stores, worker (publish goes through here)
   guardrails/       app-side PII port: `redact_pii`, `set_redactor`, fail-closed wrapper, `PII_GUARDRAIL` switch
 pii_redaction/      standalone package (no `course_discovery` imports): `Redactor` protocol, `PresidioRedactor`

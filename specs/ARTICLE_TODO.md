@@ -567,6 +567,25 @@ each is verified against the repo patterns.
   - Design alternative not built: per-user keys (crypto-shredding), which would make
     erasure a key deletion and remove the need to find every row.
 
+- [x] **Declared data-flow check for PII** *(proof of concept: `domain/pii.py`,
+      `privacy/flow.py`, `privacy/flow_specs.py`, `tests/test_flow_rules.py`; written into
+      ARTICLE.md §10.1.)* `Pii` marker as `Annotated` metadata on state channels, a
+      per-node `flow(...)` declaration (reads, writes, sinks, redacts, declassifies), and
+      propagation over the shared channels. Rules: sink must accept the labels reaching it,
+      stores receiving subject data must be in `USER_DATA_SOURCES`, every compiled-graph node
+      must be declared. Verified: mutation tests for each rule, a run-based test that nodes
+      write only declared channels, and canary tests (a subject token in the query, a raw
+      token in user memory, scanned across checkpoint history and the outbox payload). The
+      canary caught a wrong declassification (search results echo the query); the coverage
+      rule caught an undeclared node (`research_done`).
+  - Known limits, stated in the article: channel granularity, reads declared not observed,
+    only the approve path is driven, sinks declared not observed, edge order ignored,
+    canary finds verbatim copies only.
+  - Not built: reducer-based redaction (a redacting reducer on the channel; unverified
+    whether the initial input passes through it), selective sealing (judged not worth it:
+    the serializer already encrypts non-inline values, and seal-everything fails closed),
+    AST-derived reads/writes, boundary-observed sinks.
+
 ## Security / guardrails — same wrap-the-Runnable shape as fallback
 
 - [ ] LangChain/LangGraph core has no native prompt-injection or PII-guardrail

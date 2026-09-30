@@ -437,8 +437,15 @@ instances of the general "what to measure" question.
 **10.1 GDPR / data retention**
 
 Cross-reference §5.6: the checkpointer and `Store` persist whatever PII flows
-through state at every superstep, with no built-in compliance tooling. The
-compliance lever sits at the model-provider boundary.
+through state at every superstep, with no built-in compliance tooling. Then the
+application-owned controls, each with a LangGraph-specific placement rule:
+redaction at the boundary that builds initial state (input is checkpointed before
+any node runs), a saver wrapper because the Postgres saver inlines primitive
+values outside the serializer, a user-to-thread index for erasure, and a declared
+data-flow check (`Pii` marker on state channels, per-node flow declarations,
+propagation, canary test). The compliance lever sits at the model-provider
+boundary. Scope note: this subsection runs well past the ~400-word budget for §10;
+trim or split into its own section if the outline is rebalanced.
 
 **10.2 Checkpoint and graph versioning** `[reliability]`
 
