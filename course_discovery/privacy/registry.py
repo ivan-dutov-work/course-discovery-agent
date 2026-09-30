@@ -5,6 +5,10 @@ from datetime import datetime
 from course_discovery.persistence.postgres import connect
 
 
+class ThreadAccessError(PermissionError):
+    pass
+
+
 def register_thread(user_id: str | None, thread_id: str) -> None:
     if not user_id:
         return
@@ -19,6 +23,17 @@ def register_thread(user_id: str | None, thread_id: str) -> None:
                 """,
                 (thread_id, user_id),
             )
+
+
+def authorize_thread(user_id: str | None, thread_id: str) -> None:
+    with connect() as conn:
+        if conn is None:
+            return
+        row = conn.execute(
+            "SELECT user_id FROM run_threads WHERE thread_id = %s", (thread_id,)
+        ).fetchone()
+    if not user_id or row is None or row[0] != user_id:
+        raise ThreadAccessError("thread not found or not owned by caller")
 
 
 def stale_threads(cutoff: datetime) -> list[str]:

@@ -258,7 +258,11 @@ below; the "not yet in the article" notes on individual items are stale). Integr
       in the outgoing request payload. Don't claim it was exercised. Also still
       unverified: OpenRouter data-retention/ZDR controls — the article notes every
       prompt now transits a third party, per §10.1.)*
-- [ ] **LiteLLM — two distinct integration shapes, don't conflate them.** *Verified*:
+- [x] **LiteLLM — two distinct integration shapes, don't conflate them.** *(Drafted in
+      ARTICLE.md §8.2. The production experience to keep: the Proxy is a project still in
+      progress with many issues, needs manual management, and needs Redis as extra
+      infrastructure to scale past one instance. The list of what Redis holds is from
+      LiteLLM's docs, not from this repo; verify before tightening it.)* *Verified*:
       (a) **SDK, in-process**: `langchain-litellm` package provides `ChatLiteLLM` and
       `ChatLiteLLMRouter` (wraps LiteLLM's own `Router` for load-balancing/fallback) —
       no separate service, just a library. (b) **Proxy, a real gateway service**:
@@ -476,9 +480,13 @@ the interrupted node is re-run from the top. Everything below follows from that.
       outbox rows and, with the flag, whole threads whose newest checkpoint `ts` is
       older than N days (`adelete_thread`). Age-based, so a run parked at review longer
       than N days is deleted too.
-- [ ] **Access control on `thread_id`** — drafted in ARTICLE.md §10.4: the id is a bearer
+- [x] **Access control on `thread_id`** — drafted in ARTICLE.md §10.4: the id is a bearer
   capability, and `update_state` on `manager_feedback` can open the publish gate.
-  Not implemented; the CLI has one user.
+  Built: `privacy/registry.py:authorize_thread` checks the `run_threads` owner before
+  `update_state` in the CLI; unknown and foreign threads raise the same
+  `ThreadAccessError`; re-registering a taken id keeps the owner
+  (`tests/test_thread_access.py`, Postgres). Not covered: a second entry point that skips
+  the guard, and no-`DATABASE_URL` mode, where there is no registry and the check is skipped.
 - [x] **When not LangGraph:** Temporal/Restate/DBOS give durable execution at the
   activity level, which is what the outbox plus keys approximate by hand. Worth a
   short "when to reach for it instead" paragraph, not a comparison.
@@ -501,6 +509,36 @@ each is verified against the repo patterns.
 - [x] **Concurrent resume** (§11.3) — drafted. Application-level advisory lock before
   `ainvoke`. The risk scenario (double work, not corruption) follows from
   deterministic keys established in §6.1.
+
+## Next up — vital
+
+- [ ] **Guardrail insertion points** (§8.5, §10.3): `candidate_extractor` and
+      `evidence_validator` consume untrusted search results as LLM input, the injection
+      surface; `synthesizer` produces user-facing output. Same wrap-the-Runnable shape as
+      fallback; Pydantic validation catches malformed output, not well-formed malicious
+      output. Both sections are still `[NOT DRAFTED]`.
+- [ ] **Deployment shape**: self-hosting the library (this repo) vs. LangGraph Server /
+      `langgraph.json` / Studio. Who owns the queue, the workers and the checkpointer in
+      each. One short section; label anything about platform semantics as unverified
+      until checked against current docs.
+- [ ] **Evals and regression testing for the LLM nodes**: the article covers replay and
+      kill tests but not "did the gateway, router or synthesizer get worse after a model
+      swap or a fallback." Draw on `PROPOSED_METRICS.md` and `PROPOSED_TESTING.md`; tie to
+      the OpenRouter fallback model (§8.2) and to counting validation failures (§8.4).
+
+## Optional — nice to have, not important
+
+- [ ] **Pending writes.** The per-task writes the checkpointer stores explain why a failed
+      `Send` sibling doesn't lose its successful siblings' results, and give the §5.5
+      subgraph re-run finding a mechanism. Not mentioned in the article.
+- [ ] **State size and checkpoint growth.** Every superstep persists the full state;
+      search results and candidates grow per replan iteration. Design rule: keep large
+      payloads out of state and pass references. Encryption multiplies the cost.
+- [ ] **`max_concurrency`.** Bounds plan-driven `Send` fan-out via config; without it a
+      planner that emits many queries fires them all. Pairs with §3.2 and §8.3.
+- [ ] **Time travel and forking.** `get_state_history` plus `update_state` to fork from a
+      checkpoint, for debugging a bad run. Check whether §5 already covers it under other
+      words.
 
 ## Explicit scope boundary — not a case study
 
