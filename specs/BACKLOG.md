@@ -13,6 +13,25 @@ fixed in this pass.
 Every item ends with tests (success and failure modes) and the doc updates named in `CLAUDE.md`.
 Before starting P4 to P6 read `specs/FEEDBACK.md`; it holds the case list the tests come from.
 
+### P3a. OpenRouter `Embedder` (before or right after merging the topic-cache PR)
+
+Proves the `Embedder` port swap works with a real semantic model; the hashing default stays for
+tests and offline runs.
+
+- `OpenRouterEmbedder` implementing `Embedder` (`dimension = 1536`), selected in
+  `embeddings/base.py:_default_embedder` by an env switch (default stays `HashingEmbedder`).
+  Pick a model that returns or accepts 1536 dimensions (column size is fixed by migration 001).
+  Transient errors propagate so `RetryPolicy` can fire; failures raise `EmbeddingError`.
+- Run `scripts/calibrate_topic_floor.py` against it (parametrize the script by embedder), refit
+  the topic floor and the 0.7 / 0.2 / 0.1 blend weights if they do not transfer, and record both
+  sets of numbers in `notes/05-scale-and-scope.md` and the outcome in `DECISIONS.md`.
+- Existing rows keep hashing vectors: document that switching embedders needs
+  `python -m course_discovery.research_agent.embeddings backfill`.
+- Tests: stubbed HTTP success, wrong dimension, transport error; a live test that skips without
+  `OPENROUTER_API_KEY`.
+- Docs: `ARCHITECTURE.md`, `STATUS.md`, CLAUDE.md environment section, article claim upgraded
+  from "topic-aware" to "semantic" only if the calibration supports it.
+
 ### P4. Writable profile with consumers (gap 5, part 1)
 
 Spec: `specs/FEEDBACK.md`, "Current state" and "Memory shape".
