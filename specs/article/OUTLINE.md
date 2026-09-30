@@ -78,7 +78,7 @@ publish/rewrite/augment/reset/discard) is fixed at compile time. Nodes make LLM
 *judgments* (which queries to run, valid/invalid/uncertain) but nothing decides
 *which node runs next* except the graph definition and conditional edges written
 in advance. This is an orchestrator-workers pattern plus an evaluator-optimizer
-loop (the replanner) — named workflow patterns, not agent patterns.
+loop (`plan_gap_search`) — named workflow patterns, not agent patterns.
 
 **1.3 Where LangGraph's value lies for each**
 
@@ -197,8 +197,8 @@ the parent replays from exactly that node.
 
 `durability="sync" | "async" | "exit"` as a tuning knob. Tested against
 Postgres: all three resume a run that failed with an exception, but only `sync`
-survives a SIGKILL inside `course_cache_upsert` without re-running
-`evidence_validator`; after the same kill `exit` has no checkpoints and the run
+survives a SIGKILL inside `save_verified_courses` without re-running
+`verify_course_claims`; after the same kill `exit` has no checkpoints and the run
 restarts from scratch. `async` is deliberately not tested for a hard kill,
 because whether the last background write lands is a race. This is the
 article's strongest piece of evidence; say how the test works (child process
@@ -210,8 +210,8 @@ The design rule: keep non-determinism out of effect nodes. A node that calls an
 LLM and then performs an effect can re-run after the effect but before its
 checkpoint, with different LLM output. Split them so a checkpoint lands between
 the two and the effect node derives its payload only from checkpointed state.
-Audit of this repo: `publish_node`, `course_cache_upsert_node` and
-`user_memory_update_node` build from state, and `run_id` is minted before the
+Audit of this repo: `send_approved_courses`, `save_verified_courses` and
+`record_review_outcome` build from state, and `run_id` is minted before the
 graph starts. Temperature 0 is not a guarantee (provider nondeterminism, model
 drift, and a fallback provider can change the answer between a run and its
 replay). Check that what the reviewer approved is what gets published.

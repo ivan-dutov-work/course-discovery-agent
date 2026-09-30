@@ -26,8 +26,8 @@ logger = get_logger(__name__)
 
 def _after_gateway(state: AgentState):
     if state.get("error"):
-        return "discard_node"
-    return "research_agent"
+        return "discard_run"
+    return "course_research"
 
 
 def _route_from_router(state: AgentState):
@@ -39,45 +39,45 @@ def build_graph(checkpointer=None, research_compile_kwargs=None):
     builder = StateGraph(AgentState)
 
     retry = transient_retry()
-    builder.add_node("gateway", gateway_node, retry_policy=retry)
-    builder.add_node("research_agent", build_research_graph(**(research_compile_kwargs or {})))
-    builder.add_node("review_gate", review_gate_node)
-    builder.add_node("router", router_node)
-    builder.add_node("augment_dispatch", augment_dispatch_node)
-    builder.add_node("publish_node", publish_node, retry_policy=retry)
-    builder.add_node("discard_node", discard_node)
-    builder.add_node("user_memory_update", user_memory_update_node, retry_policy=retry)
+    builder.add_node("parse_user_request", gateway_node, retry_policy=retry)
+    builder.add_node("course_research", build_research_graph(**(research_compile_kwargs or {})))
+    builder.add_node("await_human_review", review_gate_node)
+    builder.add_node("interpret_review_feedback", router_node)
+    builder.add_node("prepare_augmented_search", augment_dispatch_node)
+    builder.add_node("send_approved_courses", publish_node, retry_policy=retry)
+    builder.add_node("discard_run", discard_node)
+    builder.add_node("record_review_outcome", user_memory_update_node, retry_policy=retry)
 
-    builder.set_entry_point("gateway")
+    builder.set_entry_point("parse_user_request")
     builder.add_conditional_edges(
-        "gateway",
+        "parse_user_request",
         _after_gateway,
         {
-            "research_agent": "research_agent",
-            "discard_node": "discard_node",
+            "course_research": "course_research",
+            "discard_run": "discard_run",
         },
     )
-    builder.add_edge("research_agent", "review_gate")
-    builder.add_edge("review_gate", "router")
+    builder.add_edge("course_research", "await_human_review")
+    builder.add_edge("await_human_review", "interpret_review_feedback")
     builder.add_conditional_edges(
-        "router",
+        "interpret_review_feedback",
         _route_from_router,
         {
-            RoutingAction.PUBLISH: "publish_node",
-            RoutingAction.REWRITE: "research_agent",
-            RoutingAction.AUGMENT: "augment_dispatch",
-            RoutingAction.RESET: "gateway",
-            RoutingAction.DISCARD: "discard_node",
+            RoutingAction.PUBLISH: "send_approved_courses",
+            RoutingAction.REWRITE: "course_research",
+            RoutingAction.AUGMENT: "prepare_augmented_search",
+            RoutingAction.RESET: "parse_user_request",
+            RoutingAction.DISCARD: "discard_run",
         },
     )
-    builder.add_edge("augment_dispatch", "research_agent")
-    builder.add_edge("publish_node", "user_memory_update")
-    builder.add_edge("user_memory_update", END)
-    builder.add_edge("discard_node", END)
+    builder.add_edge("prepare_augmented_search", "course_research")
+    builder.add_edge("send_approved_courses", "record_review_outcome")
+    builder.add_edge("record_review_outcome", END)
+    builder.add_edge("discard_run", END)
 
     graph = builder.compile(
         checkpointer=checkpointer or memory_saver(),
-        interrupt_before=["review_gate"],
+        interrupt_before=["await_human_review"],
     )
 
     logger.info(
@@ -86,7 +86,7 @@ def build_graph(checkpointer=None, research_compile_kwargs=None):
             "event": "outer_graph.compiled",
             "node_count": 8,
             "duration_ms": int((time.perf_counter() - start_ts) * 1000),
-            "interrupt_before": ["review_gate"],
+            "interrupt_before": ["await_human_review"],
         },
     )
 

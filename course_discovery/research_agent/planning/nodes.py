@@ -100,10 +100,10 @@ def research_planner_node(state: AgentState) -> dict:
 def need_web_search(state: AgentState):
     plan = state.get("research_plan")
     if state.get("error"):
-        return "discard_node"
+        return "discard_run"
     if plan and plan.search_queries:
-        return "tavily_search_workers"
-    return "aggregate"
+        return "search_web_for_courses"
+    return "merge_known_and_found_courses"
 
 
 def replanner_node(state: AgentState) -> dict:

@@ -150,7 +150,7 @@ class PublishThroughPostgresOutboxTests(unittest.IsolatedAsyncioTestCase):
             points = [
                 snap
                 async for snap in second.aget_state_history(config)
-                if snap.next == ("publish_node",)
+                if snap.next == ("send_approved_courses",)
             ]
             self.assertEqual(len(points), 1)
             replayed = await second.ainvoke(None, points[0].config)

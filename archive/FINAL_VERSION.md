@@ -1,3 +1,5 @@
+> **Superseded.** Early architecture outline (Telegram HIL, embedding-based dedup, multi-agent framing) from before the design changed. The current draft is `specs/article/DRAFT.md`; the implemented graph is in `specs/ARCHITECTURE.md`. Kept for history only.
+
 **Course Discovery Agent**
 
 Architecture Outline

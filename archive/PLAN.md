@@ -1,3 +1,5 @@
+> **Superseded.** Original design input, kept for history. Node names, the LLM-versus-rules split and the scope below predate the implementation: see `specs/ARCHITECTURE.md` for the graph as built and `CLAUDE.md` for the constraints. Where they disagree, `specs/` wins.
+
 # Plan: Personalized Complex Course Research Agent
 
 ## Objective

@@ -90,7 +90,7 @@ class PublishEffectTests(unittest.IsolatedAsyncioTestCase):
 
         replay_points = [
             snap for snap in graph.get_state_history(_config("run-replay"))
-            if snap.next == ("publish_node",)
+            if snap.next == ("send_approved_courses",)
         ]
         self.assertEqual(len(replay_points), 1)
         result = await graph.ainvoke(None, replay_points[0].config)
@@ -124,7 +124,7 @@ class PublishEffectTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(ConnectionError):
             await graph.ainvoke(None, _config("run-down"))
-        self.assertEqual(graph.get_state(_config("run-down")).next, ("publish_node",))
+        self.assertEqual(graph.get_state(_config("run-down")).next, ("send_approved_courses",))
 
         set_gateway(OutboxGateway(self.store))
         result = await graph.ainvoke(None, _config("run-down"))

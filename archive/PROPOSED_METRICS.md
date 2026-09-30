@@ -64,7 +64,7 @@ where applicable.
   additional valid candidate.
 - **Measurement:** For each run with `replan_count > 0`: count iterations after which
   `valid_candidate_count` increased. Divide by `replan_count`.
-- **Target:** ≥50%. Below this, the replanner is generating redundant queries.
+- **Target:** ≥50%. Below this, `plan_gap_search` is generating redundant queries.
 
 ---
 
@@ -91,14 +91,14 @@ where applicable.
 
 - **Definition:** Wall-clock time from research entry to synthesizer output.
   Excludes human review wait time.
-- **Measurement:** Timestamp at `research_entry` start and `synthesizer` end.
+- **Measurement:** Timestamp at `start_research` start and `rank_and_summarize_courses` end.
   Breakdown tracked per node.
 - **Target:** <90 seconds for a typical run (cache-first, 1–2 Tavily calls).
 
 **11. Token Count**
 
-- **Definition:** Total LLM tokens consumed per run across all LLM nodes (planner,
-  extractor, validator, replanner, synthesizer).
+- **Definition:** Total LLM tokens consumed per run across all LLM nodes (`parse_user_request`,
+  `interpret_review_feedback`, `rank_and_summarize_courses`).
 - **Measurement:** Accumulated from LLM call metadata in each node.
 - **Tracking:** Per-run. High token counts relative to valid candidate count indicate
   inefficient prompting or excessive candidate extraction.
@@ -163,16 +163,18 @@ where applicable.
 **Automated (every run):**
 
 Metrics 1–12 and 15–17 can be computed from structured run state and database
-records. They are written to `research_runs` at the end of each research subgraph
-execution.
+records. Proposed home: a `research_runs` row at the end of each research subgraph
+execution. The table exists in migration 001 but nothing writes it yet; the OpenTelemetry
+metrics in `observability/metrics.py` already cover cache hit/miss, search calls, run
+duration and outcomes, and LLM calls and tokens (metrics 8, 9, 10 and 11 in part).
 
 **Semi-automated (requires human signal):**
 
 Metrics 13–14 (acceptance and rejection) require the user to complete the review
 cycle (PUBLISH or DISCARD) and optionally provide feedback text. Recorded in
-`recommendation_events` at the `user_memory_update` step.
+`recommendation_events` at the `record_review_outcome` step.
 
 **Recommended reporting cadence:**
 
 After every 20 production runs, or weekly during active development — whichever
-comes first. Per-run metrics are always available from the `research_runs` table.
+comes first. Per-run metrics become available from `research_runs` once it is written.

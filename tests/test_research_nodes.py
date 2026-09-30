@@ -104,10 +104,10 @@ class ResearchNodeTests(unittest.TestCase):
     def test_enough_valid_routes_to_replan_until_budget_exhausted(self) -> None:
         state = _state(valid_courses=[])
         state.update(research_planner_node(state))
-        self.assertEqual(enough_valid(state), "replanner")
+        self.assertEqual(enough_valid(state), "plan_gap_search")
         exhausted = _state(valid_courses=[], research_iteration=2)
         exhausted.update(research_planner_node(exhausted))
-        self.assertEqual(enough_valid(exhausted), "course_cache_upsert")
+        self.assertEqual(enough_valid(exhausted), "save_verified_courses")
 
     def test_replanner_avoids_completed_queries(self) -> None:
         state = _state(completed_queries=["python course beginner free certificate"])

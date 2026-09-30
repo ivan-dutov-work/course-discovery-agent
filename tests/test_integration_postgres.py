@@ -138,7 +138,7 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(psycopg.errors.CheckViolation):
             await graph.ainvoke(None, config)
 
-        self.assertEqual(graph.get_state(config).next, ("user_memory_update",))
+        self.assertEqual(graph.get_state(config).next, ("record_review_outcome",))
         self.assertEqual(_count(self.conn, "SELECT count(*) FROM recommendation_events"), 0)
 
     async def test_replay_from_checkpoint_does_not_duplicate_writes(self):
@@ -151,7 +151,7 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
         replay_points = [
             snap
             for snap in graph.get_state_history(config)
-            if snap.next in {("user_memory_update",), ("research_agent",)}
+            if snap.next in {("record_review_outcome",), ("course_research",)}
         ]
         self.assertEqual(len(replay_points), 2)
         for snap in replay_points:
@@ -172,12 +172,12 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
         before = _view(graph.get_state(config).values)
         events_before = _count(self.conn, "SELECT count(*) FROM course_evidence")
 
-        snapshot = await _subgraph_snapshot(graph, saver, "run-sub", "course_cache_upsert")
+        snapshot = await _subgraph_snapshot(graph, saver, "run-sub", "save_verified_courses")
         with _UpsertCalls() as calls:
             await graph.ainvoke(None, snapshot.config)
 
         self.assertEqual(calls.count, 1)
-        self.assertEqual(graph.get_state(config).next, ("review_gate",))
+        self.assertEqual(graph.get_state(config).next, ("await_human_review",))
         self.assertEqual(_view(graph.get_state(config).values), before)
         self.assertEqual(
             _count(self.conn, "SELECT count(*) FROM course_evidence"), events_before
@@ -199,13 +199,13 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         async with _durable_saver() as saver:
             second = build_graph(checkpointer=saver)
-            snapshot = await _subgraph_snapshot(second, saver, thread_id, "course_cache_upsert")
+            snapshot = await _subgraph_snapshot(second, saver, thread_id, "save_verified_courses")
             with _UpsertCalls() as calls:
                 await second.ainvoke(None, snapshot.config)
 
             self.assertEqual(calls.count, 1)
             replayed = await second.aget_state(config)
-            self.assertEqual(replayed.next, ("review_gate",))
+            self.assertEqual(replayed.next, ("await_human_review",))
             self.assertEqual(_view(replayed.values), before)
             self.assertEqual(
                 _count(self.conn, "SELECT count(*) FROM course_evidence"), evidence
@@ -258,7 +258,7 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
                 outage["active"] = False
                 await graph.ainvoke(None, config, durability=mode)
-                self.assertEqual((await graph.aget_state(config)).next, ("review_gate",))
+                self.assertEqual((await graph.aget_state(config)).next, ("await_human_review",))
 
         self.assertEqual(len(validator_calls), 1)
         return written
@@ -267,22 +267,22 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
         saver = memory_saver()
         graph = build_graph(
             checkpointer=saver,
-            research_compile_kwargs={"interrupt_before": ["course_cache_upsert"]},
+            research_compile_kwargs={"interrupt_before": ["save_verified_courses"]},
         )
         config = _thread("run-mid")
         await graph.ainvoke(_initial_state(QUERY, "run-mid"), config)
 
         paused = graph.get_state(config, subgraphs=True)
-        self.assertEqual(paused.next, ("research_agent",))
-        self.assertEqual(paused.tasks[0].state.next, ("course_cache_upsert",))
+        self.assertEqual(paused.next, ("course_research",))
+        self.assertEqual(paused.tasks[0].state.next, ("save_verified_courses",))
         self.assertEqual(_count(self.conn, "SELECT count(*) FROM courses"), 0)
 
         await graph.ainvoke(None, config)
-        self.assertEqual(graph.get_state(config).next, ("review_gate",))
+        self.assertEqual(graph.get_state(config).next, ("await_human_review",))
         self.assertGreater(_count(self.conn, "SELECT count(*) FROM courses"), 0)
         evidence = _count(self.conn, "SELECT count(*) FROM course_evidence")
 
-        snapshot = await _subgraph_snapshot(graph, saver, "run-mid", "course_cache_upsert")
+        snapshot = await _subgraph_snapshot(graph, saver, "run-mid", "save_verified_courses")
         await graph.ainvoke(None, snapshot.config)
         self.assertEqual(
             _count(self.conn, "SELECT count(*) FROM course_evidence"), evidence

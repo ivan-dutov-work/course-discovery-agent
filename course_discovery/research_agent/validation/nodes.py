@@ -126,9 +126,9 @@ def enough_valid(state: AgentState):
     plan = state.get("research_plan")
     min_valid = plan.min_valid_candidates if plan else 3
     if len(state.get("valid_courses", [])) >= min_valid:
-        return "course_cache_upsert"
+        return "save_verified_courses"
     if state.get("research_iteration", 0) < state.get("max_research_iterations", 2):
-        return "replanner"
+        return "plan_gap_search"
     record_degradation("research", "replan_budget_exhausted")
     logger.warning(
         "replan_budget_exhausted",
@@ -140,4 +140,4 @@ def enough_valid(state: AgentState):
             "research_iteration": state.get("research_iteration", 0),
         },
     )
-    return "course_cache_upsert"
+    return "save_verified_courses"

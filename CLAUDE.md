@@ -8,50 +8,40 @@ A personalized, cache-first course research agent controlled by LangGraph, built
 
 ## Source of Truth
 
-`specs/` is the authoritative source for:
+One document per question. `specs/` holds live documents; `archive/` holds superseded ones and is never read for context.
 
-- `ARTICLE_OUTLINE.md` — article sections, narrative structure, word counts
-- `ARTICLE_TODO.md` — running checklist of production LangGraph principles (retry, cache
-  policy, durability, Store vs. checkpointer, OTel, provider fallback, API brittleness)
-  to fold into the article; check before drafting any new section
-- `IMPLEMENTATION_PLAN.md` — implementation steps and milestones
-- `PROPOSED_METRICS.md` — quality, efficiency, and personalization metrics
-- `PROPOSED_TESTING.md` — test scope and coverage expectations
-- `FUTURE_IDEAS.md` — deferred decisions and open questions
-- `ARTICLE.md` — full article draft (work in progress)
-- `FINAL_VERSION.md` — published/near-final draft when it exists
+| Question | Document |
+|---|---|
+| What is the graph, who owns each decision, what are the known gaps? | `specs/ARCHITECTURE.md` |
+| What is implemented and tested? | `specs/STATUS.md` |
+| What was settled and must not be reopened? | `specs/DECISIONS.md` |
+| What is the next work? | `specs/BACKLOG.md` |
+| What will the article say, section by section, within which word budget? | `specs/article/OUTLINE.md` |
+| What has been drafted? | `specs/article/DRAFT.md` |
+| What was verified about LangGraph for a section? | `specs/article/notes/` (five files by theme) |
 
-`PLAN.md` in the root is the original architecture design document. It was the input that shaped the current implementation. When specs and PLAN.md conflict, the specs win — they have been written after PLAN.md and reflect decisions made during implementation.
+Loading rules. Always: this file, `ARCHITECTURE.md`, `STATUS.md`, `DECISIONS.md`. When implementing: the one backlog item. When drafting: its outline section, the matching notes file, and the `course-article-style` skill. Never: `archive/`. When specs and `archive/PLAN.md` conflict, the specs win.
 
-## Architecture (Current Implementation)
+Before implementing, check the item and the code it touches against `ARCHITECTURE.md`, `STATUS.md` and `DECISIONS.md`. Stop and ask if the item contradicts a `DECISIONS.md` entry, or if the docs and the code disagree about something the item depends on. Inconsistencies elsewhere: note them, keep going, and report them at the end. Do not audit the whole repo; that is a separate review task.
 
-```
-gateway
-  -> research_agent subgraph
-  -> [interrupt_before: review_gate]
-  -> router
-      -> PUBLISH -> publish_node -> user_memory_update -> END
-      -> REWRITE -> research_agent subgraph
-      -> AUGMENT -> research_agent subgraph
-      -> RESET   -> gateway
-      -> DISCARD -> discard_node -> END
-```
+Keeping the docs current. Any change to behavior, not only a backlog item, triggers these updates. Read the target file first so you extend it rather than duplicate or contradict it.
 
-Research subgraph (the complex agent):
+| If you… | Update |
+|---|---|
+| add or remove a node or edge, or change who decides (rules vs LLM), or open or close a known gap | `ARCHITECTURE.md` |
+| add or change a node or state channel | `privacy/flow_specs.py` |
+| verify a LangGraph behavior or measure something | the matching `notes/` file, with the library version and how it was checked |
+| choose between real alternatives, or rule something out on purpose (a future reader would otherwise reopen it) | `DECISIONS.md`: append under the fitting heading, what and why |
+| change behavior that a drafted section describes | that section in `DRAFT.md` |
+| finish anything | one line in `STATUS.md` |
 
-```
-research_entry
-  -> user_memory_lookup        (Postgres or in-memory seed)
-  -> course_cache_lookup       (Postgres + pgvector, or seed cache)
-  -> research_planner          (LLM: decides queries, cache-first vs. web)
-  -> tavily_search_worker(s)   (via Send, parallel, only for gaps)
-  -> candidate_extractor       (LLM: structured candidates from Tavily results)
-  -> aggregate + dedup
-  -> evidence_validator        (LLM: checks each candidate vs. filters + memory)
-  -> replanner                 (if too few valid; bounded by max_research_iterations)
-  -> course_cache_upsert       (persist valid candidates)
-  -> synthesizer               (LLM: ranked, evidence-backed digest)
-```
+A finding that is both evidence and a choice goes in both: the evidence in notes, the choice in `DECISIONS.md` pointing at it. Notes files by theme: `01-state-and-control-flow`, `02-durability-replay-effects`, `03-resilience-and-providers`, `04-observability-and-compliance`, `05-scale-and-scope`.
+
+Definition of done for a backlog item: code and tests pass; the table above applied; the item deleted from `BACKLOG.md`; and, if the item has an outline section, that section drafted within its word budget (infra-only items with no section skip this).
+
+## Architecture
+
+The graph, node responsibilities, decision ownership (rules vs LLM) and known gaps live only in `specs/ARCHITECTURE.md`. Read it before implementing anything, to understand the system the change lands in. It is deliberately not duplicated here.
 
 ## Key Directories
 
@@ -60,7 +50,7 @@ course_discovery/
   workflows/        outer_graph.py, research_graph.py
   domain/           AgentState, Pydantic models (state contract)
   research_agent/   memory, cache, planner, search, extraction, validator, synthesizer
-  review/           review_gate, router
+  review/           review gate, feedback router, publish/discard nodes
   persistence/      Postgres adapter, checkpointer factory + msgpack allowlist, AES-GCM checkpoint encryption
   privacy/          thread registry (`run_threads`) and per-user erasure (`python -m course_discovery.privacy erase`)
                     plus a declared PII data-flow check (`flow.py`, `flow_specs.py`; `Pii` marker in `domain/pii.py`). Adding a node or state channel means updating `flow_specs.py`; `tests/test_flow_rules.py` fails otherwise
@@ -71,7 +61,8 @@ pii_redaction/      standalone package (no `course_discovery` imports): `Redacto
   observability/    structured logging
   app/              CLI, prompts, gateway
 migrations/         SQL schema (Postgres + pgvector)
-specs/              article drafts, implementation plan, metrics, testing
+specs/              live docs (architecture, status, decisions, backlog); article/ holds outline, draft, notes
+archive/            superseded docs, never read for context
 ```
 
 ## Environment
@@ -81,7 +72,7 @@ $env:OPENROUTER_API_KEY   # DeepSeek V4.1 Flash (Gemini 2.5 Flash Lite fallback)
 $env:DATABASE_URL     # Postgres+pgvector (in-memory seed cache if absent)
 ```
 
-No search API key is required — `tavily_search_worker` reads from the mock catalog.
+No search API key is required — `search_web_for_courses` reads from the mock catalog.
 
 ## Run
 
@@ -102,7 +93,7 @@ Without `TEST_DATABASE_URL` the integration tests skip. `docker-compose.yml` app
 
 Tracing is off until an exporter is configured. `docker compose --profile tracing up -d jaeger`, then `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 uv run python main.py` and open http://localhost:16686 (`OTEL_TRACES_EXPORTER=console` prints spans instead, `OTEL_SDK_DISABLED=true` turns it off). Prompt and state content is redacted from spans unless `OTEL_CAPTURE_CONTENT=true`. Exporter failures never fail a run. Metrics (cache lookups by hit/miss, run duration per segment and outcome, run and review outcomes, review wait, degraded/fail-closed paths by component and reason, search calls, LLM calls/errors/fallbacks/latency/tokens on the GenAI conventions, transient errors seen by `RetryPolicy`, outbox outcomes with dead-letter reason, delivery latency, backlog/dead-letter/oldest-age gauges) are off until `OTEL_METRICS_EXPORTER=otlp` or `console`; Jaeger does not ingest metrics, so point OTLP at a collector. Spans are flushed at the end of each run segment and batched every 1s (`OTEL_BSP_SCHEDULE_DELAY`), so a SIGKILL loses at most the last second of spans plus any span still open. Metrics are force-flushed at the same points but otherwise export every 60s (`OTEL_METRIC_EXPORT_INTERVAL`), so a SIGKILL loses the counters recorded since the last segment end. Log previews of queries, feedback and titles are `null` unless `OTEL_CAPTURE_CONTENT=true`; `SERVICE_VERSION` and `DEPLOYMENT_ENVIRONMENT` set the matching resource attributes.
 
-With `DATABASE_URL` set, the CLI checkpoints to Postgres (`open_checkpointer`). `EFFECT_GATEWAY=inline` (default) delivers the publish effect during `publish_node`; `EFFECT_GATEWAY=outbox` only queues it, and `python -m course_discovery.effects` runs the delivery worker.
+With `DATABASE_URL` set, the CLI checkpoints to Postgres (`open_checkpointer`). `EFFECT_GATEWAY=inline` (default) delivers the publish effect during `send_approved_courses`; `EFFECT_GATEWAY=outbox` only queues it, and `python -m course_discovery.effects` runs the delivery worker.
 
 ## LLM
 
@@ -110,7 +101,7 @@ All LLM nodes go through `course_discovery/app/llm.py:build_llm()`, which return
 
 ## Key Constraints
 
-- **Never auto-publish.** `interrupt_before=["review_gate"]` is always compiled in.
+- **Never auto-publish.** `interrupt_before=["await_human_review"]` is always compiled in.
 - **Loop budget.** `max_research_iterations` caps the replanning loop (default: 2–3).
 - **Evidence over claims.** Treat missing evidence as `uncertain`, not `valid`.
 - **Cache first.** The search worker is only dispatched for gaps, freshness checks, or new topics.

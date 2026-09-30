@@ -61,29 +61,29 @@ class FlowRuleTests(unittest.TestCase):
         self.assertIn("subject", labels["active_search_query"])
 
     def test_missing_declaration_fails_coverage(self):
-        flows = {name: spec for name, spec in FLOWS.items() if name != "dedup"}
+        flows = {name: spec for name, spec in FLOWS.items() if name != "remove_duplicate_courses"}
         self.assertEqual([v.rule for v in _check(flows)], ["coverage"])
 
     def test_typo_in_channel_name_is_caught(self):
-        flows = _with("dedup", reads=frozenset({"scraped_course"}))
+        flows = _with("remove_duplicate_courses", reads=frozenset({"scraped_course"}))
         self.assertEqual([v.rule for v in _check(flows)], ["unknown-channel"])
 
     def test_removing_a_declassification_reaches_the_catalog_tables(self):
-        spec = FLOWS["evidence_validator"]
+        spec = FLOWS["verify_course_claims"]
         declassifies = {k: v for k, v in spec.declassifies.items() if k != "valid_courses"}
-        rules = {(v.rule, v.node) for v in _check(_with("evidence_validator", declassifies=declassifies))}
-        self.assertIn(("erasable", "course_cache_upsert"), rules)
-        self.assertIn(("sink-accepts", "course_cache_upsert"), rules)
+        rules = {(v.rule, v.node) for v in _check(_with("verify_course_claims", declassifies=declassifies))}
+        self.assertIn(("erasable", "save_verified_courses"), rules)
+        self.assertIn(("sink-accepts", "save_verified_courses"), rules)
 
     def test_raw_memory_reaching_the_llm_is_caught(self):
-        flows = _with("synthesizer", reads=FLOWS["synthesizer"].reads | {"user_memory"})
+        flows = _with("rank_and_summarize_courses", reads=FLOWS["rank_and_summarize_courses"].reads | {"user_memory"})
         messages = [str(v) for v in _check(flows) if v.rule == "sink-accepts"]
         self.assertTrue(any("'raw' data reaches external sink 'llm:openrouter'" in m for m in messages))
 
     def test_redaction_declared_on_the_node_clears_raw(self):
         flows = _with(
-            "synthesizer",
-            reads=FLOWS["synthesizer"].reads | {"user_memory"},
+            "rank_and_summarize_courses",
+            reads=FLOWS["rank_and_summarize_courses"].reads | {"user_memory"},
             redacts=frozenset({"user_memory"}),
         )
         self.assertEqual(_check(flows), [])
@@ -91,7 +91,7 @@ class FlowRuleTests(unittest.TestCase):
     def test_new_store_must_be_erasable(self):
         from course_discovery.privacy.flow import store
 
-        flows = _with("user_memory_update", sinks=(store("notes"),))
+        flows = _with("record_review_outcome", sinks=(store("notes"),))
         self.assertIn("erasable", {v.rule for v in _check(flows)})
 
 
@@ -116,7 +116,7 @@ class DeclaredWritesMatchRunTests(unittest.IsolatedAsyncioTestCase):
                 for node, update in chunk.items():
                     if node.startswith("__") or not isinstance(update, dict):
                         continue
-                    if node == "research_agent" and not namespace:
+                    if node == "course_research" and not namespace:
                         continue
                     seen.setdefault(node, set()).update(update)
 
@@ -124,8 +124,8 @@ class DeclaredWritesMatchRunTests(unittest.IsolatedAsyncioTestCase):
         graph.update_state(config, {"manager_feedback": "approve"})
         await drain(graph.astream(None, config, stream_mode="updates", subgraphs=True))
 
-        self.assertIn("evidence_validator", seen)
-        self.assertIn("publish_node", seen)
+        self.assertIn("verify_course_claims", seen)
+        self.assertIn("send_approved_courses", seen)
         for node, written in seen.items():
             self.assertLessEqual(written, FLOWS[node].writes, node)
 
