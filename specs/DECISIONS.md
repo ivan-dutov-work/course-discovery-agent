@@ -110,6 +110,18 @@ leave it and append a new one that says which it replaces and what changed.
   user-derived text; storing it in the shared cache reaches a table erasure cannot cover (the
   flow-rule check flags it) and lets loosely matched courses pollute later lookups. Topics come
   from the course's own content, by a tagging step that is not built. (notes: 05-scale-and-scope.md)
+- **Do not restructure `AgentState` wholesale.** It is wide (32 channels) but the width is mostly
+  the article's subject: per-stage candidate lists are checkpoint history, and reducers and `Pii`
+  markers are per channel, so nesting channels hides both from `flow_specs.py`. Fix the real
+  redundancy (duplicate counters, budgets held as state) and try private schemas on new code
+  first (the P5 curator). Backlog S1.
+- **A profile vector never enters state.** `profile_embedding` (1536 floats) would land in every
+  checkpoint and span; it is computed and applied inside the repository or node, and only the
+  derived order reaches state. Backlog P4b.
+- **`parse_user_request` reads the profile from the repository, not from state,** to apply the
+  stored budget and certificate defaults, because the profile is loaded inside the research
+  subgraph, after parsing. Only the two scalar defaults are read, and they reach
+  `search_filters`, never the LLM prompt.
 
 ## Compliance
 

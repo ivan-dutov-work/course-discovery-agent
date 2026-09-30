@@ -67,6 +67,17 @@ boundaries; completed nodes are not re-run on resume, the interrupted node is re
 - **Resume cost in a subgraph.** Resuming re-runs successful sibling `Send` workers (extra
   spend; `tests/test_retries.py` counts calls). It does not double-count reducer output: after
   a subgraph resume `tavily_calls == len(set(completed_queries))`, same as standalone.
+- **A shared reducer channel double-counts across passes, not across a crash resume.** The
+  subgraph returns its whole channel value to the parent, and the parent's reducer adds it to
+  what it already holds. Measured on langgraph 1.1.2 (memory saver, no LLM key, two consecutive
+  `rewrite:` rounds): `tavily_calls` and `len(completed_queries)` went 1, 2, 4 across rounds,
+  and a new `operator.add` channel `feedback_history` went `[a]` to `[a, a, b]`. Fix for a
+  channel the subgraph never uses: build the subgraph on a state schema without it
+  (`domain/state.py:ResearchState`), so it is neither passed in nor echoed back. Not applicable
+  to `completed_queries`, `tavily_calls` and `research_notes`, which the parent needs from the
+  subgraph (AUGMENT re-enters at `plan_gap_search` and reads them); those need a reducer that is
+  idempotent over the echo. Open, `BACKLOG.md` S1. Pinned for the new channel by
+  `tests/test_memory_e2e.py`.
 - **Approved digest equals published digest.** `send_approved_courses` reads `digest` from
   checkpointed state. The router LLM can classify differently if re-run after a crash, but the
   reviewer's text is already in `manager_feedback`. Not tested end to end.

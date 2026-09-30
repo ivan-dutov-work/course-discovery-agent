@@ -10,8 +10,9 @@ from langchain_openrouter import ChatOpenRouter
 
 from course_discovery.app.llm import build_llm, llm_enabled
 from course_discovery.app.prompts import SYNTHESIZER_SYSTEM_PROMPT
-from course_discovery.domain.models import CourseCandidate, RoutingAction
+from course_discovery.domain.models import CourseCandidate, RoutingAction, UserMemory
 from course_discovery.domain.state import AgentState
+from course_discovery.guardrails import redact_pii
 from course_discovery.observability.logging import get_logger, preview, sanitize_error
 from course_discovery.observability.metrics import (
     record_degradation,
@@ -38,10 +39,37 @@ def _parse_date(value: str) -> datetime:
         return datetime(1970, 1, 1)
 
 
-def _rank_courses(courses: list[CourseCandidate]) -> list[CourseCandidate]:
+def _preference_score(course: CourseCandidate, memory: UserMemory | None) -> int:
+    if memory is None:
+        return 0
+    preferred_providers = {item.lower() for item in memory.preferred_providers}
+    preferred_languages = {item.lower() for item in memory.preferred_languages}
+    return (
+        int((course.provider or "").lower() in preferred_providers)
+        + int(memory.preferred_level is not None and course.level == memory.preferred_level)
+        + int((course.language or "").lower() in preferred_languages)
+    )
+
+
+def _reader_notes(memory: UserMemory | None, topic: str) -> list[str]:
+    if memory is None:
+        return []
+    topic = topic.lower()
+    notes = [
+        note.text
+        for note in memory.notes
+        if note.scope == "durable" or note.scope.removeprefix("topic:").lower() in topic
+    ]
+    return [redact_pii(text) or "" for text in notes]
+
+
+def _rank_courses(
+    courses: list[CourseCandidate], memory: UserMemory | None = None
+) -> list[CourseCandidate]:
     return sorted(
         courses,
         key=lambda c: (
+            -_preference_score(c, memory),
             c.is_free is not True,
             -(c.rating or 0),
             -_parse_date(c.published_or_updated or "").timestamp(),
@@ -55,6 +83,7 @@ def _highlight_with_retry(
     course: CourseCandidate,
     rewrite_instructions: str | None,
     *,
+    reader_notes: list[str] | None = None,
     run_id: str,
     course_idx: int,
 ) -> str:
@@ -75,8 +104,14 @@ def _highlight_with_retry(
     if rewrite_instructions:
         rewrite_clause = f"\nApply this feedback: {rewrite_instructions}"
 
+    notes_clause = ""
+    if reader_notes:
+        notes_clause = "\nReader notes from earlier feedback:\n" + "\n".join(
+            f"- {note}" for note in reader_notes
+        )
+
     messages = [
-        SystemMessage(content=f"{SYNTHESIZER_SYSTEM_PROMPT}{rewrite_clause}"),
+        SystemMessage(content=f"{SYNTHESIZER_SYSTEM_PROMPT}{rewrite_clause}{notes_clause}"),
         HumanMessage(content=f"Summarize this course:\n{payload}"),
     ]
 
@@ -153,7 +188,10 @@ def _highlight_with_retry(
 def synthesizer_node(state: AgentState) -> dict:
     start_ts = time.perf_counter()
     run_id = state.get("run_id", "unknown")
-    courses = _rank_courses(state.get("valid_courses", []))
+    memory = state.get("user_memory")
+    courses = _rank_courses(state.get("valid_courses", []), memory)
+    filters = state.get("search_filters")
+    reader_notes = _reader_notes(memory, filters.topic if filters else "")
     top_courses = courses[:15]
     rewrite_instructions = state.get("rewrite_instructions")
 
@@ -178,6 +216,7 @@ def synthesizer_node(state: AgentState) -> dict:
             llm,  # type: ignore[arg-type]
             course,
             rewrite_instructions,
+            reader_notes=reader_notes,
             run_id=run_id,
             course_idx=idx,
         )

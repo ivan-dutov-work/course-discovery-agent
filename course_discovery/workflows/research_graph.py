@@ -4,7 +4,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import Send
 
 from course_discovery.domain.models import RoutingAction
-from course_discovery.domain.state import AgentState
+from course_discovery.domain.state import AgentState, ResearchState
 from course_discovery.observability.logging import get_logger
 from course_discovery.research_agent.cache.dedup import dedup_node
 from course_discovery.research_agent.cache.nodes import (
@@ -58,7 +58,7 @@ def _dispatch_search_queries(state: AgentState):
 
 
 def build_research_graph(**compile_kwargs):
-    builder = StateGraph(AgentState)
+    builder = StateGraph(ResearchState)
 
     retry = transient_retry()
     builder.add_node("load_user_profile", user_memory_lookup_node, retry_policy=retry)

@@ -13,6 +13,7 @@ from course_discovery.domain.state import AgentState
 from course_discovery.effects.factory import get_gateway
 from course_discovery.effects.handlers import PUBLISH_DIGEST
 from course_discovery.effects.models import Effect
+from course_discovery.guardrails import redact_pii
 from course_discovery.observability.logging import (
     get_logger,
     sanitize_error,
@@ -36,6 +37,9 @@ def _coerce_routing_decision(value: Any) -> RoutingDecision:
 
 def router_node(state: AgentState) -> dict:
     update = _route(state)
+    feedback = redact_pii((state.get("manager_feedback") or "").strip())
+    if feedback:
+        update["feedback_history"] = [feedback]
     decision = update.get("routing_decision")
     if decision is not None:
         record_review_decision(RoutingAction(decision).value)

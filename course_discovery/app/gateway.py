@@ -15,6 +15,8 @@ from course_discovery.observability.logging import (
     preview,
 )
 from course_discovery.observability.metrics import record_degradation
+from course_discovery.research_agent.memory.defaults import apply_profile_defaults
+from course_discovery.research_agent.memory.repository import load_user_memory
 from course_discovery.resilience import is_transient
 
 
@@ -79,7 +81,11 @@ def gateway_node(state: AgentState) -> dict:
                 f"{redact_pii(state['manager_feedback'])}"
             )
 
-        parsed_filters = _parse_filters(query_for_parsing)
+        parsed_filters = apply_profile_defaults(
+            _parse_filters(query_for_parsing),
+            query_for_parsing,
+            load_user_memory(state.get("user_id")),
+        )
         logger.info(
             "gateway_filters_parsed",
             extra={

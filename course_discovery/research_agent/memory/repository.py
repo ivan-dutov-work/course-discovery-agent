@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from course_discovery.domain.models import CourseCandidate, UserMemory
+from psycopg.types.json import Jsonb
+
+from course_discovery.domain.models import (
+    LIST_MEMORY_FIELDS,
+    CourseCandidate,
+    MemoryNote,
+    MemoryPatch,
+    UserMemory,
+)
 from course_discovery.guardrails import redact_pii
 from course_discovery.observability.logging import get_logger, sanitize_error
 from course_discovery.observability.metrics import record_db_error
@@ -8,6 +16,33 @@ from course_discovery.persistence.postgres import connect
 
 
 logger = get_logger(__name__)
+
+
+_SELECT_PREFERENCES = """
+    SELECT preferred_providers, avoided_providers, preferred_languages,
+           budget_preference, certificate_importance, preferred_level,
+           learning_style_notes, career_goals, raw_memory_json, preferred_course_length
+    FROM user_preferences
+    WHERE user_id = %s
+"""
+
+
+def _row_to_memory(row) -> UserMemory:
+    raw_memory = row[8] or {}
+    return UserMemory(
+        preferred_providers=row[0] or [],
+        avoided_providers=row[1] or [],
+        preferred_languages=row[2] or [],
+        budget_preference=row[3],
+        certificate_importance=row[4],
+        preferred_level=row[5],
+        learning_style_notes=row[6],
+        career_goals=row[7] or [],
+        completed_course_urls=raw_memory.get("completed_course_urls", []),
+        rejected_course_urls=raw_memory.get("rejected_course_urls", []),
+        notes=[MemoryNote.model_validate(note) for note in raw_memory.get("notes", [])],
+        preferred_course_length=row[9],
+    )
 
 
 def load_user_memory(user_id: str | None) -> UserMemory:
@@ -19,37 +54,110 @@ def load_user_memory(user_id: str | None) -> UserMemory:
             return UserMemory()
 
         try:
-            row = conn.execute(
-                """
-                SELECT preferred_providers, avoided_providers, preferred_languages,
-                       budget_preference, certificate_importance, preferred_level,
-                       learning_style_notes, career_goals, raw_memory_json
-                FROM user_preferences
-                WHERE user_id = %s
-                """,
-                (user_id,),
-            ).fetchone()
-            if row is None:
-                return UserMemory()
-
-            raw_memory = row[8] or {}
-            return UserMemory(
-                preferred_providers=row[0] or [],
-                avoided_providers=row[1] or [],
-                preferred_languages=row[2] or [],
-                budget_preference=row[3],
-                certificate_importance=row[4],
-                preferred_level=row[5],
-                learning_style_notes=row[6],
-                career_goals=row[7] or [],
-                completed_course_urls=raw_memory.get("completed_course_urls", []),
-                rejected_course_urls=raw_memory.get("rejected_course_urls", []),
-            )
+            row = conn.execute(_SELECT_PREFERENCES, (user_id,)).fetchone()
+            return UserMemory() if row is None else _row_to_memory(row)
         except Exception as exc:  # noqa: BLE001
             record_db_error("user_memory_load")
             logger.error(
                 "user_memory_load_error",
                 extra={"event": "persistence.user_memory_load_error", **sanitize_error(exc)},
+            )
+            raise
+
+
+def _merge_unique(current: list[str], add: list[str], remove: list[str]) -> list[str]:
+    removed = set(remove)
+    merged = [item for item in current if item not in removed]
+    merged.extend(item for item in add if item not in merged and item not in removed)
+    return merged
+
+
+def apply_patch(memory: UserMemory, patch: MemoryPatch) -> UserMemory:
+    updates: dict[str, object] = dict(patch.set)
+    for name in LIST_MEMORY_FIELDS:
+        if name in patch.add or name in patch.remove:
+            updates[name] = _merge_unique(
+                getattr(memory, name), patch.add.get(name, []), patch.remove.get(name, [])
+            )
+    if patch.add_notes:
+        known = {(note.text, note.scope) for note in memory.notes}
+        fresh = [note for note in patch.add_notes if (note.text, note.scope) not in known]
+        updates["notes"] = [*memory.notes, *fresh]
+    return memory.model_copy(update=updates)
+
+
+def redact_patch(patch: MemoryPatch) -> MemoryPatch:
+    return MemoryPatch(
+        set={
+            name: redact_pii(value) if name == "learning_style_notes" else value
+            for name, value in patch.set.items()
+        },
+        add={
+            name: [redact_pii(item) or "" for item in items] if name == "career_goals" else items
+            for name, items in patch.add.items()
+        },
+        remove=patch.remove,
+        add_notes=[
+            note.model_copy(update={"text": redact_pii(note.text) or ""}) for note in patch.add_notes
+        ],
+    )
+
+
+def save_user_memory(user_id: str | None, patch: MemoryPatch) -> UserMemory | None:
+    if not user_id or patch.is_empty():
+        return None
+    patch = redact_patch(patch)
+    with connect() as conn:
+        if conn is None:
+            return None
+        try:
+            with conn.transaction():
+                conn.execute(
+                    "INSERT INTO users (id) VALUES (%s) ON CONFLICT (id) DO NOTHING",
+                    (user_id,),
+                )
+                conn.execute(
+                    "INSERT INTO user_preferences (user_id) VALUES (%s) ON CONFLICT (user_id) DO NOTHING",
+                    (user_id,),
+                )
+                row = conn.execute(_SELECT_PREFERENCES + " FOR UPDATE", (user_id,)).fetchone()
+                merged = apply_patch(_row_to_memory(row), patch)
+                raw_memory = dict(row[8] or {})
+                raw_memory.update(
+                    completed_course_urls=merged.completed_course_urls,
+                    rejected_course_urls=merged.rejected_course_urls,
+                    notes=[note.model_dump(mode="json") for note in merged.notes],
+                )
+                conn.execute(
+                    """
+                    UPDATE user_preferences
+                    SET preferred_providers = %s, avoided_providers = %s,
+                        preferred_languages = %s, budget_preference = %s,
+                        certificate_importance = %s, preferred_level = %s,
+                        preferred_course_length = %s, learning_style_notes = %s,
+                        career_goals = %s, raw_memory_json = %s, updated_at = now()
+                    WHERE user_id = %s
+                    """,
+                    (
+                        merged.preferred_providers,
+                        merged.avoided_providers,
+                        merged.preferred_languages,
+                        merged.budget_preference,
+                        merged.certificate_importance,
+                        merged.preferred_level,
+                        merged.preferred_course_length,
+                        merged.learning_style_notes,
+                        merged.career_goals,
+                        Jsonb(raw_memory),
+                        user_id,
+                    ),
+                )
+            return merged
+        except Exception as exc:  # noqa: BLE001
+            record_db_error("user_memory_save")
+            logger.error(
+                "user_memory_save_error",
+                extra={"event": "persistence.user_memory_save_error", **sanitize_error(exc)},
             )
             raise
 

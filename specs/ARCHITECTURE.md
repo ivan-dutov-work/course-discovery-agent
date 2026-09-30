@@ -30,11 +30,11 @@ would keep the same bounds (`max_research_iterations`, validation before synthes
 ```
 parse_user_request ──ok──▶ course_research ──▶ [interrupt] await_human_review ──▶ interpret_review_feedback
         │                                                                                   │
-        └─error─▶ discard_run ─▶ END                                                        ├─ PUBLISH ─▶ send_approved_courses ─▶ record_review_outcome ─▶ END
+        └─error─▶ discard_run ─▶ record_review_outcome ─▶ END                               ├─ PUBLISH ─▶ send_approved_courses ─▶ record_review_outcome ─▶ END
                                                                                             ├─ REWRITE ─▶ course_research
                                                                                             ├─ AUGMENT ─▶ course_research
                                                                                             ├─ RESET   ─▶ parse_user_request
-                                                                                            └─ DISCARD ─▶ discard_run ─▶ END
+                                                                                            └─ DISCARD ─▶ discard_run ─▶ record_review_outcome ─▶ END
 ```
 
 `interrupt_before=["await_human_review"]` is always compiled in. Nothing publishes
@@ -68,12 +68,12 @@ One responsibility each. "Rules" means deterministic code with no model call.
 
 | Node | Responsibility | Kind |
 |---|---|---|
-| `parse_user_request` | Redact PII from the query and parse it into `SearchFilters`; on RESET, merge the new constraints into the old ones | LLM, rule fallback |
+| `parse_user_request` | Redact PII from the query and parse it into `SearchFilters`; fill the stored budget and certificate defaults where the query is silent (reads the profile from the repository, not from state); on RESET, merge the new constraints into the old ones | LLM, rule fallback |
 | `course_research` | Run the research subgraph | subgraph |
 | `await_human_review` | The pause point where the interrupt fires; does nothing itself | anchor |
-| `interpret_review_feedback` | Map reviewer feedback to one routing action | LLM, rule fallback |
+| `interpret_review_feedback` | Map reviewer feedback to one routing action and append the redacted feedback to `feedback_history` | LLM, rule fallback |
 | `send_approved_courses` | Submit the publish effect through `EffectGateway` with a key derived from `run_id` | side effect |
-| `record_review_outcome` | Record accept or reject feedback for the user | DB write |
+| `record_review_outcome` | Record accept or reject events for the user, with the whole `feedback_history` as the text; runs after publish and after discard | DB write |
 | `discard_run` | End the run as discarded, with a reason | terminal |
 
 ### Research subgraph
@@ -90,7 +90,7 @@ One responsibility each. "Rules" means deterministic code with no model call.
 | `verify_course_claims` | Mark each candidate valid, uncertain or rejected against the filters and the user profile | rules |
 | `plan_gap_search` | Build new queries from missing evidence and increment the iteration counter | rules |
 | `save_verified_courses` | Persist valid and uncertain courses to the cache with the run topic and an embedding | DB write |
-| `rank_and_summarize_courses` | Rank valid courses and write the digest | LLM, template fallback |
+| `rank_and_summarize_courses` | Rank valid courses (preferred provider, level and language first) and write the digest, with the profile's durable and topic-matching notes in the prompt | LLM, template fallback |
 
 Evidence rule: a missing piece of evidence yields `uncertain`, never `valid`.
 
@@ -132,7 +132,13 @@ Three stores, three lifetimes.
   scratchpad the graph has.
 - **User profile** (`user_preferences`, `recommendation_events`) is per-user and
   outlives runs. `load_user_profile` reads it at the start; `record_review_outcome`
-  writes feedback events after publish.
+  writes feedback events after publish or discard. `save_user_memory` is the one writer of
+  `user_preferences` (one transaction, row lock, merge); nothing in the graph calls it yet, the
+  curator (P5) will.
+- **`feedback_history`** is the one channel that keeps every review round (`manager_feedback`
+  holds only the latest). It is outer-graph only: the research subgraph runs on
+  `ResearchState`, which omits it, because a reducer channel that a subgraph shares is added to
+  a second time when the subgraph returns (`article/notes/02`).
 - **Course cache** (`courses`, `course_evidence`) is shared across users and holds
   only validated courses.
 
@@ -150,7 +156,7 @@ design.
    mock catalog, `notes/05`). A course-side tagging step that fills `courses.topics` from the
    course's own content is not built (`BACKLOG.md`).
 2. **`profile_embedding` is provisioned but unused.** `course_embedding` is written and read;
-   the profile column is not. Fix: P4.
+   the profile column is not. Fix: P4b.
 3. **Deduplication is lexical.** URL, title+host hash and fuzzy title cannot merge the
    same course listed under different titles on different hosts.
 4. **Search and ingestion share the request path.** Discovery, extraction, validation
@@ -158,12 +164,15 @@ design.
    asynchronous ingestion pipeline (crawl, extract, validate, embed, deduplicate) from
    a request path that does hybrid retrieval first and falls back to web search only
    for thin coverage, feeding results back through ingestion.
-5. **Feedback is recorded, not folded back.** `record_review_outcome` stores events and
-   nothing writes `user_preferences`. Only `avoided_providers`, `rejected_course_urls` and
-   `completed_course_urls` are read by any node; the other profile fields are loaded and
-   ignored. A DISCARD skips `record_review_outcome`, so rejections record nothing, and
-   `manager_feedback` keeps only the latest round. Cases and design: `FEEDBACK.md`; fix: P4
-   to P6.
+5. **Feedback is stored, not yet learned.** The profile has a writer (`save_user_memory`) and
+   consumers (budget and certificate defaults in `parse_user_request`; provider, level and
+   language boost and scoped notes in `rank_and_summarize_courses`; avoided providers and
+   rejected or completed URLs in the verifier and cache), and `feedback_history` carries every
+   round, but nothing turns feedback into a patch yet. `preferred_course_length` is stored and
+   read by nothing (P4c). Cases and design: `FEEDBACK.md`; fix: P5, P6.
+6. **Reducer channels double-count across review rounds.** `tavily_calls`, `completed_queries`
+   and `research_notes` are added to again each time `course_research` returns, so a REWRITE or
+   AUGMENT round doubles them (measured 1, 2, 4; `article/notes/02`). Fix: backlog S1.
 
 ## Naming
 

@@ -60,6 +60,11 @@ class TopologyTests(unittest.TestCase):
     def test_interrupt_before_is_only_the_review_gate(self):
         self.assertEqual(list(build_graph().interrupt_before_nodes), ["await_human_review"])
 
+    def test_discard_is_recorded_before_the_end(self):
+        edges = _edges(build_graph())
+        self.assertIn(("discard_run", "record_review_outcome"), edges)
+        self.assertNotIn(("discard_run", "__end__"), edges)
+
     def test_augment_edge_goes_straight_to_research(self):
         self.assertIn(("interpret_review_feedback", "course_research"), _edges(build_graph()))
 
@@ -108,7 +113,7 @@ class TopologyRunTests(unittest.IsolatedAsyncioTestCase):
 
         visited = await self._visited(graph, state, config)
 
-        self.assertEqual(visited, ["parse_user_request", "discard_run"])
+        self.assertEqual(visited, ["parse_user_request", "discard_run", "record_review_outcome"])
         self.assertEqual((await graph.aget_state(config)).next, ())
 
     async def test_planning_error_ends_research_without_dangling_node(self):
