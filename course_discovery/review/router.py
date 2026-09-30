@@ -26,6 +26,8 @@ logger = get_logger(__name__)
 
 _router_rate_limiter = InMemoryRateLimiter(requests_per_second=2, max_bucket_size=4)
 
+APPROVAL_PHRASES = frozenset({"approve", "publish", "approved", "looks good"})
+
 
 def _coerce_routing_decision(value: Any) -> RoutingDecision:
     if isinstance(value, RoutingDecision):
@@ -93,7 +95,7 @@ def _route(state: AgentState) -> dict:
         }
 
     lower_feedback = feedback.lower()
-    if lower_feedback in {"approve", "publish", "approved", "looks good"}:
+    if lower_feedback in APPROVAL_PHRASES:
         logger.info(
             "router_decision_complete",
             extra={

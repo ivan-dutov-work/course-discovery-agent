@@ -115,6 +115,24 @@ leave it and append a new one that says which it replaces and what changed.
   markers are per channel, so nesting channels hides both from `flow_specs.py`. Fix the real
   redundancy (duplicate counters, budgets held as state) and try private schemas on new code
   first (the P5 curator). Backlog S1.
+- **The curator writes only fields a next-run consumer reads.** `career_goals`,
+  `learning_style_notes` and `preferred_course_length` are refused by `propose_patch`; free-text
+  preferences go into scoped notes, which the ranking prompt reads. Cases 5 and 6 of
+  `FEEDBACK.md` wait for P4c and for a consumer of goals.
+- **The curator reads the profile through a tool, not from preloaded context, and cannot
+  propose before it has.** A preloaded profile would make `read_profile` dead weight and the loop
+  a structured call in disguise; the refusal is what pins case 7's trace. Deviates from the
+  `load_context` description that listed `UserMemory` in `FEEDBACK.md`, which is amended.
+- **The curator is an isolated subgraph with `input_schema` and `output_schema`.** Its only
+  output is the `memory_update` status string. Returning the shared `feedback_history` would
+  add it to itself again (reducer echo). (notes: 01-state-and-control-flow.md)
+- **Memory-update idempotency is a claim row in the same transaction as the write.** One
+  `memory_updates` row per `run_id`, inserted `ON CONFLICT DO NOTHING` under the profile row
+  lock; a replay or a `RetryPolicy` retry of `commit` applies once. It doubles as the audit
+  trail and is erasable by `user_id`.
+- **Curator failures degrade, database failures raise.** An LLM error, cap hit or reply without
+  a tool call leaves the profile unchanged and never fails the run; a failed write in `commit`
+  re-raises, as every DB writer does. Bare approvals skip the model entirely.
 - **A profile vector never enters state.** `profile_embedding` (1536 floats) would land in every
   checkpoint and span; it is computed and applied inside the repository or node, and only the
   derived order reaches state. Backlog P4b.

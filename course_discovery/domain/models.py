@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class RoutingAction(str, Enum):
@@ -45,6 +45,8 @@ class EvidenceItem(BaseModel):
 
 
 class MemoryNote(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     text: str = Field(min_length=1)
     scope: str = Field(default="durable", pattern=r"^(durable|topic:.+)$")
     learned_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -88,6 +90,8 @@ LIST_MEMORY_FIELDS = frozenset(
 
 
 class MemoryPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     set: dict[str, str | None] = Field(default_factory=dict)
     add: dict[str, list[str]] = Field(default_factory=dict)
     remove: dict[str, list[str]] = Field(default_factory=dict)

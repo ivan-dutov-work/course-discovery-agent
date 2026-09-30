@@ -9,7 +9,7 @@ Integration tests need `docker compose up -d` and
 
 ## Graph and state
 
-- Bounded workflow with three LLM nodes through `build_llm()`: `app/llm.py` (§1, §8.2).
+- Bounded workflow with four LLM nodes through `build_llm()`: `app/llm.py` (§1, §8.2).
 - Reducers on parallel-written channels (`tavily_results`, `completed_queries`,
   `research_notes`, `tavily_calls`); `extracted_candidates` is a plain list (§2.2; open question in BACKLOG).
 - Plan-driven `Send` fan-out: `workflows/research_graph.py` (§3.2).
@@ -52,9 +52,12 @@ Integration tests need `docker compose up -d` and
 
 ## User memory
 
-- Writable profile: `save_user_memory` (one transaction, row lock, merge, redacted free text), `MemoryPatch`, `MemoryNote`; `preferred_course_length` stored, no consumer yet: `research_agent/memory/repository.py`, `tests/test_user_profile.py`. Nothing in the graph calls it until P5.
+- Writable profile: `save_user_memory` (one transaction, row lock, merge, redacted free text), `MemoryPatch`, `MemoryNote`; `preferred_course_length` stored, no consumer yet: `research_agent/memory/repository.py`, `tests/test_user_profile.py`. Only the curator's `commit` calls it.
 - Profile consumers: stored budget and certificate defaults in `parse_user_request`; preferred provider, level, language boost and scoped notes in `rank_and_summarize_courses`: `research_agent/memory/defaults.py`, `research_agent/synthesis/nodes.py`.
 - `feedback_history` accumulates every review round (redacted); DISCARD now goes through `record_review_outcome`; the research subgraph runs on `ResearchState`, which omits the channel: `domain/state.py`, `tests/test_memory_e2e.py` (feedback in run one changes run two, in-memory and Postgres).
+
+- Memory curator subgraph `curate_user_memory` after `record_review_outcome`: bounded tool loop (`read_profile`, `read_run_events`, `propose_patch`, `finish`), 4-step cap, fail-closed commit, idempotent per `run_id` through `memory_updates` (migration 008, erasable); uses `input_schema`/`output_schema`: `memory_curator/`, `tests/test_memory_curator.py` (cases 1, 2, 3, 7, 10 to 18 with a scripted model, plus Postgres), `tests/test_curator_checkpoint.py` (private channels through the encrypted Postgres checkpointer). `tests/test_memory_e2e.py` now runs the real curator between run one and run two.
+- Not built yet: cases 5 and 6 of `FEEDBACK.md` (no consumer for course length or career goals), cases 4 and 8 need a live model and the judge (P6).
 
 ## Observability
 
@@ -76,6 +79,6 @@ Integration tests need `docker compose up -d` and
 ## Not in the code
 
 Each of these is covered in the article as prose only, and the reason is in `DECISIONS.md`:
-`CachePolicy`, node-level `timeout=`, `input_schema`/`output_schema`, `Command` routing,
+`CachePolicy`, node-level `timeout=`, `Command` routing,
 dynamic `interrupt()`, `durability=` set explicitly, prompt-injection check, circuit
 breaker, cross-worker coordination.

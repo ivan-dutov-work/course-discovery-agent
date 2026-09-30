@@ -6,9 +6,9 @@ describes what the memory update must handle and how each case is pinned by a te
 
 ## Current state (verified in code)
 
-- `save_user_memory(user_id, MemoryPatch)` writes `users` and `user_preferences` in one
-  transaction with a row lock and merges into the stored profile; nothing in the graph calls it
-  yet. `raw_memory_json` holds the two URL lists and the notes.
+- `save_user_memory(user_id, MemoryPatch, run_id=...)` writes `users` and `user_preferences` in one
+  transaction with a row lock and merges into the stored profile; the curator's `commit` is the
+  only caller, and with a `run_id` it also claims the `memory_updates` row. `raw_memory_json` holds the two URL lists and the notes.
 - Consumers: `avoided_providers`, `rejected_course_urls`, `completed_course_urls` (verifier,
   cache query, seed cache); `budget_preference` and `certificate_importance` (defaults in
   `parse_user_request`, only where the query does not state them); `preferred_providers`,
@@ -48,8 +48,8 @@ Every row is a parametrized fixture in the tests. "Writes nothing" is a valid, a
 | 2 | "skip the outdated Udemy one" | `rejected_course_urls += that URL`, provider untouched | run two excludes the URL, still returns other Udemy courses |
 | 3 | "cheaper this time" | writes nothing (`this_run`) | row unchanged |
 | 4 | "hands-on for Python, theory is fine for math" | one `topic:python` note, none for math | note scope; judge for wording |
-| 5 | "too long, I have 2 hours a week" | `preferred_course_length` set | exact |
-| 6 | "I'm switching from Python to Rust" | old goal removed, new added, dated | goals list; judge for polarity |
+| 5 | "too long, I have 2 hours a week" | `preferred_course_length` set | exact; deferred until P4c gives the field a consumer |
+| 6 | "I'm switching from Python to Rust" | old goal removed, new added, dated | goals list; judge for polarity; deferred until `career_goals` has a consumer |
 | 7 | Stored: prefers Coursera. Feedback: "Coursera keeps being paywalled" | `read_profile` first, then remove plus add | tool-call trace plus row |
 | 8 | "publish these, but I'm done with Udemy" (PUBLISH) | routes PUBLISH; curator still gets the raw text; avoids Udemy | route and row |
 | 9 | Round 1 REWRITE "too basic", round 2 PUBLISH "and skip edX" | both rounds visible to the curator | `feedback_history` contents |
@@ -73,14 +73,18 @@ load_context ─▶ curator_model ─┬─ tool calls ─▶ run_tools ─▶ c
                                └─ finish, or cap reached ─▶ commit ─▶ END
 ```
 
-- `load_context` (rules): redacted `feedback_history`, current `UserMemory`, this run's courses
-  with outcome, final routing action.
-- Tools, closed set: `read_profile`, `read_run_events`, `propose_patch(MemoryPatch)`,
-  `finish(reason)`. Every proposed change carries `scope` (`this_run`, `topic:<x>`,
+- `load_context` (rules): redacted `feedback_history` and the run outcome; it skips the model
+  when there is no feedback beyond bare approvals. The profile and the run's courses are not
+  preloaded: the model gets them through tools, and `propose_patch` is refused before
+  `read_profile`.
+- Tools, closed set: `read_profile`, `read_run_events`, `propose_patch(scope, reason,
+  MemoryPatch)`, `finish(reason)`. Every proposed change carries `scope` (`this_run`, `topic:<x>`,
   `durable`) or `not_a_preference`; `this_run` is never written.
 - `MemoryPatch` ops are `set`, `add`, `remove` over known fields only. The model cannot write;
   only `commit` does, after validation and a second `redact_pii` on free text.
-- `max_curator_steps` about 4, fail closed on cap, validation failure or LLM error.
+- `MAX_CURATOR_STEPS` (4, env-overridable), fail closed on cap, a reply without a tool call, or
+  an LLM error. A patch that fails validation goes back to the model as an error string and
+  costs a step.
 - Commit is idempotent per `run_id` (`memory_updates` table, also the audit trail) and takes a
   row lock on `user_preferences` so two concurrent runs of one user merge instead of overwriting.
 - LLM role label `curator`, through `build_llm()` only.

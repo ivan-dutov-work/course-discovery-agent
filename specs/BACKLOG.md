@@ -11,7 +11,7 @@ fixed in this pass.
 ## This pass: gap 5
 
 Every item ends with tests (success and failure modes) and the doc updates named in `CLAUDE.md`.
-Before starting P5 and P6 read `specs/FEEDBACK.md`; it holds the case list the tests come from.
+Before starting P6 read `specs/FEEDBACK.md`; it holds the case list the tests come from.
 
 ### P3a. OpenRouter `Embedder` (before or right after merging the topic-cache PR)
 
@@ -47,41 +47,25 @@ nothing. Extract a duration from listings into `CourseCandidate` (mock catalog f
 matching courses in `rank_and_summarize_courses`. Until this lands P5 must not write the field
 (`DECISIONS.md`: a learned preference needs a named consumer).
 
-### P5. Memory curator subgraph (gap 5, part 2)
-
-Spec: `specs/FEEDBACK.md`, "Curator". Bounded tool loop with a closed tool set, a step cap,
-fail-closed commit, idempotent per `run_id`.
-
-- New package `course_discovery/memory_curator/` (schema, tools, graph). Mounted after
-  `record_review_outcome`, so the graph becomes `... -> record_review_outcome ->
-  curate_user_memory -> END` for both PUBLISH and DISCARD.
-- New migration: `memory_updates(run_id primary key, user_id, patch jsonb, created_at)`. Add it
-  to `privacy/sources.py:USER_DATA_SOURCES` (`tests/test_erasure.py` fails otherwise).
-- `build_llm("curator")` only; declare the node and channels in `privacy/flow_specs.py`; the
-  outbox and effect rules do not apply (no external effect), so no `EffectGateway`.
-- Docs: `ARCHITECTURE.md` (fourth LLM node, table row, diagram), `STATUS.md`, a `DECISIONS.md`
-  entry already exists for the shape; add evidence to the matching notes file.
-- Tests: every unit case in `FEEDBACK.md` (rows 3, 10, 11, 13 to 18 and the tool-call trace of
-  row 7), with a stubbed model.
-
-### P6. End-to-end feedback tests with a judge. Depends on P5
+### P6. End-to-end feedback tests with a judge
 
 Spec: `specs/FEEDBACK.md`, "Test layers".
 
-- `tests/test_memory_e2e.py` already holds the run-one/run-two scenario (feedback history to
-  profile to run two, in-memory and Postgres) with a test-local `curate()` stand-in; P5 replaces
-  the stand-in with the real curator. Extend it to the 18 cases as parametrized fixtures. Layer 2 (stubbed model, CI)
+- `tests/test_memory_e2e.py` already holds the run-one/run-two scenario (feedback to curator to
+  profile to run two, in-memory and Postgres) with a scripted curator model. Extend it to the
+  cases as parametrized fixtures; cases 5 and 6 wait for their consumers. Layer 2 (stubbed model, CI)
   asserts run two's results exactly. Layer 3 (live model plus judge) skips without
   `OPENROUTER_API_KEY`.
 - `tests/judge.py`: Pydantic verdict, the five-point rubric, three calls and majority, through
   `build_llm("judge")`. Free-text fields only; structured fields stay exact assertions.
 - Record in notes/04 which cases the live model fails and how often, with the model versions.
 
-### S1. State hygiene. After P5
+### S1. State hygiene
 
 `AgentState` is 32 flat channels across seven concerns. Decision and reasoning are in
-`DECISIONS.md` ("Do not restructure `AgentState` wholesale"). P5's curator subgraph is the pilot
-for private schemas; apply what it shows here.
+`DECISIONS.md` ("Do not restructure `AgentState` wholesale"). The P5 curator subgraph was the pilot
+for private schemas: `input_schema`/`output_schema` kept its channels private and returned only a
+status string, so the reducer echo did not occur. Apply that to the research subgraph here.
 
 0. Fix the reducer double-count: `tavily_calls`, `completed_queries` and `research_notes` grow
    1, 2, 4 across REWRITE and AUGMENT rounds because the subgraph returns its channel value and
@@ -159,8 +143,8 @@ Placeholders marked `[NOT DRAFTED]` in `specs/article/DRAFT.md`:
 
 - §0 TL;DR, §1 Agents vs. workflows, §2.1 state as the single channel, §3.1 conditional
   edges, §13 What's next, and the demo appendix.
-- §2.3 `input_schema`/`output_schema` and §3.4 `Command`: not used by the code, so either
-  add a small honest use or label the section doc-only.
+- §2.3 `input_schema`/`output_schema` now has an honest use (the curator subgraph, `memory_curator/graph.py`); §3.4 `Command` is not used by the code, so either
+  add a small honest use or label it doc-only.
 - §8.5 guardrails and §10.3 security primitives: depend on the prompt-injection item above.
 - §13, prose only, no code: the many-user reframing (self-serve runs, human review at
   shared-cache promotion, N1) and implicit feedback (weighted counters with decay, an embedding

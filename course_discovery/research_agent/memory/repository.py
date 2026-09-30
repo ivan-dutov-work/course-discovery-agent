@@ -103,7 +103,16 @@ def redact_patch(patch: MemoryPatch) -> MemoryPatch:
     )
 
 
-def save_user_memory(user_id: str | None, patch: MemoryPatch) -> UserMemory | None:
+def memory_update_exists(run_id: str) -> bool:
+    with connect() as conn:
+        if conn is None:
+            return False
+        return conn.execute("SELECT 1 FROM memory_updates WHERE run_id = %s", (run_id,)).fetchone() is not None
+
+
+def save_user_memory(
+    user_id: str | None, patch: MemoryPatch, *, run_id: str | None = None
+) -> UserMemory | None:
     if not user_id or patch.is_empty():
         return None
     patch = redact_patch(patch)
@@ -112,6 +121,16 @@ def save_user_memory(user_id: str | None, patch: MemoryPatch) -> UserMemory | No
             return None
         try:
             with conn.transaction():
+                if run_id is not None:
+                    claimed = conn.execute(
+                        """
+                        INSERT INTO memory_updates (run_id, user_id, patch) VALUES (%s, %s, %s)
+                        ON CONFLICT (run_id) DO NOTHING RETURNING run_id
+                        """,
+                        (run_id, user_id, Jsonb(patch.model_dump(mode="json"))),
+                    ).fetchone()
+                    if claimed is None:
+                        return None
                 conn.execute(
                     "INSERT INTO users (id) VALUES (%s) ON CONFLICT (id) DO NOTHING",
                     (user_id,),

@@ -42,6 +42,7 @@ class UserDataSource:
 # would otherwise outlive the user with their content intact.
 USER_DATA_SOURCES = (
     UserDataSource("outbox", "payload", json_key="user_id", breakdown_column="status"),
+    UserDataSource("memory_updates", "user_id"),
     UserDataSource("recommendation_events", "user_id"),
     UserDataSource("research_runs", "user_id"),
     UserDataSource("user_preferences", "user_id"),

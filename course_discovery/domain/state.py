@@ -51,6 +51,7 @@ class AgentState(TypedDict):
     error: str | None
     publish_status: DeliveryStatus | None
     discard_reason: str | None
+    memory_update: str | None
 
 
 OUTER_ONLY_CHANNELS = frozenset({"feedback_history"})

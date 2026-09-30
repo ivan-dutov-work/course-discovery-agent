@@ -141,3 +141,11 @@ boundaries; completed nodes are not re-run on resume, the interrupted node is re
   to `send_approved_courses` and finished with `publish_status` set. The checkpoint stores the
   pending node name, so removing nodes that are not pending is safe; renaming the pending node
   is not. Checked with two checkouts (old at HEAD, new working tree) against one database.
+
+- **Private subgraph channels through the encrypted Postgres checkpointer (verified, langgraph
+  1.1.2).** The curator's `messages` channel holds `SystemMessage`, `HumanMessage`, `AIMessage`
+  with `tool_calls` and `ToolMessage`. A full outer run with `AsyncPostgresSaver`, the msgpack
+  allowlist and `CHECKPOINT_ENCRYPTION_KEYS` set checkpointed, read back and deleted the thread
+  without a serde error (`tests/test_curator_checkpoint.py`). The other private channels hold
+  only primitives, and proposals are stored as plain dicts so no new model needs allowlisting.
+

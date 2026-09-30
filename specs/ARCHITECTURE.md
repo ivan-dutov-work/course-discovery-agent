@@ -8,16 +8,18 @@ implemented and `BACKLOG.md` what is next; this file holds the shape.
 
 The graph is a workflow with LLM decision points, not a free-running agent. Code
 owns the control flow: the node sequence, the fan-out, the loop bound and the
-human pause are all fixed at compile time. The model never chooses its own tools,
-its own step count or its own stopping point.
+human pause are all fixed at compile time. The one exception is `curate_user_memory`,
+a bounded tool loop after the run ends (below): there the model picks which of four
+tools to call next, inside a step cap, and can only propose, never write.
 
-Three nodes call an LLM, each through `build_llm()`:
+Four nodes call an LLM, each through `build_llm()`:
 
 | Node | What the model decides | Bound on the decision |
 |---|---|---|
 | `parse_user_request` | Which structured filters a free-text query implies | Pydantic schema; rule-based parser as fallback |
 | `interpret_review_feedback` | Which of five routes free-text reviewer feedback selects | Closed `RoutingAction` enum; runs only after the human pause |
 | `rank_and_summarize_courses` | Wording and ranking highlights of the digest | Template fallback; ranks only courses already validated |
+| `curate_user_memory` | Which stored preferences the review feedback implies, if any | Closed tool set, `MAX_CURATOR_STEPS` (4), validated patch, only `commit` writes; skipped without a key |
 
 Everything else is deterministic, including planning, extraction and validation.
 Worth naming: the planner decides "cache or web" with a threshold on the cache hit
@@ -30,11 +32,11 @@ would keep the same bounds (`max_research_iterations`, validation before synthes
 ```
 parse_user_request ──ok──▶ course_research ──▶ [interrupt] await_human_review ──▶ interpret_review_feedback
         │                                                                                   │
-        └─error─▶ discard_run ─▶ record_review_outcome ─▶ END                               ├─ PUBLISH ─▶ send_approved_courses ─▶ record_review_outcome ─▶ END
+        └─error─▶ discard_run ─▶ record_review_outcome ─▶ curate_user_memory ─▶ END          ├─ PUBLISH ─▶ send_approved_courses ─▶ record_review_outcome ─▶ curate_user_memory ─▶ END
                                                                                             ├─ REWRITE ─▶ course_research
                                                                                             ├─ AUGMENT ─▶ course_research
                                                                                             ├─ RESET   ─▶ parse_user_request
-                                                                                            └─ DISCARD ─▶ discard_run ─▶ record_review_outcome ─▶ END
+                                                                                            └─ DISCARD ─▶ discard_run ─▶ record_review_outcome ─▶ curate_user_memory ─▶ END
 ```
 
 `interrupt_before=["await_human_review"]` is always compiled in. Nothing publishes
@@ -74,6 +76,7 @@ One responsibility each. "Rules" means deterministic code with no model call.
 | `interpret_review_feedback` | Map reviewer feedback to one routing action and append the redacted feedback to `feedback_history` | LLM, rule fallback |
 | `send_approved_courses` | Submit the publish effect through `EffectGateway` with a key derived from `run_id` | side effect |
 | `record_review_outcome` | Record accept or reject events for the user, with the whole `feedback_history` as the text; runs after publish and after discard | DB write |
+| `curate_user_memory` | Turn the review feedback into a validated patch to the stored profile (subgraph, below); writes only the `memory_update` status channel | subgraph, LLM |
 | `discard_run` | End the run as discarded, with a reason | terminal |
 
 ### Research subgraph
@@ -93,6 +96,39 @@ One responsibility each. "Rules" means deterministic code with no model call.
 | `rank_and_summarize_courses` | Rank valid courses (preferred provider, level and language first) and write the digest, with the profile's durable and topic-matching notes in the prompt | LLM, template fallback |
 
 Evidence rule: a missing piece of evidence yields `uncertain`, never `valid`.
+
+### Memory curator subgraph
+
+```
+load_context ─┬─ nothing to learn ─▶ END
+              └─▶ curator_model ─┬─ tool calls ─▶ run_tools ─┬─ finish, cap or failure ─▶ commit ─▶ END
+                      ▲          └─ LLM error ───────────────┤
+                      └─────────────── more steps ───────────┘
+```
+
+Compiled with its own `input_schema` (five shared channels) and `output_schema` (only
+`memory_update`), so its private channels (`messages`, `steps`, `proposals`, ...) never reach the
+parent and the shared reducer channel `feedback_history` is not echoed back and double-counted.
+
+| Node | Responsibility | Kind |
+|---|---|---|
+| `load_context` | Redact the feedback lines again; skip (status `skipped:*`) when there is no user, no feedback beyond bare approvals, no key, or the run was already applied | rules |
+| `curator_model` | Choose the next tool call; an LLM error ends the loop with `failed:llm_error` | LLM |
+| `run_tools` | Execute `read_profile`, `read_run_events`, `propose_patch`, `finish`; validation errors go back to the model as text | rules |
+| `commit` | Merge the accepted proposals, stamp notes with `run_id` and time, write through `save_user_memory`; a cap or no `finish` writes nothing | DB write, `RetryPolicy` |
+
+- The user id and run id come from state; no tool takes either, so feedback text cannot aim a
+  write at another user.
+- `propose_patch` is refused before `read_profile`, refuses fields without a consumer
+  (`career_goals`, `learning_style_notes`, `preferred_course_length`), refuses unknown fields and
+  top-level extras, and never stores `this_run` or `not_a_preference`. A `topic:<x>` scope takes
+  notes only and stamps the scope.
+- Idempotent per `run_id`: the claim row in `memory_updates` (also the audit trail, holding the
+  redacted patch) is inserted in the same transaction as the profile write, under the
+  `user_preferences` row lock.
+- LLM failures degrade (`memory_update = failed:*`, `record_degradation("curator", ...)`) and never
+  fail the run; a database failure in `commit` raises, and `RetryPolicy` retries it safely
+  because of the claim row.
 
 ## Cache lookup
 
@@ -133,8 +169,7 @@ Three stores, three lifetimes.
 - **User profile** (`user_preferences`, `recommendation_events`) is per-user and
   outlives runs. `load_user_profile` reads it at the start; `record_review_outcome`
   writes feedback events after publish or discard. `save_user_memory` is the one writer of
-  `user_preferences` (one transaction, row lock, merge); nothing in the graph calls it yet, the
-  curator (P5) will.
+  `user_preferences` (one transaction, row lock, merge); only the curator's `commit` calls it.
 - **`feedback_history`** is the one channel that keeps every review round (`manager_feedback`
   holds only the latest). It is outer-graph only: the research subgraph runs on
   `ResearchState`, which omits it, because a reducer channel that a subgraph shares is added to
@@ -164,12 +199,12 @@ design.
    asynchronous ingestion pipeline (crawl, extract, validate, embed, deduplicate) from
    a request path that does hybrid retrieval first and falls back to web search only
    for thin coverage, feeding results back through ingestion.
-5. **Feedback is stored, not yet learned.** The profile has a writer (`save_user_memory`) and
-   consumers (budget and certificate defaults in `parse_user_request`; provider, level and
-   language boost and scoped notes in `rank_and_summarize_courses`; avoided providers and
-   rejected or completed URLs in the verifier and cache), and `feedback_history` carries every
-   round, but nothing turns feedback into a patch yet. `preferred_course_length` is stored and
-   read by nothing (P4c). Cases and design: `FEEDBACK.md`; fix: P5, P6.
+5. **Learned preferences are narrow and not yet checked against a live model.** The curator
+   writes only fields with a consumer: providers, level, language, budget, certificate,
+   rejected and completed URLs, and scoped notes. `career_goals` and `learning_style_notes` have
+   no consumer and `preferred_course_length` has none until P4c, so feedback about them is
+   dropped, not stored. The stubbed-model tests pin the loop; how a real model behaves on the
+   case list is unmeasured (P6). Cases: `FEEDBACK.md`.
 6. **Reducer channels double-count across review rounds.** `tavily_calls`, `completed_queries`
    and `research_notes` are added to again each time `course_research` returns, so a REWRITE or
    AUGMENT round doubles them (measured 1, 2, 4; `article/notes/02`). Fix: backlog S1.

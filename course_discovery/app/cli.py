@@ -70,6 +70,7 @@ def _initial_state(query: str, run_id: str) -> AgentState:
         "error": None,
         "publish_status": None,
         "discard_reason": None,
+        "memory_update": None,
     }
 
 

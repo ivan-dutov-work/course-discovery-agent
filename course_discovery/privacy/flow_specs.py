@@ -13,6 +13,7 @@ OUTER: dict[str, NodeFlow] = {
         redacts={"user_query", "manager_feedback"},
     ),
     "course_research": flow(),
+    "curate_user_memory": flow(),
     "await_human_review": flow(),
     "interpret_review_feedback": flow(
         reads={"manager_feedback", "iteration_count", "max_iterations"},
@@ -131,5 +132,25 @@ RESEARCH: dict[str, NodeFlow] = {
     "edge:dispatch_search_queries": flow(reads={"research_plan"}, writes={"active_search_query"}),
 }
 
+CURATOR: dict[str, NodeFlow] = {
+    "load_context": flow(
+        reads={"user_id", "run_id", "feedback_history"},
+        writes={"memory_update"},
+        redacts={"feedback_history"},
+        declassifies={"memory_update": "status string only"},
+    ),
+    "curator_model": flow(
+        reads={"feedback_history"},
+        sinks=(LLM,),
+    ),
+    "run_tools": flow(reads={"user_id", "valid_courses", "publish_status"}),
+    "commit": flow(
+        reads={"user_id", "run_id", "feedback_history"},
+        writes={"memory_update"},
+        sinks=(store("user_preferences"), store("memory_updates")),
+        declassifies={"memory_update": "status string only"},
+    ),
+}
+
 EDGES = {"edge:dispatch_search_queries"}
-FLOWS = {**OUTER, **RESEARCH}
+FLOWS = {**OUTER, **RESEARCH, **CURATOR}
