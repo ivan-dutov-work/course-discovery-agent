@@ -33,11 +33,11 @@ class StreamingRunTests(unittest.IsolatedAsyncioTestCase):
             )
 
         lines = out.getvalue().splitlines()
-        self.assertIn("- gateway", lines)
-        self.assertIn("  - tavily_search_worker", lines)
+        self.assertIn("- parse_user_request", lines)
+        self.assertIn("  - search_web_for_courses", lines)
         self.assertTrue(any("searched '" in line for line in lines))
-        self.assertLess(lines.index("- gateway"), lines.index("  - synthesizer"))
-        self.assertEqual((await graph.aget_state(config)).next, ("review_gate",))
+        self.assertLess(lines.index("- parse_user_request"), lines.index("  - rank_and_summarize_courses"))
+        self.assertEqual((await graph.aget_state(config)).next, ("await_human_review",))
         self.assertTrue(state["digest"])
 
     async def test_recursion_limit_stops_a_runaway_graph(self):

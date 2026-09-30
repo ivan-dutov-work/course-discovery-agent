@@ -106,7 +106,7 @@ class RunTraceTests(TracingTestCase):
 
         result = await self.run_to_publish("run-trace")
 
-        self.assertEqual(self.pending, ("review_gate",))
+        self.assertEqual(self.pending, ("await_human_review",))
         self.assertEqual(result["publish_status"], DeliveryStatus.DELIVERED)
 
         (start,), (resume,) = self.spans("run.start"), self.spans("run.resume")
@@ -120,7 +120,7 @@ class RunTraceTests(TracingTestCase):
             if s.context.trace_id == start.context.trace_id
         }
         self.assertTrue(
-            {"research_agent", "tavily_search_worker", "evidence_validator", "synthesizer"} <= first
+            {"course_research", "search_web_for_courses", "verify_course_claims", "rank_and_summarize_courses"} <= first
         )
 
         second = {
@@ -128,7 +128,7 @@ class RunTraceTests(TracingTestCase):
             for s in self.exporter.get_finished_spans()
             if s.context.trace_id == resume.context.trace_id
         }
-        self.assertTrue({"publish_node", "effect.submit", "effect.deliver"} <= second)
+        self.assertTrue({"send_approved_courses", "effect.submit", "effect.deliver"} <= second)
 
     async def test_delivery_in_another_context_joins_the_submitting_trace(self):
         gateway = OutboxGateway(self.store)

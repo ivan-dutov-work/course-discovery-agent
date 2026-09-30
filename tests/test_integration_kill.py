@@ -72,7 +72,7 @@ class ProcessKillTests(unittest.IsolatedAsyncioTestCase):
             await graph.ainvoke(None, _thread(thread_id))
             state = await graph.aget_state(_thread(thread_id))
 
-        self.assertEqual(state.next, ("review_gate",))
+        self.assertEqual(state.next, ("await_human_review",))
         self.assertEqual(calls, [])
 
     async def test_exit_mode_loses_the_run_on_sigkill_and_restarts_from_scratch(self):
@@ -87,7 +87,7 @@ class ProcessKillTests(unittest.IsolatedAsyncioTestCase):
             await graph.ainvoke(_initial_state(QUERY, thread_id), _thread(thread_id))
             state = await graph.aget_state(_thread(thread_id))
 
-        self.assertEqual(state.next, ("review_gate",))
+        self.assertEqual(state.next, ("await_human_review",))
         self.assertEqual(len(calls), 1)
 
 

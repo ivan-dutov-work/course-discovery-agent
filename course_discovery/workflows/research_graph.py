@@ -36,16 +36,16 @@ def research_entry_node(_: AgentState) -> dict:
 
 def _route_from_entry(state: AgentState):
     if state.get("routing_decision") == RoutingAction.AUGMENT:
-        return "replanner"
-    return "user_memory_lookup"
+        return "plan_gap_search"
+    return "load_user_profile"
 
 
 def _dispatch_search_queries(state: AgentState):
     if state.get("error"):
-        return "research_done"
+        return "end_research_on_error"
     plan = state.get("research_plan")
     if not plan or not plan.search_queries:
-        return "aggregate"
+        return "merge_known_and_found_courses"
 
     logger.info(
         "tavily_fanout",
@@ -56,7 +56,7 @@ def _dispatch_search_queries(state: AgentState):
         },
     )
     return [
-        Send("tavily_search_worker", {**state, "active_search_query": query})
+        Send("search_web_for_courses", {**state, "active_search_query": query})
         for query in plan.search_queries
     ]
 
@@ -64,62 +64,62 @@ def _dispatch_search_queries(state: AgentState):
 def build_research_graph(**compile_kwargs):
     builder = StateGraph(AgentState)
 
-    builder.add_node("research_entry", research_entry_node)
+    builder.add_node("start_research", research_entry_node)
     retry = transient_retry()
-    builder.add_node("user_memory_lookup", user_memory_lookup_node, retry_policy=retry)
-    builder.add_node("course_cache_lookup", course_cache_lookup_node, retry_policy=retry)
-    builder.add_node("research_planner", research_planner_node)
-    builder.add_node("tavily_search_worker", tavily_search_worker_node, retry_policy=retry)
-    builder.add_node("candidate_extractor", candidate_extractor_node)
-    builder.add_node("aggregate", aggregate_node)
-    builder.add_node("dedup", dedup_node)
-    builder.add_node("evidence_validator", evidence_validator_node)
-    builder.add_node("replanner", replanner_node)
-    builder.add_node("course_cache_upsert", course_cache_upsert_node, retry_policy=retry)
-    builder.add_node("synthesizer", synthesizer_node)
-    builder.add_node("research_done", lambda _: {})
+    builder.add_node("load_user_profile", user_memory_lookup_node, retry_policy=retry)
+    builder.add_node("find_known_courses", course_cache_lookup_node, retry_policy=retry)
+    builder.add_node("plan_web_search", research_planner_node)
+    builder.add_node("search_web_for_courses", tavily_search_worker_node, retry_policy=retry)
+    builder.add_node("extract_courses_from_results", candidate_extractor_node)
+    builder.add_node("merge_known_and_found_courses", aggregate_node)
+    builder.add_node("remove_duplicate_courses", dedup_node)
+    builder.add_node("verify_course_claims", evidence_validator_node)
+    builder.add_node("plan_gap_search", replanner_node)
+    builder.add_node("save_verified_courses", course_cache_upsert_node, retry_policy=retry)
+    builder.add_node("rank_and_summarize_courses", synthesizer_node)
+    builder.add_node("end_research_on_error", lambda _: {})
 
-    builder.set_entry_point("research_entry")
+    builder.set_entry_point("start_research")
     builder.add_conditional_edges(
-        "research_entry",
+        "start_research",
         _route_from_entry,
         {
-            "user_memory_lookup": "user_memory_lookup",
-            "replanner": "replanner",
+            "load_user_profile": "load_user_profile",
+            "plan_gap_search": "plan_gap_search",
         },
     )
-    builder.add_edge("user_memory_lookup", "course_cache_lookup")
-    builder.add_edge("course_cache_lookup", "research_planner")
+    builder.add_edge("load_user_profile", "find_known_courses")
+    builder.add_edge("find_known_courses", "plan_web_search")
     builder.add_conditional_edges(
-        "research_planner",
+        "plan_web_search",
         _dispatch_search_queries,
         {
-            "aggregate": "aggregate",
-            "research_done": "research_done",
+            "merge_known_and_found_courses": "merge_known_and_found_courses",
+            "end_research_on_error": "end_research_on_error",
         },
     )
-    builder.add_edge("tavily_search_worker", "candidate_extractor")
-    builder.add_edge("candidate_extractor", "aggregate")
-    builder.add_edge("aggregate", "dedup")
-    builder.add_edge("dedup", "evidence_validator")
+    builder.add_edge("search_web_for_courses", "extract_courses_from_results")
+    builder.add_edge("extract_courses_from_results", "merge_known_and_found_courses")
+    builder.add_edge("merge_known_and_found_courses", "remove_duplicate_courses")
+    builder.add_edge("remove_duplicate_courses", "verify_course_claims")
     builder.add_conditional_edges(
-        "evidence_validator",
+        "verify_course_claims",
         enough_valid,
         {
-            "course_cache_upsert": "course_cache_upsert",
-            "replanner": "replanner",
+            "save_verified_courses": "save_verified_courses",
+            "plan_gap_search": "plan_gap_search",
         },
     )
     builder.add_conditional_edges(
-        "replanner",
+        "plan_gap_search",
         _dispatch_search_queries,
         {
-            "aggregate": "aggregate",
-            "research_done": "research_done",
+            "merge_known_and_found_courses": "merge_known_and_found_courses",
+            "end_research_on_error": "end_research_on_error",
         },
     )
-    builder.add_edge("course_cache_upsert", "synthesizer")
-    builder.add_edge("synthesizer", END)
-    builder.add_edge("research_done", END)
+    builder.add_edge("save_verified_courses", "rank_and_summarize_courses")
+    builder.add_edge("rank_and_summarize_courses", END)
+    builder.add_edge("end_research_on_error", END)
 
     return builder.compile(**compile_kwargs)

@@ -6,39 +6,39 @@ LLM = external("llm:openrouter", accepts=frozenset({SUBJECT}))
 SEARCH = external("search:tavily", accepts=frozenset({SUBJECT}))
 
 OUTER: dict[str, NodeFlow] = {
-    "gateway": flow(
+    "parse_user_request": flow(
         reads={"user_query", "manager_feedback", "search_filters", "routing_decision"},
         writes={"search_filters", "routing_decision", "manager_feedback", "error", "discard_reason"},
         sinks=(LLM,),
         redacts={"user_query", "manager_feedback"},
     ),
-    "research_agent": flow(),
-    "review_gate": flow(),
-    "router": flow(
+    "course_research": flow(),
+    "await_human_review": flow(),
+    "interpret_review_feedback": flow(
         reads={"manager_feedback", "iteration_count", "max_iterations"},
         writes={"routing_decision", "rewrite_instructions", "iteration_count", "discard_reason"},
         sinks=(LLM,),
         redacts={"manager_feedback"},
     ),
-    "augment_dispatch": flow(),
-    "publish_node": flow(
+    "prepare_augmented_search": flow(),
+    "send_approved_courses": flow(
         reads={"user_id", "user_query", "digest", "valid_courses", "run_id"},
         writes={"publish_status"},
         sinks=(store("outbox"),),
         declassifies={"publish_status": "delivery state only"},
     ),
-    "discard_node": flow(reads={"discard_reason", "run_id"}, writes={"publish_status"}),
-    "user_memory_update": flow(
+    "discard_run": flow(reads={"discard_reason", "run_id"}, writes={"publish_status"}),
+    "record_review_outcome": flow(
         reads={"user_id", "valid_courses", "user_query", "manager_feedback", "publish_status", "run_id"},
         sinks=(store("users"), store("recommendation_events")),
     ),
 }
 
 RESEARCH: dict[str, NodeFlow] = {
-    "research_entry": flow(),
-    "research_done": flow(),
-    "user_memory_lookup": flow(reads={"user_id"}, writes={"user_memory"}),
-    "course_cache_lookup": flow(
+    "start_research": flow(),
+    "end_research_on_error": flow(),
+    "load_user_profile": flow(reads={"user_id"}, writes={"user_memory"}),
+    "find_known_courses": flow(
         reads={"search_filters", "user_memory", "metrics"},
         writes={"cache_candidates", "cache_hits", "metrics", "research_notes"},
         declassifies={
@@ -48,24 +48,24 @@ RESEARCH: dict[str, NodeFlow] = {
             "research_notes": "fixed message",
         },
     ),
-    "research_planner": flow(
+    "plan_web_search": flow(
         reads={"search_filters", "cache_candidates", "research_iteration", "completed_queries"},
         writes={"research_plan", "error"},
     ),
-    "tavily_search_worker": flow(
+    "search_web_for_courses": flow(
         reads={"active_search_query", "run_id"},
         writes={"tavily_results", "completed_queries", "tavily_calls", "research_notes"},
         sinks=(SEARCH,),
         declassifies={"tavily_calls": "counter"},
     ),
-    "candidate_extractor": flow(
+    "extract_courses_from_results": flow(
         reads={"tavily_results"},
         writes={"extracted_candidates"},
         declassifies={"extracted_candidates": "keeps catalog fields only, drops the echoed query"},
     ),
-    "aggregate": flow(reads={"cache_candidates", "extracted_candidates"}, writes={"scraped_courses"}),
-    "dedup": flow(reads={"scraped_courses"}, writes={"deduplicated_courses"}),
-    "evidence_validator": flow(
+    "merge_known_and_found_courses": flow(reads={"cache_candidates", "extracted_candidates"}, writes={"scraped_courses"}),
+    "remove_duplicate_courses": flow(reads={"scraped_courses"}, writes={"deduplicated_courses"}),
+    "verify_course_claims": flow(
         reads={
             "search_filters",
             "user_memory",
@@ -83,7 +83,7 @@ RESEARCH: dict[str, NodeFlow] = {
             "metrics": "counters",
         },
     ),
-    "replanner": flow(
+    "plan_gap_search": flow(
         reads={
             "search_filters",
             "validation_results",
@@ -96,11 +96,11 @@ RESEARCH: dict[str, NodeFlow] = {
         writes={"research_plan", "research_iteration", "metrics", "tavily_results", "extracted_candidates", "error"},
         declassifies={"metrics": "counters", "tavily_results": "reset", "extracted_candidates": "reset"},
     ),
-    "course_cache_upsert": flow(
+    "save_verified_courses": flow(
         reads={"valid_courses", "uncertain_courses", "validation_results"},
         sinks=(store("courses", frozenset()), store("course_evidence", frozenset())),
     ),
-    "synthesizer": flow(
+    "rank_and_summarize_courses": flow(
         reads={
             "valid_courses",
             "rewrite_instructions",
