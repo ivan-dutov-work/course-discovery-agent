@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from course_discovery.domain.models import CourseCandidate, UserMemory
+from course_discovery.guardrails import redact_pii
 from course_discovery.observability.logging import get_logger, sanitize_error
 from course_discovery.observability.metrics import record_db_error
 from course_discovery.persistence.postgres import connect
@@ -64,6 +65,8 @@ def record_feedback(
 ) -> None:
     if not user_id or not courses:
         return
+    query = redact_pii(query) or ""
+    feedback_text = redact_pii(feedback_text)
     with connect() as conn:
         if conn is None:
             return
