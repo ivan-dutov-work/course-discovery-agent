@@ -79,6 +79,28 @@ substance or it should be folded into 5.1. Uneven depth signals uneven
 thinking. Exception: a deliberately short section that exists only to name a
 concept that's detailed elsewhere (cross-reference it).
 
+**12. Stay on LangGraph mechanics; the rest is a pointer.**
+The article's subject is LangGraph's mechanisms (reducers, `Send`, subgraphs,
+interrupts, checkpointing, `Store`, retry/cache policy, fallback) and what each
+one forces you to decide. Tooling and infrastructure topics that surround an
+agent (tracing backends, sampling strategy, metrics stacks, queue products,
+compliance regimes) are in scope only for the part that a LangGraph mechanism
+causes. Test each paragraph: if it would read the same in an article about any
+service, cut it or reduce it to one sentence and a pointer. What stays is the
+consequence specific to the graph, such as one run splitting into several traces
+at an interrupt, or replay duplicating work after a checkpoint.
+
+Do not write vendor comparisons, option lists, decision tables or "how X works"
+primers for generic infrastructure. A subsection should answer "what does this
+LangGraph mechanism force on me", not "what are my options for this tool".
+
+Respect the section budget in `specs/ARTICLE_OUTLINE.md`. Before drafting, read
+the outline entry and its word count. If the draft is running well past it, or
+the section has grown subsections the outline doesn't have, stop and ask the
+user whether the scope is meant to change. If it is, update the outline and the
+framing in `CLAUDE.md` first, so the draft follows the scope rather than
+redefining it.
+
 ## Tone markers
 
 Use these when they fit — not as a checklist, but as a reminder of what the
