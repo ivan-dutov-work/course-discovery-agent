@@ -19,6 +19,7 @@ from course_discovery.effects.models import RecordStatus
 from course_discovery.effects.postgres_store import PostgresOutboxStore
 from course_discovery.effects.worker import OutboxWorker
 from course_discovery.persistence.checkpointer import prune_checkpoints
+from course_discovery.privacy import register_thread
 from course_discovery.workflows.outer_graph import build_graph
 from test_integration_postgres import QUERY, _durable_saver, _thread
 
@@ -178,6 +179,7 @@ class CheckpointPruneTests(unittest.IsolatedAsyncioTestCase):
             await saver.setup()
             graph = build_graph(checkpointer=saver)
             for thread in (old, fresh):
+                register_thread(f"user-{thread}", thread)
                 await graph.ainvoke(_initial_state(QUERY, thread), _thread(thread))
 
             future = datetime.now(timezone.utc) + timedelta(days=60)
@@ -185,6 +187,7 @@ class CheckpointPruneTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(old, pruned)
             self.assertIn(fresh, pruned)
 
+            register_thread(f"user-{prefix}-c", f"{prefix}-c")
             await graph.ainvoke(_initial_state(QUERY, f"{prefix}-c"), _thread(f"{prefix}-c"))
             pruned_now = await prune_checkpoints(saver, 30)
             self.assertNotIn(f"{prefix}-c", pruned_now)
