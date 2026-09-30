@@ -16,11 +16,12 @@ One document per question. `specs/` holds live documents; `archive/` holds super
 | What is implemented and tested? | `specs/STATUS.md` |
 | What was settled and must not be reopened? | `specs/DECISIONS.md` |
 | What is the next work? | `specs/BACKLOG.md` |
+| What must the user-memory update handle, and how is each case tested? | `specs/FEEDBACK.md` |
 | What will the article say, section by section, within which word budget? | `specs/article/OUTLINE.md` |
 | What has been drafted? | `specs/article/DRAFT.md` |
 | What was verified about LangGraph for a section? | `specs/article/notes/` (five files by theme) |
 
-Loading rules. Always: this file, `ARCHITECTURE.md`, `STATUS.md`, `DECISIONS.md`. When implementing: the one backlog item. When drafting: its outline section, the matching notes file, and the `course-article-style` skill. Never: `archive/`. When specs and `archive/PLAN.md` conflict, the specs win.
+Loading rules. Always: this file, `ARCHITECTURE.md`, `STATUS.md`, `DECISIONS.md`. When implementing: the one backlog item (and `FEEDBACK.md` for P4 to P6). When drafting: its outline section, the matching notes file, and the `course-article-style` skill. Never: `archive/`. When specs and `archive/PLAN.md` conflict, the specs win.
 
 Before implementing, check the item and the code it touches against `ARCHITECTURE.md`, `STATUS.md` and `DECISIONS.md`. Stop and ask if the item contradicts a `DECISIONS.md` entry, or if the docs and the code disagree about something the item depends on. Inconsistencies elsewhere: note them, keep going, and report them at the end. Do not audit the whole repo; that is a separate review task.
 
@@ -89,7 +90,7 @@ export TEST_DATABASE_URL=postgresql://course:course@localhost:55432/course_disco
 uv run python -m unittest discover tests
 ```
 
-Without `TEST_DATABASE_URL` the integration tests skip. `docker-compose.yml` applies `migrations/` on a fresh volume only; apply a new migration by hand to an existing one.
+Without `TEST_DATABASE_URL` the integration tests skip. `docker-compose.yml` applies `migrations/` on a fresh volume only; apply a new migration by hand to an existing one (`007_course_embedding_index.sql` is the latest; rows written before it keep `NULL` embeddings until `python -m course_discovery.research_agent.embeddings backfill`).
 
 Tracing is off until an exporter is configured. `docker compose --profile tracing up -d jaeger`, then `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 uv run python main.py` and open http://localhost:16686 (`OTEL_TRACES_EXPORTER=console` prints spans instead, `OTEL_SDK_DISABLED=true` turns it off). Prompt and state content is redacted from spans unless `OTEL_CAPTURE_CONTENT=true`. Exporter failures never fail a run. Metrics (cache lookups by hit/miss, run duration per segment and outcome, run and review outcomes, review wait, degraded/fail-closed paths by component and reason, search calls, LLM calls/errors/fallbacks/latency/tokens on the GenAI conventions, transient errors seen by `RetryPolicy`, outbox outcomes with dead-letter reason, delivery latency, backlog/dead-letter/oldest-age gauges) are off until `OTEL_METRICS_EXPORTER=otlp` or `console`; Jaeger does not ingest metrics, so point OTLP at a collector. Spans are flushed at the end of each run segment and batched every 1s (`OTEL_BSP_SCHEDULE_DELAY`), so a SIGKILL loses at most the last second of spans plus any span still open. Metrics are force-flushed at the same points but otherwise export every 60s (`OTEL_METRIC_EXPORT_INTERVAL`), so a SIGKILL loses the counters recorded since the last segment end. Log previews of queries, feedback and titles are `null` unless `OTEL_CAPTURE_CONTENT=true`; `SERVICE_VERSION` and `DEPLOYMENT_ENVIRONMENT` set the matching resource attributes.
 

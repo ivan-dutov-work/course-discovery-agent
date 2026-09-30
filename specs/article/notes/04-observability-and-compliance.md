@@ -57,7 +57,7 @@ unless marked as documentation.
   mutation tests per rule, a run-based test that nodes write only declared channels, and canary
   tests scanning checkpoint history and the outbox payload. The canary caught a wrong
   declassification (search results echo the query); the coverage rule caught an undeclared node
-  (`end_research_on_error`). Limits, stated in the article: channel granularity, reads declared
+  (a no-op error terminal, since removed). Limits, stated in the article: channel granularity, reads declared
   not observed, only the approve path driven, sinks declared not observed, edge order ignored,
   canary finds verbatim copies only. Not built: reducer-based redaction (unverified whether the
   initial input passes through a reducer), selective sealing, AST-derived reads and writes,
