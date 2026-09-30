@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from course_discovery.domain.models import CourseCandidate, UserMemory
 from course_discovery.observability.logging import get_logger, sanitize_error
+from course_discovery.observability.metrics import record_db_error
 from course_discovery.persistence.postgres import connect
 
 
@@ -44,6 +45,7 @@ def load_user_memory(user_id: str | None) -> UserMemory:
                 rejected_course_urls=raw_memory.get("rejected_course_urls", []),
             )
         except Exception as exc:  # noqa: BLE001
+            record_db_error("user_memory_load")
             logger.error(
                 "user_memory_load_error",
                 extra={"event": "persistence.user_memory_load_error", **sanitize_error(exc)},
@@ -101,6 +103,7 @@ def record_feedback(
                     )
             conn.commit()
         except Exception as exc:  # noqa: BLE001
+            record_db_error("feedback_record")
             logger.error(
                 "feedback_record_error",
                 extra={"event": "persistence.feedback_record_error", **sanitize_error(exc)},

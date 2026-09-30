@@ -66,6 +66,23 @@ class OutboxContract:
         self.assertEqual(second.status, RecordStatus.IN_PROGRESS)
         self.assertEqual(second.attempts, 1)
 
+    def test_stats_report_backlog_dead_letters_and_oldest_age(self):
+        self.store.enqueue(effect("publish:old"), self.clock())
+        self.clock.advance(120)
+        self.store.enqueue(effect("publish:new"), self.clock())
+        self.store.enqueue(effect("publish:dead"), self.clock())
+        self.store.mark_dead("publish:dead", "boom")
+
+        stats = self.store.stats(self.clock())
+
+        self.assertEqual((stats.pending, stats.dead), (2, 1))
+        self.assertEqual(stats.oldest_pending_age_seconds, 120)
+
+    def test_stats_of_an_empty_store_are_zero(self):
+        stats = self.store.stats(self.clock())
+
+        self.assertEqual((stats.pending, stats.dead, stats.oldest_pending_age_seconds), (0, 0, 0))
+
     def test_payload_round_trips(self):
         self.store.enqueue(effect(), self.clock())
         self.assertEqual(self.store.get("publish:run-1").effect, effect())

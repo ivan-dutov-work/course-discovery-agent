@@ -7,6 +7,7 @@ from langgraph.config import get_stream_writer
 
 from course_discovery.domain.state import AgentState
 from course_discovery.observability.logging import get_logger, sanitize_error
+from course_discovery.observability.metrics import record_degradation, record_search
 from course_discovery.research_agent.search.tavily_client import TavilyClient
 from course_discovery.resilience import SEARCH_TIMEOUT_SECONDS, is_transient
 
@@ -46,6 +47,7 @@ async def tavily_search_worker_node(state: AgentState) -> dict:
                 "duration_ms": int((time.perf_counter() - start_ts) * 1000),
             },
         )
+        record_search("ok" if results else "empty", time.perf_counter() - start_ts)
         _emit_progress(f"searched '{query}': {len(results)} results")
         return {
             "tavily_results": results,
@@ -54,7 +56,10 @@ async def tavily_search_worker_node(state: AgentState) -> dict:
         }
     except Exception as exc:  # noqa: BLE001
         if is_transient(exc):
+            record_search("transient", time.perf_counter() - start_ts)
             raise
+        record_search("error", time.perf_counter() - start_ts)
+        record_degradation("search", "query_failed")
         err = sanitize_error(exc)
         logger.warning(
             "tavily_search_error",

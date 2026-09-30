@@ -7,6 +7,7 @@ from course_discovery.domain.models import (
 )
 from course_discovery.domain.state import AgentState
 from course_discovery.observability.logging import get_logger
+from course_discovery.observability.metrics import record_replan
 
 
 logger = get_logger(__name__)
@@ -144,6 +145,7 @@ def replanner_node(state: AgentState) -> dict:
     metrics = (state.get("metrics") or ResearchRunMetrics()).model_copy(
         update={"replan_count": iteration}
     )
+    record_replan()
     logger.info(
         "research_replan_complete",
         extra={

@@ -14,11 +14,17 @@ from course_discovery.observability.logging import (
     classify_feedback,
     configure_logging,
     get_logger,
-    truncate_text,
+    preview,
 )
-from course_discovery.observability.metrics import configure_metrics, shutdown_metrics
+from course_discovery.observability.metrics import (
+    configure_metrics,
+    record_review_wait,
+    record_run_outcome,
+    shutdown_metrics,
+)
 from course_discovery.observability.tracing import (
     configure_tracing,
+    annotate_run,
     run_span,
     shutdown_tracing,
 )
@@ -78,7 +84,11 @@ async def main() -> None:
 
     try:
         async with open_checkpointer() as saver:
-            await _run(build_graph(checkpointer=saver))
+            try:
+                await _run(build_graph(checkpointer=saver))
+            except Exception:
+                record_run_outcome("error")
+                raise
     finally:
         shutdown_tracing()
         shutdown_metrics()
@@ -101,7 +111,7 @@ async def _stream_until_pause(graph, graph_input, config: RunnableConfig, *, res
         run_id=run_id,
         thread_id=run_id,
         resume=resume,
-    ):
+    ) as span:
         async for namespace, mode, chunk in graph.astream(
             graph_input,
             config,
@@ -110,6 +120,7 @@ async def _stream_until_pause(graph, graph_input, config: RunnableConfig, *, res
         ):
             _print_progress(namespace, mode, chunk)
         snapshot = await graph.aget_state(config)
+        annotate_run(span, snapshot.values)
     return snapshot.values
 
 
@@ -127,6 +138,10 @@ async def _run(graph) -> None:
         "recursion_limit": RECURSION_LIMIT,
     }
     start_ts = time.perf_counter()
+    review_wait = 0.0
+
+    def active_ms() -> int:
+        return int((time.perf_counter() - start_ts - review_wait) * 1000)
 
     logger.info(
         "run_start",
@@ -134,7 +149,7 @@ async def _run(graph) -> None:
             "event": "main.run_start",
             "run_id": run_id,
             "thread_id": run_id,
-            "query_preview": truncate_text(query, max_len=100),
+            "query_preview": preview(query, max_len=100),
             "query_len": len(query),
         },
     )
@@ -175,9 +190,13 @@ async def _run(graph) -> None:
             f"Uncertain: {len(result.get('uncertain_courses', []))}"
         )
 
+        wait_start = time.perf_counter()
         pm_feedback = input(
             "PM feedback (approve | rewrite: ... | augment: ... | reset: ... | discard): "
         ).strip()
+        waited = time.perf_counter() - wait_start
+        review_wait += waited
+        record_review_wait(waited)
 
         logger.info(
             "feedback_received",
@@ -185,7 +204,7 @@ async def _run(graph) -> None:
                 "event": "main.feedback_received",
                 "run_id": run_id,
                 "feedback_type": classify_feedback(pm_feedback),
-                "feedback_preview": truncate_text(pm_feedback, max_len=80),
+                "feedback_preview": preview(pm_feedback, max_len=80),
                 "feedback_len": len(pm_feedback),
             },
         )
@@ -204,25 +223,29 @@ async def _run(graph) -> None:
         publish_status = result.get("publish_status")
         if publish_status:
             print(f"Digest {DeliveryStatus(publish_status).value}.")
+            record_run_outcome("publish", delivery=DeliveryStatus(publish_status).value)
             logger.info(
                 "run_complete",
                 extra={
                     "event": "main.run_complete",
                     "run_id": run_id,
                     "final_action": "PUBLISH",
-                    "duration_ms": int((time.perf_counter() - start_ts) * 1000),
+                    "duration_ms": active_ms(),
+                    "review_wait_ms": int(review_wait * 1000),
                     "iterations": result.get("iteration_count", 0),
                 },
             )
             break
     else:
         print("Stopped after loop safety limit.")
+        record_run_outcome("loop_stop")
         logger.warning(
             "run_loop_safety_stop",
             extra={
                 "event": "main.run_loop_safety_stop",
                 "run_id": run_id,
-                "duration_ms": int((time.perf_counter() - start_ts) * 1000),
+                "duration_ms": active_ms(),
+                "review_wait_ms": int(review_wait * 1000),
                 "iterations": result.get("iteration_count", 0),
             },
         )
@@ -231,16 +254,18 @@ async def _run(graph) -> None:
         "DISCARD",
         RoutingAction.DISCARD,
     }:
+        record_run_outcome("discard")
         logger.info(
             "run_complete",
             extra={
                 "event": "main.run_complete",
                 "run_id": run_id,
                 "final_action": "DISCARD",
-                "discard_reason": truncate_text(
+                "discard_reason": preview(
                     result.get("discard_reason"), max_len=140
                 ),
-                "duration_ms": int((time.perf_counter() - start_ts) * 1000),
+                "duration_ms": active_ms(),
+                "review_wait_ms": int(review_wait * 1000),
                 "iterations": result.get("iteration_count", 0),
             },
         )

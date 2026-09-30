@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import os
 import time
+from collections import OrderedDict
 from contextlib import contextmanager
-from typing import Iterator
+from typing import Any, Iterator, Mapping
 
 from opentelemetry import context, propagate, trace
-from opentelemetry.sdk.resources import Resource
+from opentelemetry.trace import Link
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import (
     BatchSpanProcessor,
@@ -15,8 +16,9 @@ from opentelemetry.sdk.trace.export import (
     SpanExporter,
 )
 
-from course_discovery.observability.logging import get_logger
-from course_discovery.observability.metrics import record_run_duration
+from course_discovery.observability.logging import capture_content, get_logger
+from course_discovery.observability.metrics import flush_metrics, record_run_duration
+from course_discovery.observability.resource import build_resource
 
 logger = get_logger(__name__)
 
@@ -30,10 +32,6 @@ _FLUSH_TIMEOUT_MS = 2000
 
 def _enabled() -> bool:
     return os.getenv("OTEL_SDK_DISABLED", "").lower() != "true"
-
-
-def capture_content() -> bool:
-    return os.getenv("OTEL_CAPTURE_CONTENT", "").lower() == "true"
 
 
 def _exporter() -> SpanExporter | None:
@@ -73,9 +71,7 @@ def configure_tracing(
     if _provider is not None or not _enabled():
         return _provider
     try:
-        provider = TracerProvider(
-            resource=Resource.create({"service.name": service_name})
-        )
+        provider = TracerProvider(resource=build_resource(service_name))
         if exporter is not None:
             provider.add_span_processor(SimpleSpanProcessor(exporter))
         elif (configured := _exporter()) is not None:
@@ -153,11 +149,43 @@ def extract_trace_context(payload: dict) -> context.Context | None:
     return propagate.extract({"traceparent": traceparent})
 
 
+_MAX_TRACKED_RUNS = 128
+_last_segment: OrderedDict[str, trace.SpanContext] = OrderedDict()
+
+
+def _remember_segment(run_id: str, span_context: trace.SpanContext) -> None:
+    _last_segment[run_id] = span_context
+    _last_segment.move_to_end(run_id)
+    while len(_last_segment) > _MAX_TRACKED_RUNS:
+        _last_segment.popitem(last=False)
+
+
+def _plain(value: Any) -> Any:
+    return getattr(value, "value", value)
+
+
+def annotate_run(span: trace.Span, values: Mapping[str, Any]) -> None:
+    attributes = {
+        "course.routing_decision": _plain(values.get("routing_decision")),
+        "course.publish_status": _plain(values.get("publish_status")),
+        "course.review_iteration": values.get("iteration_count"),
+        "course.research_iteration": values.get("research_iteration"),
+        "course.cache_candidates": values.get("cache_hits"),
+        "course.tavily_calls": values.get("tavily_calls"),
+        "course.valid_count": len(values.get("valid_courses") or []),
+        "course.rejected_count": len(values.get("rejected_courses") or []),
+        "course.uncertain_count": len(values.get("uncertain_courses") or []),
+    }
+    span.set_attributes({k: v for k, v in attributes.items() if v is not None})
+
+
 @contextmanager
 def run_span(
     name: str, *, run_id: str, thread_id: str, resume: bool = False
 ) -> Iterator[trace.Span]:
     start = time.perf_counter()
+    outcome = "ok"
+    previous = _last_segment.get(run_id) if resume else None
     try:
         with tracer().start_as_current_span(
             name,
@@ -166,8 +194,18 @@ def run_span(
                 "course.thread_id": thread_id,
                 "course.resume": resume,
             },
+            links=[Link(previous)] if previous else None,
         ) as span:
-            yield span
+            _remember_segment(run_id, span.get_span_context())
+            try:
+                yield span
+            except Exception:
+                outcome = "error"
+                raise
+            except BaseException:
+                outcome = "aborted"
+                raise
     finally:
-        record_run_duration(time.perf_counter() - start, resume=resume)
+        record_run_duration(time.perf_counter() - start, resume=resume, outcome=outcome)
         flush_tracing()
+        flush_metrics()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from dataclasses import dataclass
@@ -9,7 +10,7 @@ from typing import Callable, Mapping
 from course_discovery.effects.models import Effect, OutboxRecord, PermanentEffectError
 from course_discovery.effects.store import OutboxStore
 from course_discovery.observability.logging import get_logger, sanitize_error
-from course_discovery.observability.metrics import record_effect_outcome
+from course_discovery.observability.metrics import record_delivery_latency, record_effect_outcome
 from course_discovery.observability.tracing import extract_trace_context, tracer
 
 
@@ -79,7 +80,7 @@ class OutboxWorker:
             self.store.mark_dead(key, record.last_error or "lease expired after final attempt")
             stats.dead += 1
             record_effect_outcome("dead", reason="attempts_exhausted")
-            self._log("effect_dead", record, reason="attempts_exhausted")
+            self._log("effect_dead", record, level=logging.ERROR, reason="attempts_exhausted")
             return
 
         handler = self.handlers.get(record.effect.kind)
@@ -87,7 +88,7 @@ class OutboxWorker:
             self.store.mark_dead(key, f"no handler for kind {record.effect.kind!r}")
             stats.dead += 1
             record_effect_outcome("dead", reason="no_handler")
-            self._log("effect_dead", record, reason="no_handler")
+            self._log("effect_dead", record, level=logging.ERROR, reason="no_handler")
             return
 
         try:
@@ -105,28 +106,47 @@ class OutboxWorker:
             self.store.mark_dead(key, str(exc))
             stats.dead += 1
             record_effect_outcome("dead", reason="permanent")
-            self._log("effect_dead", record, reason="permanent", **sanitize_error(exc))
+            self._log(
+                "effect_dead", record, level=logging.ERROR, reason="permanent", **sanitize_error(exc)
+            )
         except Exception as exc:  # noqa: BLE001
             error = f"{type(exc).__name__}: {exc}"
             if record.attempts >= self.max_attempts:
                 self.store.mark_dead(key, error)
                 stats.dead += 1
                 record_effect_outcome("dead", reason="attempts_exhausted")
-                self._log("effect_dead", record, reason="attempts_exhausted", **sanitize_error(exc))
+                self._log(
+                    "effect_dead",
+                    record,
+                    level=logging.ERROR,
+                    reason="attempts_exhausted",
+                    **sanitize_error(exc),
+                )
             else:
                 retry_at = self.clock() + timedelta(seconds=self.backoff(record.attempts))
                 self.store.release(key, error, retry_at)
                 stats.retried += 1
                 record_effect_outcome("retried")
-                self._log("effect_retry", record, **sanitize_error(exc))
+                self._log("effect_retry", record, level=logging.WARNING, **sanitize_error(exc))
         else:
-            self.store.mark_delivered(key, self.clock())
+            delivered_at = self.clock()
+            try:
+                self.store.mark_delivered(key, delivered_at)
+            except Exception as exc:  # noqa: BLE001
+                record_effect_outcome("ack_failed")
+                self._log("effect_ack_failed", record, level=logging.ERROR, **sanitize_error(exc))
+                raise
             stats.delivered += 1
             record_effect_outcome("delivered")
+            if record.created_at is not None:
+                record_delivery_latency((delivered_at - record.created_at).total_seconds())
             self._log("effect_delivered", record)
 
-    def _log(self, event: str, record: OutboxRecord, **extra) -> None:
-        logger.info(
+    def _log(
+        self, event: str, record: OutboxRecord, *, level: int = logging.INFO, **extra
+    ) -> None:
+        logger.log(
+            level,
             event,
             extra={
                 "event": f"outbox.{event}",
