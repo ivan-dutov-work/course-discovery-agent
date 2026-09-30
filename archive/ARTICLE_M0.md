@@ -1,3 +1,5 @@
+> **Superseded.** Short early write-up. The current article draft is `specs/article/DRAFT.md`, the implemented graph is in `specs/ARCHITECTURE.md`; the "complex agent" framing below no longer matches.
+
 # LangGraph as the Control Shell for a Personalized Course Research Agent
 
 ## TL;DR
@@ -25,19 +27,19 @@ The system treats those risks as engineering constraints:
 The complex agent lives in the research loop:
 
 ```text
-research_agent subgraph:
-research_entry
-  -> user_memory_lookup
-  -> course_cache_lookup
-  -> research_planner
+course_research subgraph:
+start_research
+  -> load_user_profile
+  -> find_known_courses
+  -> plan_web_search
   -> dynamic Tavily search when needed
-  -> candidate_extractor
-  -> aggregate
-  -> dedup
-  -> evidence_validator
-  -> replanner when too few valid courses exist
-  -> course_cache_upsert
-  -> synthesizer
+  -> extract_courses_from_results
+  -> merge_known_and_found_courses
+  -> remove_duplicate_courses
+  -> verify_course_claims
+  -> plan_gap_search when too few valid courses exist
+  -> save_verified_courses
+  -> rank_and_summarize_courses
 ```
 
 The surrounding graph is supporting infrastructure:
@@ -45,8 +47,8 @@ The surrounding graph is supporting infrastructure:
 ```text
 outer workflow:
 gateway
-  -> research_agent subgraph
-  -> interrupt_before: review_gate
+  -> course_research subgraph
+  -> interrupt_before: await_human_review
   -> router
   -> publish / rewrite / augment / reset / discard
 ```
@@ -70,12 +72,12 @@ The local demo still runs without `DATABASE_URL`. In that mode, `course_discover
 
 ## Dynamic Search
 
-`research_planner` decides whether cache results are enough. If not, it emits a variable number of Tavily queries. The graph turns those into parallel workers with `Send`:
+`plan_web_search` decides whether cache results are enough. If not, it emits a variable number of Tavily queries. The graph turns those into parallel workers with `Send`:
 
 ```text
-research_planner
-  -> Send("tavily_search_worker", query_1)
-  -> Send("tavily_search_worker", query_2)
+plan_web_search
+  -> Send("search_web_for_courses", query_1)
+  -> Send("search_web_for_courses", query_2)
   -> ...
 ```
 
@@ -87,7 +89,7 @@ If `TAVILY_API_KEY` is missing or a search fails, the worker records a research 
 
 Extraction is deliberately conservative. Tavily results become `CourseCandidate` objects with unknown fields set to `None`, not guessed values. Evidence snippets are preserved as `EvidenceItem` records.
 
-`evidence_validator` checks each candidate against:
+`verify_course_claims` checks each candidate against:
 
 - parsed query filters,
 - avoided providers,
@@ -97,14 +99,14 @@ Extraction is deliberately conservative. Tavily results become `CourseCandidate`
 - level and language constraints,
 - rating constraints when known.
 
-Candidates are split into `valid_courses`, `rejected_courses`, and `uncertain_courses`. The synthesizer ranks only valid courses. If too few valid candidates exist and loop budget remains, `replanner` generates new gap-focused queries from validation failures and missing evidence.
+Candidates are split into `valid_courses`, `rejected_courses`, and `uncertain_courses`. The synthesizer ranks only valid courses. If too few valid candidates exist and loop budget remains, `plan_gap_search` generates new gap-focused queries from validation failures and missing evidence.
 
 ## Human Review
 
 The graph compiles with:
 
 ```python
-interrupt_before=["review_gate"]
+interrupt_before=["await_human_review"]
 ```
 
 The CLI prints the digest and writes review feedback into checkpointed state. The router supports:

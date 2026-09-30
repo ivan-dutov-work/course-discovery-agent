@@ -27,7 +27,7 @@ behaviors that are hardest to verify by inspection alone.
 - Default empty memory returned for unknown user IDs.
 - Graceful fallback when database is absent.
 
-**1.3 Research planner output structure**
+**1.3 Web search planning (`plan_web_search`) output structure**
 
 - Returned `ResearchPlan` is a valid Pydantic model.
 - `search_queries` is non-empty when cache candidates are insufficient.
@@ -54,15 +54,15 @@ behaviors that are hardest to verify by inspection alone.
 
 - `research_iteration` increments on each replanning cycle.
 - Loop terminates when `research_iteration >= max_research_iterations`.
-- At termination, routes to `synthesizer` (not back to `replanner`).
-- `completed_queries` contains all queries from all iterations — replanner does not
+- At termination, routes to `rank_and_summarize_courses` (not back to `plan_gap_search`).
+- `completed_queries` contains all queries from all iterations — `plan_gap_search` does not
   generate duplicates.
 
 **1.7 `enough_valid?` edge routing**
 
-- `len(valid_courses) >= min_valid_candidates` → routes to `synthesizer`.
-- Below threshold, budget remaining → routes to `replanner`.
-- Below threshold, budget exhausted → routes to `synthesizer`; limitation note
+- `len(valid_courses) >= min_valid_candidates` → routes to `rank_and_summarize_courses`.
+- Below threshold, budget remaining → routes to `plan_gap_search`.
+- Below threshold, budget exhausted → routes to `rank_and_summarize_courses`; limitation note
   appears in `research_notes`.
 
 **1.8 Memory update**
@@ -187,8 +187,8 @@ Validates that cache reuse and memory exclusion work correctly across repeated r
 
 ## 4. Reproducibility Controls
 
-- **LLM temperature:** 0 for all LLM nodes (planner, extractor, validator,
-  replanner, synthesizer).
+- **LLM temperature:** 0 for all LLM nodes (`parse_user_request`, `interpret_review_feedback`,
+  `rank_and_summarize_courses`).
 - **Prompt logging:** every LLM call logs the full prompt and response, keyed by
   `thread_id` and node name.
 - **Model version pinning:** record exact model identifier at experiment start.
@@ -209,8 +209,9 @@ The system is described as "structurally deterministic." This means:
 - **Deterministic:** graph topology (node order, edges, interrupt boundaries),
   Pydantic validation rules, URL normalization, dedup logic, conditional routing
   edges, cache filter queries.
-- **Controlled stochastic:** LLM nodes (planner, extractor, validator, replanner,
-  synthesizer). Temperature=0 reduces variance but does not guarantee identical
+- **Controlled stochastic:** the three LLM nodes (`parse_user_request`,
+  `interpret_review_feedback`, `rank_and_summarize_courses`); planning, extraction and
+  validation are rules and belong in the deterministic list. Temperature=0 reduces variance but does not guarantee identical
   outputs across API calls.
 
 Research claim: "The pipeline enforces deterministic control flow with bounded

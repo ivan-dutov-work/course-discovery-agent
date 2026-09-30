@@ -1,3 +1,5 @@
+> **Archived draft.** Uses pre-rename node names and the earlier "complex agent" framing. The current draft is `specs/article/DRAFT.md`.
+
 # Using LangGraph to Implement Complex AI Agents
 
 ## 0. TL;DR

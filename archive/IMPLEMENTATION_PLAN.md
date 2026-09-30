@@ -10,37 +10,45 @@ strategy, and produces personalized course recommendations. The surrounding Lang
 workflow provides persistence, interrupts, routing, and review controls — it is the
 control shell, not the subject.
 
+> **Archived.** Live status moved to `specs/STATUS.md` and `specs/BACKLOG.md`.
+>
+> **Status (2026-09-30).** Steps below are the original build order and keep their original
+> wording. Where the implementation diverged, the step carries a *Status* line, and the
+> Phase 2 table at the end lists every step's outcome. Node names are the renamed ones
+> (`specs/ARCHITECTURE.md` has the old-to-new table); the shape of the graph is in that file too.
+
 ---
 
 ## Architecture Summary
 
 ```
-gateway
-  -> research_agent subgraph
-  -> [interrupt_before: review_gate]
-  -> router
-      -> PUBLISH -> publish_node -> user_memory_update -> END
-      -> REWRITE -> research_agent subgraph
-      -> AUGMENT -> research_agent subgraph
-      -> RESET   -> gateway
-      -> DISCARD -> discard_node -> END
+parse_user_request
+  -> course_research subgraph
+  -> [interrupt_before: await_human_review]
+  -> interpret_review_feedback
+      -> PUBLISH -> send_approved_courses -> record_review_outcome -> END
+      -> REWRITE -> course_research subgraph
+      -> AUGMENT -> prepare_augmented_search -> course_research subgraph
+      -> RESET   -> parse_user_request
+      -> DISCARD -> discard_run -> END
 ```
 
 Research subgraph:
 
 ```
-research_entry
-  -> user_memory_lookup
-  -> course_cache_lookup
-  -> research_planner
-  -> tavily_search_worker(s)  [via Send, parallel, only for gaps]
-  -> candidate_extractor
-  -> aggregate + dedup
-  -> evidence_validator
+start_research
+  -> load_user_profile
+  -> find_known_courses
+  -> plan_web_search
+  -> search_web_for_courses(s)  [via Send, parallel, only for gaps]
+  -> extract_courses_from_results
+  -> merge_known_and_found_courses
+  -> remove_duplicate_courses
+  -> verify_course_claims
   -> enough_valid? [conditional]
-      -> replanner  [if too few valid; bounded by max_research_iterations]
-      -> synthesizer
-  -> course_cache_upsert
+      -> plan_gap_search  [if too few valid; bounded by max_research_iterations]
+      -> save_verified_courses
+  -> rank_and_summarize_courses
 ```
 
 ---
@@ -70,16 +78,23 @@ Enable the `pgvector` extension. Add `course_embedding vector` to `courses` and
 generates vectors from course descriptions and user preference summaries using
 the configured embedding model.
 
+*Status: schema only.* The columns exist in migration 001; no embedding utility was written
+and no code reads or writes them (`ARCHITECTURE.md`, known gap 2).
+
 ### Step 4 — Data-access layer
 
 Implement repository functions for:
 
-- `user_memory_lookup`: load `UserMemory` from `user_preferences` for a given user.
-- `course_cache_lookup`: structured filter + pgvector similarity query against
+- `load_user_profile`: load `UserMemory` from `user_preferences` for a given user.
+- `find_known_courses`: structured filter + pgvector similarity query against
   `courses`.
-- `course_cache_upsert`: insert or update course record, evidence, and embedding.
+- `save_verified_courses`: insert or update course record, evidence, and embedding.
 - `recommendation_events`: record accepted/rejected recommendations.
 - `research_runs`: write run-level observability metrics.
+
+*Status: partial.* The lookup filters structurally and ignores topic; there is no similarity
+query and no embedding on save. `research_runs` exists in the schema but nothing writes it;
+run-level metrics went to OpenTelemetry instead.
 
 ### Step 5 — Pydantic models
 
@@ -109,17 +124,19 @@ cache_hits, tavily_calls, metrics
 Remove or replace fixed worker keys (`worker_a_courses`, etc.) with
 source-oriented buffers.
 
-### Step 7 — `user_memory_lookup` node
+### Step 7 — `load_user_profile` node
 
 Load `UserMemory` from Postgres. Fall back to default (empty) memory when database
 is absent or user has no history. Write compact summary to state — do not inject
 unbounded raw history into LLM prompts.
 
-### Step 8 — `course_cache_lookup` node
+### Step 8 — `find_known_courses` node
 
 Query validated courses using structured filters plus pgvector semantic similarity.
 Exclude courses in the user's completed or rejected lists, and from avoided providers.
 Mark stale candidates that need a Tavily freshness check. Increment `cache_hits`.
+
+*Status: structural filters only; no similarity term, no staleness marking.*
 
 ### Step 9 — Search client (mocked)
 
@@ -135,57 +152,66 @@ Replace fixed mock workers with plan-driven fan-out using `Send`. The `dispatch_
 function reads `research_plan.search_queries` and emits one `Send` per query. Workers
 run in parallel. Results accumulate via list reducer. Increment `tavily_calls` per call.
 
-### Step 11 — `candidate_extractor` node
+### Step 11 — `extract_courses_from_results` node
 
 LLM node. Convert Tavily result snippets into structured `CourseCandidate` objects
 with `EvidenceItem` lists. Mark unknown fields explicitly. Do not hallucinate metadata
 not present in the source.
 
-### Step 12 — `evidence_validator` node
+*Status: implemented as rules (keyword extraction), not an LLM node.*
+
+### Step 12 — `verify_course_claims` node
 
 LLM node. For each candidate, produce a `CandidateValidation` against `SearchFilters`
 and `UserMemory`. Classify: `valid`, `rejected`, or `uncertain`. Populate `reasons`
 and `missing_evidence`. Treat missing evidence as `uncertain`, never as `valid`.
 Write to `valid_courses`, `rejected_courses`, `uncertain_courses`.
 
+*Status: implemented as rules, not an LLM node.*
+
 ### Step 13 — `enough_valid?` conditional routing
 
 Check `len(valid_courses) >= research_plan.min_valid_candidates`:
 
-- Yes → `synthesizer`
-- No, `research_iteration < max_research_iterations` → `replanner`
-- No, budget exhausted → `synthesizer` with limitation note in `research_notes`
+- Yes → `rank_and_summarize_courses`
+- No, `research_iteration < max_research_iterations` → `plan_gap_search`
+- No, budget exhausted → `rank_and_summarize_courses` with limitation note in `research_notes`
 
-### Step 14 — `replanner` node and loop budget
+### Step 14 — `plan_gap_search` node and loop budget
 
 LLM node. Inspect rejection reasons and missing evidence from current iteration.
 Generate new cache and/or Tavily queries. Append to `completed_queries` to avoid
 repetition. Increment `research_iteration`. Return a `Command` that updates state
-and routes to `course_cache_lookup` or `tavily_search_workers` as appropriate.
+and routes to `find_known_courses` or `search_web_for_courses` as appropriate.
 
-### Step 15 — `course_cache_upsert` node
+*Status: implemented as rules; returns a plain dict and routing stays on conditional edges (see Step 30).*
+
+### Step 15 — `save_verified_courses` node
 
 Upsert valid (and useful uncertain) courses into Postgres. Store evidence, validation
 status, confidence, `last_seen_at`, and embedding. Increment `use_count` for
 recommended courses.
 
-### Step 16 — `user_memory_update` node
+### Step 16 — `record_review_outcome` node
 
 Convert publish/discard feedback into durable preferences. Record accepted and
 rejected recommendations. Avoid over-learning from one interaction. Keep
 user-editable memory separate from derived observations.
 
-### Step 17 — Rename `telegram_gate` to `review_gate`
+*Status: records `recommendation_events` only; folding feedback back into `user_preferences`
+is open (`ARCHITECTURE.md`, known gap 5).*
+
+### Step 17 — Rename `telegram_gate` to `await_human_review`
 
 Update all references. The node is the interrupt boundary before any external
 publication, regardless of the downstream channel.
 
 ### Step 18 — Router semantics update
 
-- `PUBLISH`: record recommendation events, route to `user_memory_update`.
+- `PUBLISH`: record recommendation events, route to `record_review_outcome`.
 - `REWRITE`: rerun synthesis on existing validated candidates (no new search).
 - `AUGMENT`: trigger replanning and additional search.
-- `RESET`: reparse constraints and restart research from `gateway`.
+- `RESET`: reparse constraints and restart research from `parse_user_request`.
 - `DISCARD`: terminate, optionally record negative feedback.
 
 ### Step 19 — Metrics logging
@@ -246,10 +272,10 @@ agent while keeping the surrounding LangGraph workflow secondary.
 | LLM calls | LangChain + OpenRouter (`langchain-openrouter`): DeepSeek V4.1 Flash, Gemini 2.5 Flash Lite fallback |
 | Schema validation | Pydantic v2 |
 | Web search | Mocked (static catalog, `TavilyClient`-shaped for a real provider swap) |
-| Checkpointing (demo) | LangGraph `MemorySaver` |
-| Checkpointing (production) | LangGraph `AsyncPostgresSaver` |
-| Durable memory / cache | PostgreSQL + pgvector |
-| Embedding generation | Configurable; pgvector stores vectors |
+| Checkpointing (no `DATABASE_URL`) | LangGraph `MemorySaver` |
+| Checkpointing (`DATABASE_URL` set) | LangGraph `AsyncPostgresSaver`, optional AES-GCM sealing |
+| Durable memory / cache | PostgreSQL (pgvector extension installed, vectors unused) |
+| Embedding generation | Not built |
 | Fuzzy dedup | `rapidfuzz` (URL normalization + title match) |
 | Migrations | SQL files in `migrations/` |
 | Package management | `uv` |
@@ -290,18 +316,18 @@ parameter names across LangGraph minor versions. Check the installed version
 exports before writing any of steps 27-34 — don't trust prior knowledge of the
 API here.
 
-**Known documentation/implementation mismatch (not fixed in this phase):**
+**Documentation/implementation mismatch (resolved in the docs, not in the code):**
 `research_planner_node`, `replanner_node`, `candidate_extractor_node`, and
-`evidence_validator_node` are plain deterministic Python — no LLM call, no
+`evidence_validator_node` (graph nodes `plan_web_search`, `plan_gap_search`,
+`extract_courses_from_results`, `verify_course_claims`) are plain deterministic Python — no LLM call, no
 `with_structured_output`. Only `gateway_node`, `router_node`, and
 `synthesizer_node` (per course, inside `_highlight_with_retry`) call
 `ChatOpenRouter`. `CLAUDE.md`'s architecture section and
 the pre-restructure `ARTICLE_OUTLINE.md` §5 both described all four as LLM nodes. This
 phase does not convert them to real LLM calls (out of scope — a heuristic
 extractor/validator is a legitimate design, not a bug) but every step below is
-placed against the *actual* LLM nodes, not the documented ones. `CLAUDE.md`'s
-architecture section should eventually be corrected to say "rule-based" for
-these four nodes — tracked as a follow-up, not part of this phase.
+placed against the *actual* LLM nodes, not the documented ones. `CLAUDE.md` and
+`specs/ARCHITECTURE.md` now say "rules" for these four nodes.
 
 ### Step 23 — Fix the `extracted_candidates` reducer (real bug, doubles as §2.2)
 
@@ -309,7 +335,7 @@ these four nodes — tracked as a follow-up, not part of this phase.
 
 `extracted_candidates: list[CourseCandidate]` has no reducer, but
 `candidate_extractor_node` runs once per parallel `Send` branch
-(`research_graph.py`'s `tavily_search_worker → candidate_extractor` edge) and
+(`research_graph.py`'s `search_web_for_courses → extract_courses_from_results` edge) and
 returns `{"extracted_candidates": candidates}` from each branch. With more
 than one planned query this should raise `InvalidUpdateError` on concurrent
 writes to the same key. Change to
@@ -363,7 +389,7 @@ in `AgentState`.
 
 **File:** `course_discovery/workflows/research_graph.py`
 
-`builder.add_node("tavily_search_worker", tavily_search_worker_node, timeout=10)`.
+`builder.add_node("search_web_for_courses", tavily_search_worker_node, timeout=10)`.
 *(Correction: langgraph 1.1.2's `add_node` has no `timeout=` parameter. The timeout
 was implemented in the clients instead: `asyncio.wait_for` around search, plus LLM
 request and Postgres connect/statement timeouts. See `ARTICLE_TODO.md`.)*
@@ -388,21 +414,21 @@ honestly motivated.
   `research_notes`). This is the concrete "retry = call failed, graceful
   degradation = call permanently unavailable" split from `ARTICLE_TODO.md`.
 - `research_graph.py`: add `retry_policy=RetryPolicy(max_attempts=3)` to the
-  `tavily_search_worker` node registration.
+  `search_web_for_courses` node registration.
 
-### Step 29 — `CachePolicy` on `course_cache_lookup` (§7.3)
+### Step 29 — `CachePolicy` on `find_known_courses` (§7.3)
 
 **File:** `course_discovery/workflows/research_graph.py`
 
 `course_cache_lookup_node` is deterministic on `(search_filters, user_memory)`
 and gets re-invoked with unchanged inputs whenever `REWRITE` re-enters the
-subgraph from `research_entry`. Add
+subgraph from `start_research`. Add
 `cache_policy=CachePolicy(ttl=...)` to its node registration, and
 `builder.compile(cache=InMemoryCache())` on `build_research_graph()`'s return.
 Framing: this is a request-level cache *in front of* the domain cache — it
 skips re-querying Postgres/pgvector entirely on an exact-input repeat, which
 is a different, narrower guarantee than the domain cache's semantic-similarity
-matching. (Originally scoped for `research_planner`, but that node isn't an
+matching. (Originally scoped for `plan_web_search`, but that node isn't an
 LLM call — see the mismatch note above — so the latency story is a DB
 round-trip saved, not an LLM call saved. Still a real, honest example.)
 
@@ -411,13 +437,13 @@ round-trip saved, not an LLM call saved. Still a real, honest example.)
 **Files:** `course_discovery/research_agent/planning/nodes.py`,
 `course_discovery/workflows/research_graph.py`
 
-Change `replanner_node`'s return from a plain dict to
-`Command(update={...}, goto=[Send("tavily_search_worker", {...}) for q in plan.search_queries] or "aggregate")`,
+Change `replanner_node`'s (graph node `plan_gap_search`) return from a plain dict to
+`Command(update={...}, goto=[Send("search_web_for_courses", {...}) for q in plan.search_queries] or "merge_known_and_found_courses")`,
 folding what `_dispatch_search_queries` currently does for the replanner path
-into the node itself. Remove `"replanner"` as a source of
+into the node itself. Remove `"plan_gap_search"` as a source of
 `add_conditional_edges(..., _dispatch_search_queries, ...)` in
 `research_graph.py`, since `Command.goto` now owns that routing. Leave
-`research_planner`'s path on the existing conditional-edge pattern unchanged,
+`plan_web_search`'s path on the existing conditional-edge pattern unchanged,
 so the article can show both side by side — same routing decision, two
 different LangGraph mechanisms.
 
@@ -430,25 +456,25 @@ This is the largest single change in this phase — new node, new edge, new CLI
 resume path.
 
 - `validation/nodes.py`: add `low_confidence_check_node`. Reached when
-  `enough_valid()` would otherwise fall through to `course_cache_upsert` with
+  `enough_valid()` would otherwise fall through to `save_verified_courses` with
   zero valid courses and the iteration budget exhausted. Calls
   `answer = interrupt({"reason": "no_valid_candidates", "rejected_count": ..., "uncertain_count": ...})`
   and returns a routing outcome based on the human's answer (`"broaden"` →
-  back to `replanner` with relaxed constraints noted in `research_notes`,
-  anything else → proceed to `course_cache_upsert`/`synthesizer` as today).
+  back to `plan_gap_search` with relaxed constraints noted in `research_notes`,
+  anything else → proceed to `save_verified_courses`/`rank_and_summarize_courses` as today).
 - `research_graph.py`: `enough_valid()` gets a third branch
   (`"low_confidence_check"`) for the exhausted-and-zero-valid case, distinct
-  from today's silent "exhausted → `course_cache_upsert` with a limitation
+  from today's silent "exhausted → `save_verified_courses` with a limitation
   note" path. **Decide explicitly which of these two behaviors replaces the
   other** — don't leave both, or the exhausted-budget case becomes
   non-deterministic between two different outcomes.
 - `cli.py`: the current resume loop only knows how to resume the static
-  `review_gate` interrupt (`update_state` + `ainvoke(None, config)`). A
+  `await_human_review` interrupt (`update_state` + `ainvoke(None, config)`). A
   dynamic `interrupt()` elsewhere needs `graph.get_state(config).next` to
   detect *which* node is paused, and resumes via
   `graph.ainvoke(Command(resume=answer), config)` — a different resume call
   than the static gate uses. This must not create any path that reaches
-  `publish_node` without passing through `review_gate` — verify the graph
+  `send_approved_courses` without passing through `await_human_review` — verify the graph
   topology still forces that after this node is inserted.
 
 ### Step 32 — OpenRouter as the single LLM gateway (§8.1, §8.2)
@@ -487,13 +513,13 @@ called repeatedly within a single run — once per `PUBLISH`/`REWRITE`/
 `AUGMENT`/`RESET`/`DISCARD` review round-trip — so it's the most honest
 "shared quota under repeated calls" example.
 
-### Step 34 — Hand-rolled guardrail around `synthesizer` (§8.5)
+### Step 34 — Hand-rolled guardrail around `rank_and_summarize_courses` (§8.5)
 
 **Files:** new `course_discovery/research_agent/synthesis/guardrails.py`,
 `course_discovery/research_agent/synthesis/nodes.py`, new
 `tests/test_guardrails.py`
 
-Only `synthesizer` both consumes content that traces back to untrusted
+Only `rank_and_summarize_courses` both consumes content that traces back to untrusted
 external search results (`course.description`/`evidence`, built from mock
 Tavily snippets) *and* produces user-facing output — the one real
 injection-surface + leak-surface node, per the mismatch note above. PII redaction
@@ -529,7 +555,7 @@ the substance of the section, not a gap in it.
 Replace the initial `await graph.ainvoke(...)` with
 `async for mode, chunk in graph.astream(initial_state, config, stream_mode=["updates"]): ...`,
 printing the completed node name as each update lands. After the stream ends
-(graph either hit `review_gate` or finished), call `graph.get_state(config)`
+(graph either hit `await_human_review` or finished), call `graph.get_state(config)`
 to get the values snapshot the existing interrupt/resume logic already reads
 — keep that logic untouched, this step only changes how progress is surfaced
 before the first pause.
@@ -545,5 +571,34 @@ Add to the existing test scope (`specs/PROPOSED_TESTING.md`):
   succeeds on the Nth attempt, `research_notes` stays empty (no false
   degradation note written for a retried-then-succeeded call).
 - Dynamic `interrupt()` test from Step 31: a run with zero valid courses and
-  exhausted budget pauses at `low_confidence_check`, not at `review_gate`
-  directly, and `Command(resume=...)` reaches `synthesizer` correctly.
+  exhausted budget pauses at `low_confidence_check`, not at `await_human_review`
+  directly, and `Command(resume=...)` reaches `rank_and_summarize_courses` correctly.
+
+---
+
+## Phase 2 — Status as of 2026-09-30
+
+Outcome per step, checked against the code. Article-side status lives in `ARTICLE_TODO.md`.
+
+| Step | Outcome |
+|---|---|
+| 23 `extracted_candidates` reducer | Not applied: `AgentState.extracted_candidates` is still a plain list. `ARTICLE_TODO.md` records the correction. Whether a 2+ query fan-out really raises `InvalidUpdateError` is unverified; the regression test in Step 37 would settle it. |
+| 24 `input_schema`/`output_schema` | Not implemented. |
+| 25 `durability=` | Not in the code; only tested in the integration suite. |
+| 26 `recursion_limit` | Done (`RECURSION_LIMIT` in `app/cli.py`). |
+| 27 `timeout=` on the search node | Superseded: `add_node` has no such parameter. Timeouts live in the clients (`resilience.py`). |
+| 28 `RetryPolicy` on the search worker | Done and extended to read-only and idempotent nodes; the env-gated fault injector was replaced by test patching (`tests/test_retries.py`). |
+| 29 `CachePolicy` | Not implemented, by design: this topology does not produce same-input reruns. |
+| 30 `Command` in `plan_gap_search` | Not implemented; conditional edges own the routing. |
+| 31 dynamic `interrupt()` | Not implemented; `interrupt_before` is the only pause. |
+| 32 OpenRouter gateway | Done (`app/llm.py`). |
+| 33 rate limiter on the router | Done (`review/router.py`). |
+| 34 guardrail | PII redaction done through Presidio (`guardrails/`, `pii_redaction/`). The prompt-injection check is not implemented. |
+| 35 tracing | Superseded: direct OpenTelemetry (`observability/`) instead of the LangSmith route. |
+| 36 `stream_mode` | Done (`updates` and `custom` in `app/cli.py`). |
+| 37 tests | Partly done; see `tests/`. |
+
+Work added after this plan, described in `CLAUDE.md` and `ARTICLE_TODO.md`: Postgres
+checkpointing, encryption at rest, `run_threads` and per-user erasure, thread ownership
+checks, the declared PII data-flow check, the `EffectGateway` outbox and worker, and the
+OpenTelemetry metrics.
