@@ -182,15 +182,30 @@ A checkpoint records the graph's state at a superstep boundary. Everything below
 
 A checkpoint lands after every completed superstep. On resume, finished nodes are not re-run; only the interrupted node restarts from the top of its function. That gives you exactness between nodes and nothing inside one: an LLM call and a database write in the same function body are one atomic, uncheckpointed unit.
 
-The checkpointer is a pluggable backend chosen at compile time (`AsyncPostgresSaver` or `MemorySaver`); checkpointing is then automatic. A subgraph without its own checkpointer inherits the parent's, so its internal steps are persisted too, under a runtime namespace you must discover, not construct from the thread ID.
+The checkpointer is a pluggable backend:
+
+```python
+# compile-time: pick your backend
+checkpointer = AsyncPostgresSaver(...) if DATABASE_URL else MemorySaver()
+graph = builder.compile(
+    checkpointer=checkpointer,
+    interrupt_before=["review_gate"],
+)
+# run-time: checkpointing is automatic
+result = await graph.ainvoke(input, {"configurable": {"thread_id": "..."}})
+```
+
+A subgraph without its own checkpointer inherits the parent's, so its internal steps are persisted too, under a runtime namespace you must discover, not construct from the thread ID.
 
 ### 5.2 Durability modes
 
 The framework offers three write policies. `"sync"` writes before every step: the safest, at the cost of a dozen or so I/O operations per run. `"exit"` flushes only when the graph finishes or raises: the fewest writes, but a hard kill loses everything. `"async"` writes in the background without waiting for the checkpoint to land.
 
 ```python
-await graph.ainvoke(input, config, durability="sync")   # safest, slowest
-await graph.ainvoke(input, config, durability="exit")   # fastest, no mid-run recovery
+# "sync" — safest, slowest
+await graph.ainvoke(input, config, durability="sync")
+# "exit" — fastest, loses granularity on hard kill
+await graph.ainvoke(input, config, durability="exit")
 ```
 
 These are not just performance levels. Under `"exit"`, a process killed during a node leaves no checkpoint and the run restarts from scratch; under `"sync"` the same kill preserves prior work and the resumed process skips completed nodes. `"async"` can't be tested for a hard kill, since whether the last background write lands is a race. For ordinary exceptions all three behave identically, because the exception is itself a superstep boundary.
@@ -213,10 +228,12 @@ Not every replay difference matters. A `now()` stamp that differs between a run 
 
 ```python
 @task
-def parse_candidate(raw: dict) -> CourseCandidate: ...
+def parse_candidate(raw: dict) -> CourseCandidate:
+    ...
 
 async def extract_node(state: AgentState):
-    candidates = [parse_candidate(r) for r in state.results]  # short-circuits on resume
+    # on resume these short-circuit instead of re-calling parse_candidate
+    candidates = [parse_candidate(r) for r in state.results]
 ```
 
 It narrows the window between a call and its effect without closing it: the memo is written asynchronously, so a hard kill can still run the function twice, and matching is by name and call position, not arguments, so a changed argument returns stale data. It does not cross subgraph boundaries, is scoped to a superstep (a replan loop gets fresh executions), and the stored result must deserialize, so a return type outside the msgpack allowlist (§10.2) comes back as a plain dict. These were observed on langgraph 1.1.2, and the subgraph case has no identified mechanism, so reproduce it before relying on it. The reliable seam is still the node boundary (§5.3).
@@ -229,7 +246,17 @@ The cause is documented. Subgraph task IDs derive from the parent checkpoint ID,
 
 Flattening the graph fixes it at the cost of exposing internal topology. Within the framework, the options are partial:
 
-- **State-based dedup.** The worker short-circuits when its query is already in a reducer-backed `completed_queries` list. It avoids the expensive call, not the scheduling.
+- **State-based dedup.** The worker short-circuits when its query is already in a reducer-backed `completed_queries` list, avoiding the expensive call but not the scheduling:
+
+```python
+def search_worker(state: AgentState, config):
+    query = state["active_search_query"]
+    if query in state.get("completed_queries", []):
+        return {}  # already done, skip
+    results = search(query)
+    return {"tavily_results": results, "completed_queries": [query]}
+```
+
 - **`checkpointer=True` on the subgraph.** State accumulates across calls, but an interrupted node still re-executes, and per-thread subgraphs collide under a parallel `Send` fan-out.
 - **Interrupt before the subgraph, not inside it.** The subgraph runs atomically and the reviewer judges the whole result, at the cost of mid-pipeline visibility.
 
@@ -240,13 +267,24 @@ None closes the gap to a flat graph's node-level skip, because the namespace its
 Every checkpoint records one thread's state, which is what makes interrupt, resume and replay work. It is not long-term memory: it lasts as long as that thread's checkpoints do.
 
 ```python
+# checkpointer — thread-scoped, wired at compile time, invisible to nodes
+graph = builder.compile(checkpointer=checkpointer)
+
+# store — cross-thread, requires explicit reads and writes in node code
+store.get(("user_prefs", user_id), "profile")
+store.put(("user_prefs", user_id), "profile", {"goal": new_goal})
+```
+
+The `Store` is compiled in beside the checkpointer:
+
+```python
 graph = builder.compile(checkpointer=checkpointer, store=store)
 
 def update_profile(state: AgentState, *, store: BaseStore):
     store.put(("user_prefs", state["user_id"]), "profile", {"goal": new_goal})
 ```
 
-Cross-thread memory (profiles, preferences, accumulated history) belongs in the `Store`, keyed by namespace instead of thread. The key distinction: the checkpointer is implied by the graph and invisible to node code, while the `Store` is explicit reads and writes. Two threads for the same user read the same item, where the checkpointer gives each its own history.
+Cross-thread memory (profiles, preferences, accumulated history) belongs in the `Store`, keyed by namespace instead of thread. A node receives it only if it asks. The key distinction: the checkpointer is implied by the graph and invisible to node code, while the `Store` is explicit reads and writes. Two threads for the same user read the same item, where the checkpointer gives each its own history.
 
 Worth naming: a `Store` write from a node is an effect, and replay re-runs it. `put` is an upsert, so it is replay-safe when the value derives from checkpointed state and unsafe when the node reads a counter and writes it back incremented (§6.1), and it shares no transaction with the checkpoint (§6.2). A plain table keyed by user does the same job, and is often better when the profile needs joins or a transaction with domain data. The `Store` earns its place through namespacing, an optional embedding index, and one backend shared with the checkpointer. Retention is the other cost: the checkpointer keeps history until someone deletes it, and `Store` TTL is opt-in per item (§10.1).
 
@@ -261,6 +299,14 @@ The checkpointer resumes the graph. It does not make an external call happen onc
 A node that writes to a database and then completes checkpoints after the write. If the process crashes between the two, the resumed run re-executes the write, and unless the write is naturally idempotent the result is a duplicate. The first defense is a schema where every write can be applied twice:
 
 ```sql
+-- key by natural content identity, so replay finds the same row
+CREATE TABLE course_evidence (
+    course_id  UUID REFERENCES courses(id),
+    source_url TEXT,
+    -- ON CONFLICT (course_id, source_url) DO UPDATE
+);
+
+-- or use a derived idempotency key that is stable across replays
 CREATE TABLE recommendation_events (
     idempotency_key TEXT PRIMARY KEY,  -- "{run_id}:{course.url}"
     -- ON CONFLICT (idempotency_key) DO NOTHING
@@ -278,7 +324,8 @@ The second defense is to fail closed. A write that hits an unexpected error prop
 Not every effect can be made idempotent at the database: an email, a payment, or a third-party API without idempotency keys. The alternative is not to call the external system from the node at all. Nodes call an internal gateway that records an intention:
 
 ```python
-gateway.submit(Effect(key=f"{run_id}:publish_digest", kind="publish_digest", payload=digest))
+# inside a node — never touches the external system
+gateway.submit(Effect(key=f"publish:{run_id}", kind="publish_digest", payload=digest))
 ```
 
 The key derives from the run identifier, so replay re-submits the same key and the store ignores it (`ON CONFLICT DO NOTHING`). The node's job shrinks to recording an intention, and delivery becomes someone else's problem, swappable from an in-process adapter in development to a database outbox with a worker in production.
@@ -312,8 +359,14 @@ What the outbox approximates by hand (deterministic keys, leased rows, a worker 
 A node fails, and three mechanisms answer three different failure classes. `RetryPolicy` handles "the call failed": a transient error (timeout, connection reset, rate limit, server error) that might succeed if tried again. It belongs on the node at `add_node` time, not in the function body:
 
 ```python
+from langgraph.types import RetryPolicy
+
 retry = RetryPolicy(
-    max_attempts=3, initial_interval=0.5, backoff_factor=2.0, jitter=True,
+    max_attempts=3,
+    initial_interval=0.5,
+    backoff_factor=2.0,
+    max_interval=8.0,
+    jitter=True,
     retry_on=is_transient,  # timeouts, connection errors, 408/425/429/5xx
 )
 builder.add_node("search_worker", worker_fn, retry_policy=retry)
@@ -332,9 +385,14 @@ The contrast to hold: `RetryPolicy` means "the call failed"; a replanning loop m
 langgraph 1.1.2 has no per-node `timeout=` on `add_node`. Timeouts belong in the client the node calls, at the three boundaries where a graph touches an external system:
 
 ```python
-ChatOpenRouter(..., request_timeout=30_000)                      # LLM
-results = await asyncio.wait_for(client.search(query), timeout=10)  # network
-f"{db_url}?connect_timeout=5&options=-c statement_timeout=15000"    # database
+# LLM call — passed to the chat client constructor
+ChatOpenRouter(..., request_timeout=30_000)
+
+# Network call — wrapped around the async I/O
+results = await asyncio.wait_for(client.search(query), timeout=10)
+
+# Database — connect and statement timeouts in the connection string
+f"{db_url}?connect_timeout=5&options=-c statement_timeout=15000"
 ```
 
 A timeout on a network call raises `TimeoutError`, which a `RetryPolicy` with a timeouts-and-connection-errors classifier catches. The timeout wraps the call, not the node.
@@ -506,10 +564,17 @@ The check runs twice: at the queue boundary, so a doomed run is requeued instead
 The outbox (§6.2) gives an effect a stable key and a separate delivery worker. With several workers, the claim needs coordination, and the database does it: rows are claimed atomically under a time-limited lease.
 
 ```sql
-SELECT id FROM outbox
-WHERE status = 'queued' AND (locked_until IS NULL OR locked_until < now())
-ORDER BY created_at LIMIT 10
-FOR UPDATE SKIP LOCKED
+UPDATE outbox
+SET    worker_id = :worker, locked_until = now() + interval '30 seconds'
+WHERE  id IN (
+    SELECT id FROM outbox
+    WHERE  status = 'queued'
+       AND (locked_until IS NULL OR locked_until < now())
+    ORDER BY created_at
+    LIMIT 10
+    FOR UPDATE SKIP LOCKED
+)
+RETURNING *;
 ```
 
 A worker that crashes leaves an expired lease for the next poll to reclaim, and attempts counted at claim time push a repeatedly crashing row toward the dead-letter threshold. The cost is visible in one failure: a handler that outlives its lease can be claimed by a second worker while the first is still running. Delivery is at-least-once, so the consumer of the effect must be idempotent.
