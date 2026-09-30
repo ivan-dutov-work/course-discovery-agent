@@ -484,6 +484,10 @@ Two behaviours are easy to get wrong. An invalid model ID is not a fallback trig
 
 The argument for a gateway isn't fallback, which `.with_fallbacks()` gives you in-process. It is one bill, one rate-limit surface, and per-key spend caps across providers. The cost is a hop through a third party: every prompt now transits it, which matters for §10.1.
 
+LiteLLM is the self-hosted version of the same idea, and it comes in two shapes that are easy to conflate. The SDK (`langchain-litellm`: `ChatLiteLLM`, `ChatLiteLLMRouter`) is a library inside your process: routing and fallback with no new service, and no shared state between workers. The Proxy is a standalone service that speaks the OpenAI protocol; LangChain reaches it through a plain `ChatOpenAI` pointed at its URL, so the graph again sees one chat model and never learns that a gateway exists. Keys, spend tracking and rate limits live in the Proxy, which is what makes it the usual production choice.
+
+Worth being precise about what that choice buys. A hosted gateway is someone else's operations; the Proxy is yours. In production use it behaves like a project that is still moving fast: it has a long tail of open issues, spend and cached-token accounting has been the roughest edge, upgrades need to be read rather than applied, and its configuration needs hands-on management. Scaling it past one instance adds infrastructure: Redis for the shared state (rate-limit counters, routing and cooldown state, spend caches) that several Proxy instances have to agree on. None of this touches the graph, which is the point of the abstraction, but the bill for "one rate-limit surface" is an extra stateful service to run. The practical decision rule: take the hosted gateway until a data-residency or cost-control requirement forces the self-hosted one, and budget for operating it when it does.
+
 ### 8.3 Rate limiting
 
 Chat models accept a `BaseRateLimiter` through `rate_limiter=`, which smooths the rate at which calls start. The limiter has to outlive the call: one built per call never sees the previous one, so the instance lives at module level and is shared by every node drawing on the same quota. Two boundaries: `InMemoryRateLimiter` is a token bucket inside one process and knows nothing about a second worker, so cross-process limiting belongs at the gateway or provider account; and it limits the rate of *starting* calls, saying nothing about whether they succeeded, which is the retry question in §7.1.
@@ -713,7 +717,16 @@ A `thread_id` is a capability, not an identity. Whoever presents it can read the
 
 The consequence is sharper than reading another user's run. A review gate exists so no run reaches its effect without approval, and approval is just state: an `update_state` call that writes the reviewer's decision, which a router turns into a publish. Whoever can write that field can open the gate. The interrupt stops the graph from proceeding on its own; it says nothing about who may answer it.
 
-The check goes outside the graph, in the layer that calls it: compare the authenticated caller with the thread's recorded owner before any `get_state`, `update_state` or resume, or derive the thread ID server-side so it can't be supplied. It cannot live in a node, because a node only runs after the decision to resume has been made. A single-user tool can skip it; a multi-user one can't, and LangGraph won't remind you.
+The check goes outside the graph, in the layer that calls it: compare the authenticated caller with the thread's recorded owner before any `get_state`, `update_state` or resume, or derive the thread ID server-side so it can't be supplied. It cannot live in a node, because a node only runs after the decision to resume has been made.
+
+The owner record needs a home the checkpointer doesn't provide. Erasure already forced one: an application table mapping each `thread_id` to its user, written when the run starts (§10.1). The same table answers the access question. A guard in front of the resume path looks the thread up, compares the owner with the caller, and refuses before `update_state` writes anything:
+
+```python
+authorize_thread(user_id, run_id)
+await graph.aupdate_state(config, {"manager_feedback": feedback})
+```
+
+Two details matter more than the comparison. An unknown thread and someone else's thread raise the same error, so the guard can't be used to probe which IDs exist. And registering an ID that is already taken keeps the original owner: a caller who guesses or replays a `thread_id` gets no ownership from it. The cost is that the check is only as strong as the caller's identity, which the graph never sees, and that it runs on the paths that call it: a second entry point that skips the guard reopens the gate. A single-user tool can skip all of this; a multi-user one can't, and LangGraph won't remind you.
 
 ---
 

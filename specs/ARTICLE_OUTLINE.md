@@ -371,8 +371,10 @@ bill, one rate-limit surface and per-key spend caps, not fallback per se. The
 fallback path was asserted in the outgoing request payload but never triggered
 live; say so. LiteLLM has two shapes: SDK in-process (`ChatLiteLLM`,
 `ChatLiteLLMRouter`) vs. Proxy as a standalone gateway service; Proxy is the
-common production pattern and spend/cache-token billing accuracy is a known
-rough edge.
+common production pattern, but it is a fast-moving project: many open issues,
+hands-on configuration, spend/cache-token accounting as the roughest edge, and
+Redis as extra infrastructure once more than one instance runs. Decision rule:
+hosted gateway until a residency or cost-control requirement forces self-hosting.
 
 **8.3 Rate limiting** `[cost]` `[reliability]`
 
@@ -465,7 +467,9 @@ A `thread_id` is a bearer capability. `update_state` on `manager_feedback` can
 open the publish gate that `interrupt_before` guards, so whoever can resume can
 approve. The check belongs in the application layer (compare the authenticated
 caller with the thread's stored `user_id`, or derive the thread id server-side).
-Not implemented; the CLI has one user.
+Built as `authorize_thread` over the `run_threads` table, called before
+`update_state` in the CLI; unknown and foreign threads raise the same error, and
+re-registering a taken id keeps the owner. Skipped when there is no registry.
 
 ---
 
