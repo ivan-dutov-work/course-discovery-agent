@@ -535,9 +535,11 @@ each is verified against the repo patterns.
       text rather than cited as fact, per the unverified note here.)*
   - The checkpointer and `Store` are literally a database of user state — whatever
     PII flows through `AgentState` (queries, `UserMemory` fields) gets persisted at
-    every superstep. No built-in TTL, redaction, or right-to-erasure primitive;
-    deleting a user's data means writing `DELETE WHERE thread_id=...` /
-    `store.delete(...)` yourself. One explicit line in the Store-vs-checkpointer
+    every superstep. No built-in TTL or redaction. `adelete_thread(thread_id)` is the
+    erasure primitive for checkpoints, but nothing maps a user to their threads
+    (`thread_id` is opaque, and with encryption the user is unreadable in the blob), so
+    the app owns that index: `run_threads` + `privacy/erasure.py`. `Store` has
+    `TTLConfig`; the checkpointer does not. One explicit line in the Store-vs-checkpointer
     section: "this durability is also a retention liability you now own."
   - The actual compliance lever sits one layer down, at the model-provider boundary —
     ZDR flags, DPAs, which region processes the request. Invisible to LangGraph
@@ -548,17 +550,37 @@ each is verified against the repo patterns.
     controls, which are a different guarantee (not-logging vs. detecting/stripping
     PII). Don't conflate them in the article.
 
+- [x] **Encryption at rest and erasure, verified against real Postgres**
+      *(`persistence/encryption.py`, `privacy/`, `tests/test_encryption.py`,
+      `tests/test_erasure.py`.)*
+  - `EncryptedSerializer` alone is not enough: `AsyncPostgresSaver.aput` inlines
+    `str`/`int`/`float`/`bool`/`None` channel values as plaintext JSON in
+    `checkpoints.checkpoint`, so `user_id`, `digest`, `manager_feedback` stayed readable.
+    `test_stock_saver_with_encrypted_serde_leaves_inline_strings_plaintext` pins this;
+    the fix is `SealingSaver`, a wrapper over the public `BaseCheckpointSaver` methods, so it
+    works over any saver and does not touch Postgres-saver internals. Metadata JSONB is
+    still plaintext. `prune_checkpoints` lists stale threads from `run_threads.last_activity_at`
+    (migration `006`) instead of querying the saver's tables, so it only sees registered threads.
+  - Placement matters more than the library: input is checkpointed before any node runs,
+    so redacting inside the gateway node leaves raw PII in every checkpoint
+    (`CheckpointPlacementTests`: 17 of 17 checkpoints leaked vs 0).
+  - Design alternative not built: per-user keys (crypto-shredding), which would make
+    erasure a key deletion and remove the need to find every row.
+
 ## Security / guardrails — same wrap-the-Runnable shape as fallback
 
 - [ ] LangChain/LangGraph core has no native prompt-injection or PII-guardrail
       primitive. Reuse the fallback section's framing: a guardrail is a function
       wrapped around a call, not a graph feature — the graph decides which node runs
       next, not what happens inside a call.
-- [ ] **Concrete choice for this repo's example: an in-process library, not an
-      external API** (Presidio or `llm-guard` — local classifier/rules, no network
+- [x] **Concrete choice for this repo's example: an in-process library, not an
+      external API** *(Implemented in `pii_redaction/` (standalone package behind a `Redactor` protocol) and `course_discovery/guardrails/pii.py` (app-side port): Presidio
+      analyzer + anonymizer with `en_core_web_sm`, applied at CLI ingress, gateway,
+      `record_feedback`, and log/error masking. Score threshold 0.4 because Presidio's
+      phone recognizer scores 0.4. Known trade-off: instructor names are redacted.)* (Presidio or `llm-guard` — local classifier/rules, no network
       hop, no new data-sharing surface). Show the general wrap shape, then this one
       concrete instantiation.
-- [ ] **Add an integration test asserting the guardrail actually catches a known
+- [x] **Add an integration test asserting the guardrail actually catches a known
       case** (a canned prompt-injection string or PII pattern) — not just that it's
       wired in, but that it reliably fires. This is the difference between "we added
       a library" and "we verified the mechanism works."
