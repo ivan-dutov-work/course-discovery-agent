@@ -8,16 +8,18 @@ implemented and `BACKLOG.md` what is next; this file holds the shape.
 
 The graph is a workflow with LLM decision points, not a free-running agent. Code
 owns the control flow: the node sequence, the fan-out, the loop bound and the
-human pause are all fixed at compile time. The model never chooses its own tools,
-its own step count or its own stopping point.
+human pause are all fixed at compile time. The one exception is `curate_user_memory`,
+a bounded tool loop after the run ends (below): there the model picks which of four
+tools to call next, inside a step cap, and can only propose, never write.
 
-Three nodes call an LLM, each through `build_llm()`:
+Four nodes call an LLM, each through `build_llm()`:
 
 | Node | What the model decides | Bound on the decision |
 |---|---|---|
 | `parse_user_request` | Which structured filters a free-text query implies | Pydantic schema; rule-based parser as fallback |
 | `interpret_review_feedback` | Which of five routes free-text reviewer feedback selects | Closed `RoutingAction` enum; runs only after the human pause |
 | `rank_and_summarize_courses` | Wording and ranking highlights of the digest | Template fallback; ranks only courses already validated |
+| `curate_user_memory` | Which stored preferences the review feedback implies, if any | Closed tool set, `MAX_CURATOR_STEPS` (4), validated patch, only `commit` writes; skipped without a key |
 
 Everything else is deterministic, including planning, extraction and validation.
 Worth naming: the planner decides "cache or web" with a threshold on the cache hit
@@ -30,11 +32,11 @@ would keep the same bounds (`max_research_iterations`, validation before synthes
 ```
 parse_user_request ──ok──▶ course_research ──▶ [interrupt] await_human_review ──▶ interpret_review_feedback
         │                                                                                   │
-        └─error─▶ discard_run ─▶ record_review_outcome ─▶ END                               ├─ PUBLISH ─▶ send_approved_courses ─▶ record_review_outcome ─▶ END
+        └─error─▶ discard_run ─▶ record_review_outcome ─▶ curate_user_memory ─▶ END          ├─ PUBLISH ─▶ send_approved_courses ─▶ record_review_outcome ─▶ curate_user_memory ─▶ END
                                                                                             ├─ REWRITE ─▶ course_research
                                                                                             ├─ AUGMENT ─▶ course_research
                                                                                             ├─ RESET   ─▶ parse_user_request
-                                                                                            └─ DISCARD ─▶ discard_run ─▶ record_review_outcome ─▶ END
+                                                                                            └─ DISCARD ─▶ discard_run ─▶ record_review_outcome ─▶ curate_user_memory ─▶ END
 ```
 
 `interrupt_before=["await_human_review"]` is always compiled in. Nothing publishes
@@ -74,6 +76,7 @@ One responsibility each. "Rules" means deterministic code with no model call.
 | `interpret_review_feedback` | Map reviewer feedback to one routing action and append the redacted feedback to `feedback_history` | LLM, rule fallback |
 | `send_approved_courses` | Submit the publish effect through `EffectGateway` with a key derived from `run_id` | side effect |
 | `record_review_outcome` | Record accept or reject events for the user, with the whole `feedback_history` as the text; runs after publish and after discard | DB write |
+| `curate_user_memory` | Turn the review feedback into a validated patch to the stored profile (subgraph, below); writes only the `memory_update` status channel | subgraph, LLM |
 | `discard_run` | End the run as discarded, with a reason | terminal |
 
 ### Research subgraph
@@ -94,6 +97,39 @@ One responsibility each. "Rules" means deterministic code with no model call.
 
 Evidence rule: a missing piece of evidence yields `uncertain`, never `valid`.
 
+### Memory curator subgraph
+
+```
+load_context ─┬─ nothing to learn ─▶ END
+              └─▶ curator_model ─┬─ tool calls ─▶ run_tools ─┬─ finish, cap or failure ─▶ commit ─▶ END
+                      ▲          └─ LLM error ───────────────┤
+                      └─────────────── more steps ───────────┘
+```
+
+Compiled with its own `input_schema` (five shared channels) and `output_schema` (only
+`memory_update`), so its private channels (`messages`, `steps`, `proposals`, ...) never reach the
+parent and the shared reducer channel `feedback_history` is not echoed back and double-counted.
+
+| Node | Responsibility | Kind |
+|---|---|---|
+| `load_context` | Redact the feedback lines again; skip (status `skipped:*`) when there is no user, no feedback beyond bare approvals, no key, or the run was already applied | rules |
+| `curator_model` | Choose the next tool call; an LLM error ends the loop with `failed:llm_error` | LLM |
+| `run_tools` | Execute `read_profile`, `read_run_events`, `propose_patch`, `finish`; validation errors go back to the model as text | rules |
+| `commit` | Merge the accepted proposals, stamp notes with `run_id` and time, write through `save_user_memory`; a cap or no `finish` writes nothing | DB write, `RetryPolicy` |
+
+- The user id and run id come from state; no tool takes either, so feedback text cannot aim a
+  write at another user.
+- `propose_patch` is refused before `read_profile`, refuses fields without a consumer
+  (`career_goals`, `learning_style_notes`), refuses unknown fields and
+  top-level extras, and never stores `this_run` or `not_a_preference`. A `topic:<x>` scope takes
+  notes only and stamps the scope.
+- Idempotent per `run_id`: the claim row in `memory_updates` (also the audit trail, holding the
+  redacted patch) is inserted in the same transaction as the profile write, under the
+  `user_preferences` row lock.
+- LLM failures degrade (`memory_update = failed:*`, `record_degradation("curator", ...)`) and never
+  fail the run; a database failure in `commit` raises, and `RetryPolicy` retries it safely
+  because of the claim row.
+
 ## Cache lookup
 
 `find_known_courses` embeds `filters.topic` and ranks cached courses by cosine similarity to
@@ -103,14 +139,28 @@ completed, rejected, avoided provider) are unchanged.
 - Embedder: `research_agent/embeddings/`, a port (`dimension`, `embed`) with a local
   `HashingEmbedder` default: feature-hashed word and word-pair counts into 1536 dimensions,
   L2-normalised, no network. It is lexical, not semantic: it matches shared words, not meaning.
-  Level, price and certificate words (`free`, `beginner`, `certificate`, ...) are ignored,
-  because they are separate filters and would otherwise match unrelated courses.
-- Floor: `MIN_TOPIC_SIMILARITY = 0.12`. Below it a course is dropped. Rows with a `NULL`
+  `EMBEDDER=openrouter` selects `OpenRouterEmbedder` (`/embeddings`, `dimensions=1536`, batches
+  of 100). The floor is a property of the embedder (`topic_floor`, fitted separately for each);
+  the weights are shared. After a switch, run `embeddings backfill --all`; after changing the model,
+  rerun `scripts/calibrate_topic_floor.py` and set `EMBEDDING_TOPIC_FLOOR` and
+  `EMBEDDING_RELATIVE_CUTOFF`.
+  Level, price and certificate words (`free`, `beginner`, `certificate`, ...) are removed from the
+  topic and from the stored course text before embedding (`embeddings/facets.py`), because they
+  are separate filters and would otherwise match unrelated courses.
+- Floor: `topic_floor()`, read from the embedder: 0.12 for `HashingEmbedder`, 0.22 for
+  `OpenRouterEmbedder` on `openai/text-embedding-3-small` (`EMBEDDING_TOPIC_FLOOR` overrides it;
+  an embedder without the attribute gets `MIN_TOPIC_SIMILARITY = 0.12`). Below it a course is
+  dropped. After the floor, `topic_relative_cutoff()` drops courses scoring below that fraction of
+  the best remaining similarity: 0.70 for `OpenRouterEmbedder` (`EMBEDDING_RELATIVE_CUTOFF`), none for
+  `HashingEmbedder`, whose scores are not compressed and lose recall under it (SQL: a `matched`
+  CTE, so the best is taken over courses that already pass the facet filters). Rows with a `NULL`
   embedding (written before the embeddings existed) skip the floor and sort last until
-  `python -m course_discovery.research_agent.embeddings backfill` fills them. A topic with no
+  `python -m course_discovery.research_agent.embeddings backfill` fills them (`--all` re-embeds
+  every row, needed after the stored text or the model changes). A topic with no
   content words (only facet words) skips the floor and similarity ordering.
 - Score: `0.7 * similarity + 0.2 * validation_confidence + 0.1 * min(use_count, 10) / 10`,
-  descending, ties by `id`. The weights are a choice, not a fit; only the floor was calibrated.
+  descending, ties by `id`. The weights were checked, not fitted: ordering quality is flat across
+  the range tried on both embedders, with 0.7 / 0.2 / 0.1 at or tied for the best (`DECISIONS.md`).
 - Write side: `upsert_courses` stores the embedding of title, description and the row's stored
   `topics` in the same transaction as the row. `topics` describes the course and is never
   derived from the user's query, so nothing writes it yet and it is left untouched on conflict.
@@ -120,8 +170,14 @@ completed, rejected, avoided provider) are unchanged.
 - The planner's threshold on cache hit count (`min_valid = 3`) now counts topical hits.
 - The HNSW index (`migrations/007`) exists for a later nearest-neighbour pre-filter; the
   blended `ORDER BY` does not use it, and at this size a scan is fine.
-- A remote `Embedder` would receive the topic, which derives from the redacted query. Declare
-  it as a sink in `privacy/flow_specs.py` when adding one.
+- A remote `Embedder` receives the topic (from the redacted query), course text and the redacted
+  profile text; it is declared as a sink in `privacy/flow_specs.py`.
+- Profile tie-break: `save_user_memory` writes `user_preferences.profile_embedding` (career goals,
+  learning style, notes, level, preferred providers) in the save transaction; the cache query
+  returns `1 - cosine` as `CourseCandidate.profile_similarity`, and the seed path computes the
+  same from `UserMemory`. The vector never enters state. `_rank_courses` orders by preference
+  score, price, similarity rounded to 0.1, then rating. Web candidates have no stored
+  embedding and carry `None`, which ranks as 0.
 
 ## State and memory
 
@@ -133,8 +189,7 @@ Three stores, three lifetimes.
 - **User profile** (`user_preferences`, `recommendation_events`) is per-user and
   outlives runs. `load_user_profile` reads it at the start; `record_review_outcome`
   writes feedback events after publish or discard. `save_user_memory` is the one writer of
-  `user_preferences` (one transaction, row lock, merge); nothing in the graph calls it yet, the
-  curator (P5) will.
+  `user_preferences` (one transaction, row lock, merge); only the curator's `commit` calls it.
 - **`feedback_history`** is the one channel that keeps every review round (`manager_feedback`
   holds only the latest). It is outer-graph only: the research subgraph runs on
   `ResearchState`, which omits it, because a reducer channel that a subgraph shares is added to
@@ -152,11 +207,11 @@ Each of these is a stand-in that the article should name as such, not a finished
 design.
 
 1. **Courses have no topics.** The embedding sees only title and description, so a course
-   whose text lacks the topic word is missed (recall 0.72 against 0.81 with ideal tags on the
+   whose text lacks the topic word is missed (recall 0.75 against 0.81 with ideal tags on the
    mock catalog, `notes/05`). A course-side tagging step that fills `courses.topics` from the
    course's own content is not built (`BACKLOG.md`).
-2. **`profile_embedding` is provisioned but unused.** `course_embedding` is written and read;
-   the profile column is not. Fix: P4b.
+2. **The profile tie-break covers cache candidates only.** Web candidates have no embedding
+   and are not embedded on the fly, so they never get a profile bonus.
 3. **Deduplication is lexical.** URL, title+host hash and fuzzy title cannot merge the
    same course listed under different titles on different hosts.
 4. **Search and ingestion share the request path.** Discovery, extraction, validation
@@ -164,12 +219,11 @@ design.
    asynchronous ingestion pipeline (crawl, extract, validate, embed, deduplicate) from
    a request path that does hybrid retrieval first and falls back to web search only
    for thin coverage, feeding results back through ingestion.
-5. **Feedback is stored, not yet learned.** The profile has a writer (`save_user_memory`) and
-   consumers (budget and certificate defaults in `parse_user_request`; provider, level and
-   language boost and scoped notes in `rank_and_summarize_courses`; avoided providers and
-   rejected or completed URLs in the verifier and cache), and `feedback_history` carries every
-   round, but nothing turns feedback into a patch yet. `preferred_course_length` is stored and
-   read by nothing (P4c). Cases and design: `FEEDBACK.md`; fix: P5, P6.
+5. **Learned preferences are narrow and not yet checked against a live model.** The curator
+   writes only fields with a consumer: providers, level, language, budget, certificate,
+   rejected and completed URLs, and scoped notes. `career_goals` and `learning_style_notes` have
+   no consumer beyond the profile vector, so feedback about them is dropped, not stored. The stubbed-model tests pin the loop; how a real model behaves on the
+   case list is unmeasured (P6). Cases: `FEEDBACK.md`.
 6. **Reducer channels double-count across review rounds.** `tavily_calls`, `completed_queries`
    and `research_notes` are added to again each time `course_research` returns, so a REWRITE or
    AUGMENT round doubles them (measured 1, 2, 4; `article/notes/02`). Fix: backlog S1.

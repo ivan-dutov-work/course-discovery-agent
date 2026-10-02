@@ -47,7 +47,7 @@ load_user_profile
   -> rank_and_summarize_courses
 ```
 
-Without `DATABASE_URL` the graph checkpoints in memory. With it, the CLI checkpoints to Postgres (optionally AES-GCM sealed), the course cache and user memory live in Postgres, and publishing can go through an outbox worker (`EFFECT_GATEWAY=outbox`, `python -m course_discovery.effects`). Cache lookup ranks courses by topic similarity using stored embeddings (`course_embedding`; a local lexical `HashingEmbedder`, not a semantic model), and `python -m course_discovery.research_agent.embeddings backfill` fills rows written before that (`specs/ARCHITECTURE.md`, cache lookup).
+Without `DATABASE_URL` the graph checkpoints in memory. With it, the CLI checkpoints to Postgres (optionally AES-GCM sealed), the course cache and user memory live in Postgres, and publishing can go through an outbox worker (`EFFECT_GATEWAY=outbox`, `python -m course_discovery.effects`). Cache lookup ranks courses by topic similarity using stored embeddings (`course_embedding`; the default is a local lexical `HashingEmbedder`, not a semantic model; `EMBEDDER=openrouter` selects `OpenRouterEmbedder`), and `python -m course_discovery.research_agent.embeddings backfill` fills rows written before that (`specs/ARCHITECTURE.md`, cache lookup).
 
 ## Search is mocked
 

@@ -99,10 +99,24 @@ leave it and append a new one that says which it replaces and what changed.
   `Find free Python certificate beginners` ranked a web-design certification above the Python
   courses. Stopwords are removed after stemming (`beginners` first leaked through).
   (notes: 05-scale-and-scope.md)
-- **Topic floor 0.12; blend weights 0.7 / 0.2 / 0.1 are not fitted.** The floor is the last one
-  before recall drops (0.72 to 0.59) on the mock catalog, and precision is preferred because web
-  search fills a miss. The weights only order courses already past the floor. Refit both if the
-  embedder or the stored text changes. (notes: 05-scale-and-scope.md)
+- **The topic floor and relative cutoff belong to the embedder.** Hashing: floor 0.12, no relative
+  cutoff. `openai/text-embedding-3-small`: floor 0.22, relative cutoff 0.70 (keep courses scoring
+  at least 70% of the best remaining match). The hashing floor gave the real model precision 0.22,
+  because unrelated topics such as `cooking` score 0.06 to 0.18 against every course. Level, price
+  and certificate words are stripped from the topic and the stored course text for every embedder
+  (`embeddings/facets.py`); the real model had been matching `free certificate beginners` against
+  unrelated courses. On the mock catalog this took the real model from precision 0.68 / recall
+  0.89 to 0.84 / 0.86 (stripping the topic did all of it; stripping the course text changed
+  nothing measurable here). The relative cutoff adds little at the best floor (F1 0.849 to 0.861)
+  but removes the cliff: F1 stays at or above 0.849 for floors 0.19 to 0.24, against 0.61 to 0.82
+  without it, so the floor is set mid-plateau. It hurts hashing (F1 0.857 to 0.64), whose scores
+  are not compressed, hence per embedder. Blend weights 0.7 / 0.2 / 0.1 stay: they only order
+  courses past the floor and mean average precision is flat across the weights tried (real model
+  0.920 to 0.924, hashing 1.000). `confidence` and `use_count` have no ground truth in the
+  catalog, so that is a robustness check against random values, not a fit. Refit the floor and
+  cutoff if the model or the stored text changes, then `embeddings backfill --all`. The article
+  keeps "topic-aware", not "semantic": the real model reaches recall 0.86 against 0.75 for
+  hashing at precision 0.84 against 1.00, on 13 topics and 14 courses. (notes: 05-scale-and-scope.md)
 - **`ResearchPlan.cache_query` is removed.** The cache lookup runs before the plan exists and
   reads `filters.topic`. Checkpoints that still hold the field load, because the model ignores
   extra keys (test in `tests/test_checkpointer.py`). (notes: 01-state-and-control-flow.md)
@@ -115,6 +129,24 @@ leave it and append a new one that says which it replaces and what changed.
   markers are per channel, so nesting channels hides both from `flow_specs.py`. Fix the real
   redundancy (duplicate counters, budgets held as state) and try private schemas on new code
   first (the P5 curator). Backlog S1.
+- **The curator writes only fields a next-run consumer reads.** `career_goals`,
+  `learning_style_notes` and `preferred_course_length` are refused by `propose_patch`; free-text
+  preferences go into scoped notes, which the ranking prompt reads. Cases 5 and 6 of
+  `FEEDBACK.md` wait for P4c and for a consumer of goals.
+- **The curator reads the profile through a tool, not from preloaded context, and cannot
+  propose before it has.** A preloaded profile would make `read_profile` dead weight and the loop
+  a structured call in disguise; the refusal is what pins case 7's trace. Deviates from the
+  `load_context` description that listed `UserMemory` in `FEEDBACK.md`, which is amended.
+- **The curator is an isolated subgraph with `input_schema` and `output_schema`.** Its only
+  output is the `memory_update` status string. Returning the shared `feedback_history` would
+  add it to itself again (reducer echo). (notes: 01-state-and-control-flow.md)
+- **Memory-update idempotency is a claim row in the same transaction as the write.** One
+  `memory_updates` row per `run_id`, inserted `ON CONFLICT DO NOTHING` under the profile row
+  lock; a replay or a `RetryPolicy` retry of `commit` applies once. It doubles as the audit
+  trail and is erasable by `user_id`.
+- **Curator failures degrade, database failures raise.** An LLM error, cap hit or reply without
+  a tool call leaves the profile unchanged and never fails the run; a failed write in `commit`
+  re-raises, as every DB writer does. Bare approvals skip the model entirely.
 - **A profile vector never enters state.** `profile_embedding` (1536 floats) would land in every
   checkpoint and span; it is computed and applied inside the repository or node, and only the
   derived order reaches state. Backlog P4b.
@@ -122,6 +154,22 @@ leave it and append a new one that says which it replaces and what changed.
   stored budget and certificate defaults, because the profile is loaded inside the research
   subgraph, after parsing. Only the two scalar defaults are read, and they reach
   `search_filters`, never the LLM prompt.
+
+- **Profile similarity is a coarse tie-break, and web candidates are not embedded for it.**
+  The query returns a scalar (`profile_similarity`), never the vector, and `_rank_courses`
+  rounds it to 0.1 and places it after explicit preferences and price but before rating, because
+  a continuous score would never tie and would replace rating outright. Embedding web candidates
+  on the fly would add one remote call per candidate on the request path for a tie-break.
+  Refines the "profile vector never enters state" entry above.
+- **`preferred_course_length` is `short | medium | long`, not free text.** Up to 10 hours,
+  up to 40 hours, more. Free text such as "2h/week" has no comparison against a total duration,
+  and the curator model picks from three words reliably. Weekly effort is not a duration and is
+  ignored by the extractor. Supersedes the entry that kept the field unwritable.
+- **`OpenRouterEmbedder` sends `dimensions=1536`** so models with adjustable output fit the
+  fixed column; the default `openai/text-embedding-3-small` is natively 1536. A transient error
+  (transport, 429, 5xx) propagates unwrapped so `RetryPolicy` fires; anything else becomes
+  `EmbeddingError`. Vectors from different embedders are not comparable, so switching needs a
+  backfill.
 
 ## Compliance
 

@@ -47,7 +47,7 @@ class TavilyClient:
                 url=listing.url,
                 snippet=listing.snippet,
                 score=round(score, 3),
-                raw_metadata={"mock": True},
+                raw_metadata={"mock": True, "duration_hours": listing.duration_hours},
             )
             for score, listing in scored[:max_results]
         ]

@@ -18,6 +18,7 @@ from course_discovery.research_agent.memory import nodes as memory_nodes
 from course_discovery.privacy.flow import NodeFlow, Violation, check_flows, pii_seeds, propagate
 from course_discovery.privacy.flow_specs import EDGES, FLOWS
 from course_discovery.privacy.sources import NOT_USER_DATA, USER_DATA_SOURCES
+from course_discovery.memory_curator import build_curator_graph
 from course_discovery.workflows.outer_graph import build_graph
 from course_discovery.workflows.research_graph import build_research_graph
 
@@ -26,7 +27,11 @@ CHANNELS = set(AgentState.__annotations__)
 
 
 def _graph_nodes() -> set[str]:
-    names = set(build_graph().get_graph().nodes) | set(build_research_graph().get_graph().nodes)
+    names = (
+        set(build_graph().get_graph().nodes)
+        | set(build_research_graph().get_graph().nodes)
+        | set(build_curator_graph().get_graph().nodes)
+    )
     return names - {"__start__", "__end__"}
 
 
@@ -117,7 +122,7 @@ class DeclaredWritesMatchRunTests(unittest.IsolatedAsyncioTestCase):
                 for node, update in chunk.items():
                     if node.startswith("__") or not isinstance(update, dict):
                         continue
-                    if node == "course_research" and not namespace:
+                    if node in {"course_research", "curate_user_memory"} and not namespace:
                         continue
                     seen.setdefault(node, set()).update(update)
 

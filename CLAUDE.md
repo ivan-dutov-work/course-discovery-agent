@@ -53,6 +53,7 @@ course_discovery/
   research_agent/   memory, cache, planner, search, extraction, validator, synthesizer
   review/           review gate, feedback router, publish/discard nodes
   persistence/      Postgres adapter, checkpointer factory + msgpack allowlist, AES-GCM checkpoint encryption
+  memory_curator/   post-run tool loop that turns review feedback into a validated profile patch (subgraph `curate_user_memory`; only `commit` writes; idempotent per `run_id`)
   privacy/          thread registry (`run_threads`) and per-user erasure (`python -m course_discovery.privacy erase`)
                     plus a declared PII data-flow check (`flow.py`, `flow_specs.py`; `Pii` marker in `domain/pii.py`). Adding a node or state channel means updating `flow_specs.py`; `tests/test_flow_rules.py` fails otherwise
   effects/          EffectGateway port, outbox stores, worker (publish goes through here)
@@ -71,6 +72,7 @@ archive/            superseded docs, never read for context
 ```powershell
 $env:OPENROUTER_API_KEY   # DeepSeek V4.1 Flash (Gemini 2.5 Flash Lite fallback) for gateway/synthesis/router
 $env:DATABASE_URL     # Postgres+pgvector (in-memory seed cache if absent)
+$env:EMBEDDER         # hashing (default, offline) or openrouter (uses OPENROUTER_API_KEY; EMBEDDING_MODEL, default openai/text-embedding-3-small; EMBEDDING_TOPIC_FLOOR default 0.22 and EMBEDDING_RELATIVE_CUTOFF default 0.70 are fitted for that model only)
 ```
 
 No search API key is required — `search_web_for_courses` reads from the mock catalog.
@@ -90,7 +92,7 @@ export TEST_DATABASE_URL=postgresql://course:course@localhost:55432/course_disco
 uv run python -m unittest discover tests
 ```
 
-Without `TEST_DATABASE_URL` the integration tests skip. `docker-compose.yml` applies `migrations/` on a fresh volume only; apply a new migration by hand to an existing one (`007_course_embedding_index.sql` is the latest; rows written before it keep `NULL` embeddings until `python -m course_discovery.research_agent.embeddings backfill`).
+Without `TEST_DATABASE_URL` the integration tests skip. `docker-compose.yml` applies `migrations/` on a fresh volume only; apply a new migration by hand to an existing one (`009_course_duration.sql` is the latest, `007_course_embedding_index.sql` added the embedding index; rows written before it keep `NULL` embeddings until `python -m course_discovery.research_agent.embeddings backfill`, and the same command with `--all` is needed after switching `EMBEDDER` or changing the stored text, because vectors from different models are not comparable; `courses.duration_hours` stays `NULL` until a course is seen again).
 
 Tracing is off until an exporter is configured. `docker compose --profile tracing up -d jaeger`, then `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 uv run python main.py` and open http://localhost:16686 (`OTEL_TRACES_EXPORTER=console` prints spans instead, `OTEL_SDK_DISABLED=true` turns it off). Prompt and state content is redacted from spans unless `OTEL_CAPTURE_CONTENT=true`. Exporter failures never fail a run. Metrics (cache lookups by hit/miss, run duration per segment and outcome, run and review outcomes, review wait, degraded/fail-closed paths by component and reason, search calls, LLM calls/errors/fallbacks/latency/tokens on the GenAI conventions, transient errors seen by `RetryPolicy`, outbox outcomes with dead-letter reason, delivery latency, backlog/dead-letter/oldest-age gauges) are off until `OTEL_METRICS_EXPORTER=otlp` or `console`; Jaeger does not ingest metrics, so point OTLP at a collector. Spans are flushed at the end of each run segment and batched every 1s (`OTEL_BSP_SCHEDULE_DELAY`), so a SIGKILL loses at most the last second of spans plus any span still open. Metrics are force-flushed at the same points but otherwise export every 60s (`OTEL_METRIC_EXPORT_INTERVAL`), so a SIGKILL loses the counters recorded since the last segment end. Log previews of queries, feedback and titles are `null` unless `OTEL_CAPTURE_CONTENT=true`; `SERVICE_VERSION` and `DEPLOYMENT_ENVIRONMENT` set the matching resource attributes.
 

@@ -10,7 +10,12 @@ from langchain_openrouter import ChatOpenRouter
 
 from course_discovery.app.llm import build_llm, llm_enabled
 from course_discovery.app.prompts import SYNTHESIZER_SYSTEM_PROMPT
-from course_discovery.domain.models import CourseCandidate, RoutingAction, UserMemory
+from course_discovery.domain.models import (
+    CourseCandidate,
+    RoutingAction,
+    UserMemory,
+    length_bucket,
+)
 from course_discovery.domain.state import AgentState
 from course_discovery.guardrails import redact_pii
 from course_discovery.observability.logging import get_logger, preview, sanitize_error
@@ -48,6 +53,10 @@ def _preference_score(course: CourseCandidate, memory: UserMemory | None) -> int
         int((course.provider or "").lower() in preferred_providers)
         + int(memory.preferred_level is not None and course.level == memory.preferred_level)
         + int((course.language or "").lower() in preferred_languages)
+        + int(
+            memory.preferred_course_length is not None
+            and length_bucket(course.duration_hours) == memory.preferred_course_length
+        )
     )
 
 
@@ -71,6 +80,7 @@ def _rank_courses(
         key=lambda c: (
             -_preference_score(c, memory),
             c.is_free is not True,
+            -round(c.profile_similarity or 0.0, 1),
             -(c.rating or 0),
             -_parse_date(c.published_or_updated or "").timestamp(),
             -c.confidence,

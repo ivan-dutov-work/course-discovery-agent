@@ -7,6 +7,7 @@ from langgraph.graph import END, StateGraph
 from course_discovery.app.gateway import gateway_node
 from course_discovery.domain.models import RoutingAction
 from course_discovery.domain.state import AgentState
+from course_discovery.memory_curator import build_curator_graph
 from course_discovery.observability.logging import get_logger
 from course_discovery.persistence.checkpointer import memory_saver
 from course_discovery.research_agent.memory.nodes import user_memory_update_node
@@ -45,6 +46,7 @@ def build_graph(checkpointer=None, research_compile_kwargs=None):
     builder.add_node("send_approved_courses", publish_node, retry_policy=retry)
     builder.add_node("discard_run", discard_node)
     builder.add_node("record_review_outcome", user_memory_update_node, retry_policy=retry)
+    builder.add_node("curate_user_memory", build_curator_graph())
 
     builder.set_entry_point("parse_user_request")
     builder.add_conditional_edges(
@@ -69,7 +71,8 @@ def build_graph(checkpointer=None, research_compile_kwargs=None):
         },
     )
     builder.add_edge("send_approved_courses", "record_review_outcome")
-    builder.add_edge("record_review_outcome", END)
+    builder.add_edge("record_review_outcome", "curate_user_memory")
+    builder.add_edge("curate_user_memory", END)
     builder.add_edge("discard_run", "record_review_outcome")
 
     graph = builder.compile(
@@ -81,7 +84,7 @@ def build_graph(checkpointer=None, research_compile_kwargs=None):
         "graph_compiled",
         extra={
             "event": "outer_graph.compiled",
-            "node_count": 7,
+            "node_count": 8,
             "duration_ms": int((time.perf_counter() - start_ts) * 1000),
             "interrupt_before": ["await_human_review"],
         },

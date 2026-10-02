@@ -46,14 +46,25 @@ Evidence for drafting. Load when working on these sections. Observations are fro
 - Alternative if namespace discovery feels fragile: keep mutating nodes at the top level, or
   have the subgraph return effects as data for an outer node.
 
-## `input_schema` / `output_schema` (§2.3, not in code)
+## `input_schema` / `output_schema` (§2.3, used by the curator subgraph)
 
 - Documentation, verified: `StateGraph(OverallState, input_schema=InputState,
   output_schema=OutputState)`. `invoke()` returns only the output schema's fields, not the
   full internal state. The point to pair with the state-contract section: public API versus
   internal contract.
 - Only the outer graph would benefit; the research subgraph has no narrower public contract.
-- Needs a working example or a doc-only label.
+- Needs a working example or a doc-only label. Now in code: `memory_curator/graph.py` compiles
+  `StateGraph(CuratorState, input_schema=CuratorInput, output_schema=CuratorOutput)` and mounts it
+  as a node of the outer graph.
+- Verified with langgraph 1.1.2, langchain-core 1.6.5 (`tests/test_memory_e2e.py`,
+  `tests/test_curator_checkpoint.py`): the subgraph reads only the five input keys, its private
+  channels (`messages`, `steps`, `proposals`, `finished`, `failure`) never appear in the parent's
+  state, and the parent receives only `memory_update`. `feedback_history`, a shared
+  `operator.add` channel, comes back unchanged (`[round_one, round_two]`, not doubled), because
+  it is an input key and not an output key. This is the fix the research subgraph needs for the
+  reducer echo in note 02 (backlog S1).
+- A subgraph node's parent-level update appears in `astream(..., subgraphs=True)` at namespace
+  `()` under the node's name, so `tests/test_flow_rules.py` skips it like `course_research`.
 
 ## `Command` (§3.4, not in code)
 

@@ -13,6 +13,8 @@ from course_discovery.guardrails import redact_pii
 from course_discovery.observability.logging import get_logger, sanitize_error
 from course_discovery.observability.metrics import record_db_error
 from course_discovery.persistence.postgres import connect
+from course_discovery.research_agent.embeddings import to_pgvector
+from course_discovery.research_agent.memory.profile_vector import profile_vector
 
 
 logger = get_logger(__name__)
@@ -103,7 +105,16 @@ def redact_patch(patch: MemoryPatch) -> MemoryPatch:
     )
 
 
-def save_user_memory(user_id: str | None, patch: MemoryPatch) -> UserMemory | None:
+def memory_update_exists(run_id: str) -> bool:
+    with connect() as conn:
+        if conn is None:
+            return False
+        return conn.execute("SELECT 1 FROM memory_updates WHERE run_id = %s", (run_id,)).fetchone() is not None
+
+
+def save_user_memory(
+    user_id: str | None, patch: MemoryPatch, *, run_id: str | None = None
+) -> UserMemory | None:
     if not user_id or patch.is_empty():
         return None
     patch = redact_patch(patch)
@@ -112,6 +123,16 @@ def save_user_memory(user_id: str | None, patch: MemoryPatch) -> UserMemory | No
             return None
         try:
             with conn.transaction():
+                if run_id is not None:
+                    claimed = conn.execute(
+                        """
+                        INSERT INTO memory_updates (run_id, user_id, patch) VALUES (%s, %s, %s)
+                        ON CONFLICT (run_id) DO NOTHING RETURNING run_id
+                        """,
+                        (run_id, user_id, Jsonb(patch.model_dump(mode="json"))),
+                    ).fetchone()
+                    if claimed is None:
+                        return None
                 conn.execute(
                     "INSERT INTO users (id) VALUES (%s) ON CONFLICT (id) DO NOTHING",
                     (user_id,),
@@ -122,6 +143,7 @@ def save_user_memory(user_id: str | None, patch: MemoryPatch) -> UserMemory | No
                 )
                 row = conn.execute(_SELECT_PREFERENCES + " FOR UPDATE", (user_id,)).fetchone()
                 merged = apply_patch(_row_to_memory(row), patch)
+                vector = profile_vector(merged)
                 raw_memory = dict(row[8] or {})
                 raw_memory.update(
                     completed_course_urls=merged.completed_course_urls,
@@ -135,7 +157,8 @@ def save_user_memory(user_id: str | None, patch: MemoryPatch) -> UserMemory | No
                         preferred_languages = %s, budget_preference = %s,
                         certificate_importance = %s, preferred_level = %s,
                         preferred_course_length = %s, learning_style_notes = %s,
-                        career_goals = %s, raw_memory_json = %s, updated_at = now()
+                        career_goals = %s, raw_memory_json = %s,
+                        profile_embedding = %s::vector, updated_at = now()
                     WHERE user_id = %s
                     """,
                     (
@@ -149,6 +172,7 @@ def save_user_memory(user_id: str | None, patch: MemoryPatch) -> UserMemory | No
                         merged.learning_style_notes,
                         merged.career_goals,
                         Jsonb(raw_memory),
+                        to_pgvector(vector) if vector is not None else None,
                         user_id,
                     ),
                 )

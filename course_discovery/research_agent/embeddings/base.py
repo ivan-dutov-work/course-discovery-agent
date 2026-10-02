@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from typing import Protocol, runtime_checkable
+
+from course_discovery.research_agent.embeddings.facets import strip_facets
+from course_discovery.resilience import is_transient
 
 EMBEDDING_DIMENSION = 1536
 
@@ -22,6 +26,13 @@ _override: Embedder | None = None
 
 @lru_cache(maxsize=1)
 def _default_embedder() -> Embedder:
+    kind = os.getenv("EMBEDDER", "hashing").strip().lower()
+    if kind == "openrouter":
+        from course_discovery.research_agent.embeddings.openrouter import OpenRouterEmbedder
+
+        return OpenRouterEmbedder()
+    if kind != "hashing":
+        raise EmbeddingError(f"Unknown EMBEDDER {kind!r}; expected hashing or openrouter")
     from course_discovery.research_agent.embeddings.hashing import HashingEmbedder
 
     return HashingEmbedder()
@@ -42,7 +53,11 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
     embedder = get_embedder()
     try:
         vectors = embedder.embed(texts)
+    except EmbeddingError:
+        raise
     except Exception as exc:  # noqa: BLE001
+        if is_transient(exc):
+            raise
         raise EmbeddingError(f"Embedding failed: {type(exc).__name__}") from exc
     if embedder.dimension != EMBEDDING_DIMENSION:
         raise EmbeddingError(
@@ -54,7 +69,7 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
 
 
 def course_text(title: str, description: str | None, topics: list[str]) -> str:
-    return " ".join(part for part in (title, description or "", *topics) if part)
+    return strip_facets(" ".join(part for part in (title, description or "", *topics) if part))
 
 
 def to_pgvector(vector: list[float]) -> str:

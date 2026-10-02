@@ -7,12 +7,14 @@ from course_discovery.domain.models import (
     UserMemory,
 )
 from course_discovery.research_agent.cache.scoring import (
-    MIN_TOPIC_SIMILARITY,
     cosine,
+    topic_floor,
+    topic_relative_cutoff,
     topic_score,
     topic_vector,
 )
 from course_discovery.research_agent.embeddings import course_text, embed_texts
+from course_discovery.research_agent.memory.profile_vector import profile_vector
 
 
 def seed_cache(
@@ -34,6 +36,7 @@ def seed_cache(
             language="en",
             rating=4.8,
             published_or_updated="2025-11-15",
+            duration_hours=60,
             source="cache",
             evidence=[
                 EvidenceItem(
@@ -56,6 +59,7 @@ def seed_cache(
             language="en",
             rating=4.9,
             published_or_updated="2025-12-01",
+            duration_hours=10,
             source="cache",
             evidence=[
                 EvidenceItem(
@@ -68,7 +72,9 @@ def seed_cache(
         ),
     ]
     query = topic_vector(filters.topic)
-    ranked: list[tuple[float, CourseCandidate]] = []
+    profile = profile_vector(memory)
+    floor = topic_floor()
+    eligible: list[tuple[float, CourseCandidate]] = []
     for course in seed:
         if (
             course.url in memory.completed_course_urls
@@ -77,10 +83,20 @@ def seed_cache(
         ):
             continue
         similarity = 0.0
+        course_vector = embed_texts([course_text(course.title, course.description, [])])[0]
         if query is not None:
-            similarity = cosine(query, embed_texts([course_text(course.title, course.description, [])])[0])
-            if similarity < MIN_TOPIC_SIMILARITY:
+            similarity = cosine(query, course_vector)
+            if similarity < floor:
                 continue
-        ranked.append((topic_score(similarity, course.confidence, 0), course))
+        if profile is not None:
+            course = course.model_copy(update={"profile_similarity": cosine(profile, course_vector)})
+        eligible.append((similarity, course))
+    best = max((similarity for similarity, _ in eligible), default=0.0)
+    cutoff = topic_relative_cutoff() * best if query is not None else 0.0
+    ranked = [
+        (topic_score(similarity, course.confidence, 0), course)
+        for similarity, course in eligible
+        if similarity >= cutoff
+    ]
     ranked.sort(key=lambda item: item[0], reverse=True)
     return [course for _, course in ranked[:limit]]
