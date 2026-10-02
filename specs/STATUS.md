@@ -50,6 +50,12 @@ Integration tests need `docker compose up -d` and
 - Graceful degradation paths: no key means deterministic parse and summary; no database
   means seed cache; search failure writes a limitation note (§6.1).
 
+## User memory
+
+- Writable profile: `save_user_memory` (one transaction, row lock, merge, redacted free text), `MemoryPatch`, `MemoryNote`; `preferred_course_length` stored, no consumer yet: `research_agent/memory/repository.py`, `tests/test_user_profile.py`. Nothing in the graph calls it until P5.
+- Profile consumers: stored budget and certificate defaults in `parse_user_request`; preferred provider, level, language boost and scoped notes in `rank_and_summarize_courses`: `research_agent/memory/defaults.py`, `research_agent/synthesis/nodes.py`.
+- `feedback_history` accumulates every review round (redacted); DISCARD now goes through `record_review_outcome`; the research subgraph runs on `ResearchState`, which omits the channel: `domain/state.py`, `tests/test_memory_e2e.py` (feedback in run one changes run two, in-memory and Postgres).
+
 ## Observability
 
 - OpenTelemetry traces and metrics, vendor-neutral, content redacted by default:

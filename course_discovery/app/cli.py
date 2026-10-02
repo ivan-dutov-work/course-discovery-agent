@@ -53,6 +53,7 @@ def _initial_state(query: str, run_id: str) -> AgentState:
         "validation_results": [],
         "digest": None,
         "manager_feedback": None,
+        "feedback_history": [],
         "rewrite_instructions": None,
         "routing_decision": None,
         "iteration_count": 0,

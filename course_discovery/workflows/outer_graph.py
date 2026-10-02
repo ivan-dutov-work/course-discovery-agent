@@ -70,7 +70,7 @@ def build_graph(checkpointer=None, research_compile_kwargs=None):
     )
     builder.add_edge("send_approved_courses", "record_review_outcome")
     builder.add_edge("record_review_outcome", END)
-    builder.add_edge("discard_run", END)
+    builder.add_edge("discard_run", "record_review_outcome")
 
     graph = builder.compile(
         checkpointer=checkpointer or memory_saver(),

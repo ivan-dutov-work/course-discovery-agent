@@ -48,7 +48,8 @@ def _with(node: str, **changes) -> dict[str, NodeFlow]:
 class FlowRuleTests(unittest.TestCase):
     def test_seeds_come_from_state_annotations(self):
         self.assertEqual(
-            set(pii_seeds(AgentState)), {"user_query", "user_memory", "manager_feedback"}
+            set(pii_seeds(AgentState)),
+            {"user_query", "user_memory", "manager_feedback", "feedback_history"},
         )
 
     def test_declared_flows_are_clean(self):
@@ -76,7 +77,7 @@ class FlowRuleTests(unittest.TestCase):
         self.assertIn(("sink-accepts", "save_verified_courses"), rules)
 
     def test_raw_memory_reaching_the_llm_is_caught(self):
-        flows = _with("rank_and_summarize_courses", reads=FLOWS["rank_and_summarize_courses"].reads | {"user_memory"})
+        flows = _with("rank_and_summarize_courses", redacts=frozenset())
         messages = [str(v) for v in _check(flows) if v.rule == "sink-accepts"]
         self.assertTrue(any("'raw' data reaches external sink 'llm:openrouter'" in m for m in messages))
 

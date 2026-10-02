@@ -11,7 +11,7 @@ fixed in this pass.
 ## This pass: gap 5
 
 Every item ends with tests (success and failure modes) and the doc updates named in `CLAUDE.md`.
-Before starting P4 to P6 read `specs/FEEDBACK.md`; it holds the case list the tests come from.
+Before starting P5 and P6 read `specs/FEEDBACK.md`; it holds the case list the tests come from.
 
 ### P3a. OpenRouter `Embedder` (before or right after merging the topic-cache PR)
 
@@ -32,27 +32,22 @@ tests and offline runs.
 - Docs: `ARCHITECTURE.md`, `STATUS.md`, CLAUDE.md environment section, article claim upgraded
   from "topic-aware" to "semantic" only if the calibration supports it.
 
-### P4. Writable profile with consumers (gap 5, part 1)
+### P4b. `profile_embedding` (gap 2)
 
-Spec: `specs/FEEDBACK.md`, "Current state" and "Memory shape".
+Write the profile vector on each profile save and use it as a ranking tie-break. The vector
+(1536 floats) never enters `AgentState`: compute it from the stored profile inside the
+repository and apply the tie-break in SQL or in a node-local read, so only the derived order
+reaches state. Web candidates have no stored embedding, so decide what the tie-break does for
+them (embed on the fly, or skip). Depends on the profile writer (done).
 
-- `UserMemory`: add `preferred_course_length` and `notes: list[MemoryNote]`.
-- `memory/repository.py`: `save_user_memory(user_id, patch)` upserts `users` and
-  `user_preferences` in one transaction with a row lock, merging into the stored profile and
-  into `raw_memory_json` for the two URL lists. Writers re-raise. Redact free text first.
-- Send DISCARD through `record_review_outcome` too (`discard_run -> record_review_outcome ->
-  END`); today rejections on discard record nothing.
-- Add `feedback_history: Annotated[list[str], operator.add]` to `AgentState`, appended (redacted)
-  by `interpret_review_feedback` each round; declare it in `privacy/flow_specs.py`.
-- Consumers, one per field, as listed in `FEEDBACK.md`: ranking boost and prompt notes in
-  `rank_and_summarize_courses`; default constraints in `parse_user_request`.
-  `profile_embedding` is written on each profile save and used as a ranking tie-break; if that
-  grows the item, split it out.
-- Tests: save and reload round trip; concurrent saves merge; failure raises; every learned
-  field changes run two's ranking or filtering (exact assertions); erasure removes the
-  profile (`privacy/sources.py`, `tests/test_erasure.py`).
+### P4c. Course duration and the `preferred_course_length` consumer. Depends on the profile writer (done)
 
-### P5. Memory curator subgraph (gap 5, part 2). Depends on P4
+`CourseCandidate` has no duration, so `preferred_course_length` is stored but read by
+nothing. Extract a duration from listings into `CourseCandidate` (mock catalog first), then boost
+matching courses in `rank_and_summarize_courses`. Until this lands P5 must not write the field
+(`DECISIONS.md`: a learned preference needs a named consumer).
+
+### P5. Memory curator subgraph (gap 5, part 2)
 
 Spec: `specs/FEEDBACK.md`, "Curator". Bounded tool loop with a closed tool set, a step cap,
 fail-closed commit, idempotent per `run_id`.
@@ -69,16 +64,47 @@ fail-closed commit, idempotent per `run_id`.
 - Tests: every unit case in `FEEDBACK.md` (rows 3, 10, 11, 13 to 18 and the tool-call trace of
   row 7), with a stubbed model.
 
-### P6. End-to-end feedback tests with a judge. Depends on P4, P5
+### P6. End-to-end feedback tests with a judge. Depends on P5
 
 Spec: `specs/FEEDBACK.md`, "Test layers".
 
-- `tests/test_memory_e2e.py`: the 18 cases as parametrized fixtures. Layer 2 (stubbed model, CI)
+- `tests/test_memory_e2e.py` already holds the run-one/run-two scenario (feedback history to
+  profile to run two, in-memory and Postgres) with a test-local `curate()` stand-in; P5 replaces
+  the stand-in with the real curator. Extend it to the 18 cases as parametrized fixtures. Layer 2 (stubbed model, CI)
   asserts run two's results exactly. Layer 3 (live model plus judge) skips without
   `OPENROUTER_API_KEY`.
 - `tests/judge.py`: Pydantic verdict, the five-point rubric, three calls and majority, through
   `build_llm("judge")`. Free-text fields only; structured fields stay exact assertions.
 - Record in notes/04 which cases the live model fails and how often, with the model versions.
+
+### S1. State hygiene. After P5
+
+`AgentState` is 32 flat channels across seven concerns. Decision and reasoning are in
+`DECISIONS.md` ("Do not restructure `AgentState` wholesale"). P5's curator subgraph is the pilot
+for private schemas; apply what it shows here.
+
+0. Fix the reducer double-count: `tavily_calls`, `completed_queries` and `research_notes` grow
+   1, 2, 4 across REWRITE and AUGMENT rounds because the subgraph returns its channel value and
+   the parent's `operator.add` adds it again (`article/notes/02`). They cannot simply leave the
+   subgraph schema, since the parent needs them for AUGMENT; use reducers that are idempotent
+   over the echo, and add a regression test over two rounds.
+1. One source for the counters: `cache_hits` and `tavily_calls` exist both as channels and in
+   `ResearchRunMetrics`. Keep one and update every reader and `flow_specs.py`.
+2. Move `max_iterations` and `max_research_iterations` out of state into run configuration.
+   Check that a resumed run keeps the budget it started with.
+3. Verify whether the search-loop channels (`research_plan`, `active_search_query`,
+   `tavily_results`, `completed_queries`) can be private to `course_research` with an
+   `output_schema`. AUGMENT re-enters at `plan_gap_search` and reads `completed_queries`,
+   `research_plan` and `validation_results` from the previous pass, so this only works if they
+   persist across invocations; test that on LangGraph 1.1.2 before changing anything.
+4. Keep the intermediate candidate lists (`extracted_candidates`, `scraped_courses`,
+   `deduplicated_courses`) as they are: they are the checkpoint history the article shows.
+5. Check that `flow_specs.py` and `Pii` markers still see every channel after any regrouping;
+   nested fields are invisible to a channel-level check.
+6. Checkpoints written before the change do not resume (see "Naming" in `ARCHITECTURE.md`).
+
+Closes the state-size item under Optional and gives the article's §2.3 (`input_schema`,
+`output_schema`) an honest use.
 
 ## Next, not this pass
 

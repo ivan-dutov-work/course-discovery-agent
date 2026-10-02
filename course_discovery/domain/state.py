@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import operator
-from typing import Annotated
-from typing import TypedDict
+from typing import Annotated, TypedDict, get_type_hints
 
 from course_discovery.domain.pii import Pii
 from course_discovery.domain.models import (
@@ -35,6 +34,7 @@ class AgentState(TypedDict):
     validation_results: list[CandidateValidation]
     digest: str | None
     manager_feedback: Annotated[str | None, Pii(subject="user_id")]
+    feedback_history: Annotated[list[str], Pii(subject="user_id"), operator.add]
     rewrite_instructions: str | None
     routing_decision: RoutingAction | None
     iteration_count: int
@@ -51,3 +51,15 @@ class AgentState(TypedDict):
     error: str | None
     publish_status: DeliveryStatus | None
     discard_reason: str | None
+
+
+OUTER_ONLY_CHANNELS = frozenset({"feedback_history"})
+
+ResearchState = TypedDict(
+    "ResearchState",
+    {
+        name: hint
+        for name, hint in get_type_hints(AgentState, include_extras=True).items()
+        if name not in OUTER_ONLY_CHANNELS
+    },
+)

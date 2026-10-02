@@ -1,23 +1,23 @@
 # Feedback and user memory: cases, schema, tests
 
 Design reference for turning review feedback into stored user preferences. `BACKLOG.md`
-items P4 to P6 implement it. `ARCHITECTURE.md` describes the graph as built; this file
+items P5 and P6 implement it (P4, the writable profile and its consumers, is done). `ARCHITECTURE.md` describes the graph as built; this file
 describes what the memory update must handle and how each case is pinned by a test.
 
 ## Current state (verified in code)
 
-- Nothing writes `user_preferences`. `record_feedback` inserts `recommendation_events` only,
-  and `load_user_memory` reads a table no code fills. `raw_memory_json` (where
-  `completed_course_urls` and `rejected_course_urls` are read from) is never written.
-- Only three `UserMemory` fields change a run: `avoided_providers`, `rejected_course_urls` and
-  `completed_course_urls` (read by `verify_course_claims`, the cache query and the seed cache).
-  `preferred_providers`, `preferred_languages`, `budget_preference`, `certificate_importance`,
-  `preferred_level`, `learning_style_notes` and `career_goals` are loaded and never used.
-- A DISCARD goes `discard_run -> END`, so rejected digests never reach `record_review_outcome`
-  and no rejection event is recorded.
-- `manager_feedback` holds only the latest message, so feedback from earlier review rounds is
-  overwritten before anything could learn from it.
-- `preferred_course_length` exists as a column and not in `UserMemory`.
+- `save_user_memory(user_id, MemoryPatch)` writes `users` and `user_preferences` in one
+  transaction with a row lock and merges into the stored profile; nothing in the graph calls it
+  yet. `raw_memory_json` holds the two URL lists and the notes.
+- Consumers: `avoided_providers`, `rejected_course_urls`, `completed_course_urls` (verifier,
+  cache query, seed cache); `budget_preference` and `certificate_importance` (defaults in
+  `parse_user_request`, only where the query does not state them); `preferred_providers`,
+  `preferred_level`, `preferred_languages` (ranking boost) and `notes` (scoped, in the ranking
+  prompt). `preferred_course_length` is stored and read by nothing until P4c;
+  `learning_style_notes` and `career_goals` are loaded and unused.
+- A DISCARD goes through `record_review_outcome`, so a rejected digest records its events.
+- `feedback_history` holds every review round, redacted; `manager_feedback` still holds only
+  the latest.
 
 Rule that follows: a field is written only if a named consumer changes the next run because
 of it, and a test shows that change.

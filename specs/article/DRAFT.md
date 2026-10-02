@@ -246,9 +246,10 @@ workers that a standalone graph would skip. The parent has no visibility into
 which subgraph workers completed.
 
 The cost is spend, not correctness. Re-running a sibling worker repeats its
-search or model call, but reducer-backed channels do not double-count: after a
-resumed run the number of completed calls still equals the number of unique
-queries. Whether the repeat is noise or a budget problem depends on what one
+search or model call, but a crash resume does not double-count reducer-backed
+channels: the number of completed calls still equals the number of unique
+queries. (Across review rounds that re-enter the subgraph the same channels do
+double-count; see `notes/02`.) Whether the repeat is noise or a budget problem depends on what one
 worker costs.
 
 This is a known behavior with a documented root cause: subgraph task IDs are

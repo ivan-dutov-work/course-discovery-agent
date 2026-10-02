@@ -7,7 +7,7 @@ SEARCH = external("search:tavily", accepts=frozenset({SUBJECT}))
 
 OUTER: dict[str, NodeFlow] = {
     "parse_user_request": flow(
-        reads={"user_query", "manager_feedback", "search_filters", "routing_decision"},
+        reads={"user_query", "manager_feedback", "search_filters", "routing_decision", "user_id"},
         writes={"search_filters", "routing_decision", "manager_feedback", "error", "discard_reason"},
         sinks=(LLM,),
         redacts={"user_query", "manager_feedback"},
@@ -16,7 +16,13 @@ OUTER: dict[str, NodeFlow] = {
     "await_human_review": flow(),
     "interpret_review_feedback": flow(
         reads={"manager_feedback", "iteration_count", "max_iterations"},
-        writes={"routing_decision", "rewrite_instructions", "iteration_count", "discard_reason"},
+        writes={
+            "routing_decision",
+            "rewrite_instructions",
+            "iteration_count",
+            "discard_reason",
+            "feedback_history",
+        },
         sinks=(LLM,),
         redacts={"manager_feedback"},
     ),
@@ -28,7 +34,15 @@ OUTER: dict[str, NodeFlow] = {
     ),
     "discard_run": flow(reads={"discard_reason", "run_id"}, writes={"publish_status"}),
     "record_review_outcome": flow(
-        reads={"user_id", "valid_courses", "user_query", "manager_feedback", "publish_status", "run_id"},
+        reads={
+            "user_id",
+            "valid_courses",
+            "user_query",
+            "manager_feedback",
+            "feedback_history",
+            "publish_status",
+            "run_id",
+        },
         sinks=(store("users"), store("recommendation_events")),
     ),
 }
@@ -107,9 +121,12 @@ RESEARCH: dict[str, NodeFlow] = {
             "research_plan",
             "routing_decision",
             "run_id",
+            "user_memory",
+            "search_filters",
         },
         writes={"digest", "rewrite_instructions"},
         sinks=(LLM,),
+        redacts={"user_memory"},
     ),
     "edge:dispatch_search_queries": flow(reads={"research_plan"}, writes={"active_search_query"}),
 }

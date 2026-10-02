@@ -29,7 +29,8 @@ def user_memory_lookup_node(state: AgentState) -> dict:
 
 
 def user_memory_update_node(state: AgentState) -> dict:
-    feedback = state.get("manager_feedback")
+    history = state.get("feedback_history") or []
+    feedback = "\n".join(history) or state.get("manager_feedback")
     accepted = state.get("publish_status") in {DeliveryStatus.QUEUED, DeliveryStatus.DELIVERED}
     record_feedback(
         state.get("user_id"),

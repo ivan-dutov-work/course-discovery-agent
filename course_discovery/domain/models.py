@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class RoutingAction(str, Enum):
@@ -43,6 +44,13 @@ class EvidenceItem(BaseModel):
     supports: list[str] = Field(default_factory=list)
 
 
+class MemoryNote(BaseModel):
+    text: str = Field(min_length=1)
+    scope: str = Field(default="durable", pattern=r"^(durable|topic:.+)$")
+    learned_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    source_run_id: str | None = None
+
+
 class UserMemory(BaseModel):
     preferred_providers: list[str] = Field(default_factory=list)
     avoided_providers: list[str] = Field(default_factory=list)
@@ -50,10 +58,56 @@ class UserMemory(BaseModel):
     budget_preference: str | None = None
     certificate_importance: Literal["required", "preferred", "irrelevant"] | None = None
     preferred_level: str | None = None
+    preferred_course_length: str | None = None
     learning_style_notes: str | None = None
     career_goals: list[str] = Field(default_factory=list)
     completed_course_urls: list[str] = Field(default_factory=list)
     rejected_course_urls: list[str] = Field(default_factory=list)
+    notes: list[MemoryNote] = Field(default_factory=list)
+
+
+SCALAR_MEMORY_FIELDS = frozenset(
+    {
+        "budget_preference",
+        "certificate_importance",
+        "preferred_level",
+        "preferred_course_length",
+        "learning_style_notes",
+    }
+)
+LIST_MEMORY_FIELDS = frozenset(
+    {
+        "preferred_providers",
+        "avoided_providers",
+        "preferred_languages",
+        "career_goals",
+        "completed_course_urls",
+        "rejected_course_urls",
+    }
+)
+
+
+class MemoryPatch(BaseModel):
+    set: dict[str, str | None] = Field(default_factory=dict)
+    add: dict[str, list[str]] = Field(default_factory=dict)
+    remove: dict[str, list[str]] = Field(default_factory=dict)
+    add_notes: list[MemoryNote] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _known_fields_only(self) -> "MemoryPatch":
+        unknown = (
+            set(self.set) - SCALAR_MEMORY_FIELDS
+            | set(self.add) - LIST_MEMORY_FIELDS
+            | set(self.remove) - LIST_MEMORY_FIELDS
+        )
+        if unknown:
+            raise ValueError(f"unknown memory fields: {sorted(unknown)}")
+        if self.set.get("certificate_importance") not in {None, "required", "preferred", "irrelevant"}:
+            raise ValueError("certificate_importance must be required, preferred or irrelevant")
+        return self
+
+    def is_empty(self) -> bool:
+        return not (self.set or self.add or self.remove or self.add_notes)
 
 
 class ResearchPlan(BaseModel):
