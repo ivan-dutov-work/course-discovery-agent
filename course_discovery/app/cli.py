@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from langchain_core.runnables import RunnableConfig
 
-from course_discovery.domain.models import DeliveryStatus, ResearchRunMetrics, RoutingAction
+from course_discovery.domain.models import DeliveryStatus, ResearchRunMetrics
 from course_discovery.domain.state import AgentState
 from course_discovery.observability.logging import (
     classify_feedback,
@@ -35,7 +35,7 @@ from course_discovery.resilience import RECURSION_LIMIT
 from course_discovery.workflows.outer_graph import build_graph
 
 
-def _initial_state(query: str, run_id: str) -> AgentState:
+def _initial_state(query: str) -> AgentState:
     return {
         "user_query": redact_pii(query) or "",
         "user_id": "cli-user",
@@ -56,16 +56,10 @@ def _initial_state(query: str, run_id: str) -> AgentState:
         "feedback_history": [],
         "rewrite_instructions": None,
         "routing_decision": None,
-        "iteration_count": 0,
-        "max_iterations": 3,
         "research_iteration": 0,
-        "max_research_iterations": 2,
         "completed_queries": [],
         "research_notes": [],
-        "cache_hits": 0,
-        "tavily_calls": 0,
         "metrics": ResearchRunMetrics(),
-        "run_id": run_id,
         "active_search_query": None,
         "error": None,
         "publish_status": None,
@@ -161,18 +155,12 @@ async def _run(graph) -> None:
     print(f"\nRun ID: {run_id}")
     print("\nStarting graph execution...\n")
 
-    initial_state = _initial_state(query, run_id)
+    initial_state = _initial_state(query)
     register_thread(initial_state["user_id"], run_id)
     result = await _stream_until_pause(graph, initial_state, config, resume=False)
 
     for _ in range(10):
-        routing_decision = result.get("routing_decision")
-        if routing_decision in {
-            "PUBLISH",
-            "DISCARD",
-            RoutingAction.PUBLISH,
-            RoutingAction.DISCARD,
-        }:
+        if not (await graph.aget_state(config)).next:
             break
 
         digest = result.get("digest") or "<No digest generated>"
@@ -188,8 +176,8 @@ async def _run(graph) -> None:
         print(digest)
         print("=== END DIGEST ===\n")
         print(
-            f"Cache hits: {result.get('cache_hits', 0)} | "
-            f"Tavily calls: {result.get('tavily_calls', 0)} | "
+            f"Cache hits: {result['metrics'].cache_hits} | "
+            f"Tavily calls: {result['metrics'].tavily_calls} | "
             f"Valid: {len(result.get('valid_courses', []))} | "
             f"Uncertain: {len(result.get('uncertain_courses', []))}"
         )
@@ -240,7 +228,7 @@ async def _run(graph) -> None:
                     "final_action": "PUBLISH",
                     "duration_ms": active_ms(),
                     "review_wait_ms": int(review_wait * 1000),
-                    "iterations": result.get("iteration_count", 0),
+                    "iterations": len(result.get("feedback_history") or []),
                 },
             )
             break
@@ -254,14 +242,11 @@ async def _run(graph) -> None:
                 "run_id": run_id,
                 "duration_ms": active_ms(),
                 "review_wait_ms": int(review_wait * 1000),
-                "iterations": result.get("iteration_count", 0),
+                "iterations": len(result.get("feedback_history") or []),
             },
         )
 
-    if not result.get("publish_status") and result.get("routing_decision") in {
-        "DISCARD",
-        RoutingAction.DISCARD,
-    }:
+    if not result.get("publish_status") and not (await graph.aget_state(config)).next:
         record_run_outcome("discard")
         logger.info(
             "run_complete",
@@ -274,7 +259,7 @@ async def _run(graph) -> None:
                 ),
                 "duration_ms": active_ms(),
                 "review_wait_ms": int(review_wait * 1000),
-                "iterations": result.get("iteration_count", 0),
+                "iterations": len(result.get("feedback_history") or []),
             },
         )
 

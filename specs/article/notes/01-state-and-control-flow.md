@@ -7,7 +7,8 @@ Evidence for drafting. Load when working on these sections. Observations are fro
 
 - Channels written by parallel `Send` workers use `Annotated[..., operator.add]`-style reducers
   so branches don't clobber each other: `tavily_results`, `completed_queries`,
-  `research_notes`, `tavily_calls`.
+  `research_notes`. A fourth, the `tavily_calls` counter, was removed as a duplicate of
+  `metrics.tavily_calls`.
 - `extracted_candidates` is a plain overwritten list even though every branch writes it.
   Whether that raises `InvalidUpdateError` with two or more queries is unverified (BACKLOG).
   Don't use it as the example until it is.

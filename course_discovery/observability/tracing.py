@@ -165,13 +165,14 @@ def _plain(value: Any) -> Any:
 
 
 def annotate_run(span: trace.Span, values: Mapping[str, Any]) -> None:
+    metrics = values.get("metrics")
     attributes = {
         "course.routing_decision": _plain(values.get("routing_decision")),
         "course.publish_status": _plain(values.get("publish_status")),
-        "course.review_iteration": values.get("iteration_count"),
+        "course.review_iteration": len(values.get("feedback_history") or []),
         "course.research_iteration": values.get("research_iteration"),
-        "course.cache_candidates": values.get("cache_hits"),
-        "course.tavily_calls": values.get("tavily_calls"),
+        "course.cache_candidates": getattr(metrics, "cache_hits", None),
+        "course.tavily_calls": getattr(metrics, "tavily_calls", None),
         "course.valid_count": len(values.get("valid_courses") or []),
         "course.rejected_count": len(values.get("rejected_courses") or []),
         "course.uncertain_count": len(values.get("uncertain_courses") or []),

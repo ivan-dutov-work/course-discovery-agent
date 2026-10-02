@@ -135,7 +135,7 @@ class PublishThroughPostgresOutboxTests(unittest.IsolatedAsyncioTestCase):
         async with _durable_saver() as saver:
             await saver.setup()
             first = build_graph(checkpointer=saver)
-            await first.ainvoke(_initial_state(QUERY, thread_id), config)
+            await first.ainvoke(_initial_state(QUERY), config)
             await first.aupdate_state(config, {"manager_feedback": "approve"})
             result = await first.ainvoke(None, config)
 
@@ -180,7 +180,7 @@ class CheckpointPruneTests(unittest.IsolatedAsyncioTestCase):
             graph = build_graph(checkpointer=saver)
             for thread in (old, fresh):
                 register_thread(f"user-{thread}", thread)
-                await graph.ainvoke(_initial_state(QUERY, thread), _thread(thread))
+                await graph.ainvoke(_initial_state(QUERY), _thread(thread))
 
             future = datetime.now(timezone.utc) + timedelta(days=60)
             pruned = await prune_checkpoints(saver, 30, now=future)
@@ -188,7 +188,7 @@ class CheckpointPruneTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(fresh, pruned)
 
             register_thread(f"user-{prefix}-c", f"{prefix}-c")
-            await graph.ainvoke(_initial_state(QUERY, f"{prefix}-c"), _thread(f"{prefix}-c"))
+            await graph.ainvoke(_initial_state(QUERY), _thread(f"{prefix}-c"))
             pruned_now = await prune_checkpoints(saver, 30)
             self.assertNotIn(f"{prefix}-c", pruned_now)
             remaining = [c async for c in saver.alist(_thread(f"{prefix}-c"))]

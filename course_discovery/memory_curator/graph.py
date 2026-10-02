@@ -5,12 +5,14 @@ import os
 from typing import Annotated, TypedDict
 
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 
 from course_discovery.app.llm import build_llm, llm_enabled
 from course_discovery.app.prompts import CURATOR_SYSTEM_PROMPT
 from course_discovery.domain.models import CourseCandidate, DeliveryStatus
+from course_discovery.domain.run_config import run_id_of
 from course_discovery.guardrails import redact_pii
 from course_discovery.memory_curator.tools import (
     TOOLS,
@@ -37,7 +39,6 @@ MAX_CURATOR_STEPS = int(os.getenv("MAX_CURATOR_STEPS", "4"))
 
 class CuratorInput(TypedDict):
     user_id: str | None
-    run_id: str
     feedback_history: list[str]
     valid_courses: list[CourseCandidate]
     publish_status: DeliveryStatus | None
@@ -60,14 +61,14 @@ def _published(state: CuratorInput) -> bool:
     return state.get("publish_status") in {DeliveryStatus.QUEUED, DeliveryStatus.DELIVERED}
 
 
-def load_context(state: CuratorState) -> dict:
+def load_context(state: CuratorState, config: RunnableConfig) -> dict:
     lines = (redact_pii(item) or "" for item in state.get("feedback_history") or [])
     feedback = [line for line in lines if line.strip() and line.strip().lower() not in APPROVAL_PHRASES]
     if not state.get("user_id") or not feedback:
         return {"memory_update": "skipped:no_feedback"}
     if not llm_enabled():
         return {"memory_update": "skipped:no_llm"}
-    if memory_update_exists(state["run_id"]):
+    if memory_update_exists(run_id_of(config)):
         return {"memory_update": "skipped:already_applied"}
     numbered = "\n".join(f"{i}. {line}" for i, line in enumerate(feedback, start=1))
     outcome = "published" if _published(state) else "discarded"
@@ -88,14 +89,14 @@ def _after_context(state: CuratorState) -> str:
     return END if state.get("memory_update") else "curator_model"
 
 
-def curator_model(state: CuratorState) -> dict:
+def curator_model(state: CuratorState, config: RunnableConfig) -> dict:
     steps = state["steps"] + 1
     try:
         reply = build_llm("curator", max_retries=2).bind_tools(tool_specs()).invoke(state["messages"])
     except Exception as exc:  # noqa: BLE001
         logger.error(
             "curator_llm_error",
-            extra={"event": "curator.llm_error", "run_id": state["run_id"], **sanitize_error(exc)},
+            extra={"event": "curator.llm_error", "run_id": run_id_of(config), **sanitize_error(exc)},
         )
         return {"steps": steps, "failure": "llm_error"}
     return {"messages": [reply], "steps": steps}
@@ -141,15 +142,16 @@ def _after_tools(state: CuratorState) -> str:
     return "curator_model"
 
 
-def commit(state: CuratorState) -> dict:
+def commit(state: CuratorState, config: RunnableConfig) -> dict:
     failure = state.get("failure") or (None if state.get("finished") else "step_cap")
     if failure:
         record_degradation("curator", failure)
         return {"memory_update": f"failed:{failure}"}
-    patch = merge_proposals(state.get("proposals") or [], state["run_id"])
+    run_id = run_id_of(config)
+    patch = merge_proposals(state.get("proposals") or [], run_id)
     if patch.is_empty():
         return {"memory_update": "skipped:no_changes"}
-    applied = save_user_memory(state["user_id"], patch, run_id=state["run_id"])
+    applied = save_user_memory(state["user_id"], patch, run_id=run_id)
     return {"memory_update": "committed" if applied else "skipped:not_applied"}
 
 

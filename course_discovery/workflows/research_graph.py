@@ -4,6 +4,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import Send
 
 from course_discovery.domain.models import RoutingAction
+from course_discovery.domain.run_config import current_run_id
 from course_discovery.domain.state import AgentState, ResearchState
 from course_discovery.observability.logging import get_logger
 from course_discovery.research_agent.cache.dedup import dedup_node
@@ -47,7 +48,7 @@ def _dispatch_search_queries(state: AgentState):
         "tavily_fanout",
         extra={
             "event": "research_graph.tavily_fanout",
-            "run_id": state.get("run_id", "unknown"),
+            "run_id": current_run_id(),
             "query_count": len(plan.search_queries),
         },
     )

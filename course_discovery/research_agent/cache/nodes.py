@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from course_discovery.domain.models import ResearchRunMetrics, UserMemory
+from course_discovery.domain.run_config import current_run_id
 from course_discovery.domain.state import AgentState
 from course_discovery.observability.logging import get_logger
 from course_discovery.observability.metrics import record_cache_lookup
@@ -32,13 +33,12 @@ def course_cache_lookup_node(state: AgentState) -> dict:
         "course_cache_lookup_complete",
         extra={
             "event": "cache.lookup_complete",
-            "run_id": state.get("run_id", "unknown"),
+            "run_id": current_run_id(),
             "candidate_count": len(candidates),
         },
     )
     return {
         "cache_candidates": candidates,
-        "cache_hits": len(candidates),
         "metrics": metrics,
     }
 
@@ -50,7 +50,7 @@ def course_cache_upsert_node(state: AgentState) -> dict:
         "course_cache_upsert_complete",
         extra={
             "event": "cache.upsert_complete",
-            "run_id": state.get("run_id", "unknown"),
+            "run_id": current_run_id(),
             "course_count": len(useful_courses),
         },
     )

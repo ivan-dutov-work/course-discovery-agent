@@ -22,7 +22,7 @@ async def main(mode: str, thread_id: str) -> None:
     async with open_checkpointer() as saver:
         graph = build_graph(checkpointer=saver)
         await graph.ainvoke(
-            _initial_state(QUERY, thread_id),
+            _initial_state(QUERY),
             {"configurable": {"thread_id": thread_id}},
             durability=mode,
         )

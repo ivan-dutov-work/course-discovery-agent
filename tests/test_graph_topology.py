@@ -98,7 +98,7 @@ class TopologyRunTests(unittest.IsolatedAsyncioTestCase):
     async def test_augment_reenters_research_at_gap_planning(self):
         graph = build_graph()
         config = {"configurable": {"thread_id": "topo-augment"}}
-        await self._visited(graph, _initial_state(QUERY, "topo-augment"), config)
+        await self._visited(graph, _initial_state(QUERY), config)
 
         await graph.aupdate_state(
             config,
@@ -115,7 +115,7 @@ class TopologyRunTests(unittest.IsolatedAsyncioTestCase):
     async def test_parse_error_ends_in_discard_run(self):
         graph = build_graph()
         config = {"configurable": {"thread_id": "topo-parse-error"}}
-        state = _initial_state(QUERY, "topo-parse-error")
+        state = _initial_state(QUERY)
         del state["user_query"]
 
         visited = await self._visited(graph, state, config)
@@ -128,7 +128,7 @@ class TopologyRunTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_planning_error_ends_research_without_dangling_node(self):
         graph = build_research_graph()
-        state = _initial_state(QUERY, "topo-plan-error")
+        state = _initial_state(QUERY)
 
         visited = await self._visited(graph, state, None)
         result = await graph.ainvoke(state)
@@ -145,7 +145,7 @@ class TopologyRunTests(unittest.IsolatedAsyncioTestCase):
             "course_discovery.research_agent.search.nodes.TavilyClient.search",
             side_effect=ValueError("boom"),
         ):
-            visited = await self._visited(graph, _initial_state(QUERY, "topo-search-error"), config)
+            visited = await self._visited(graph, _initial_state(QUERY), config)
 
         values = (await graph.aget_state(config)).values
         self.assertIn("rank_and_summarize_courses", visited)

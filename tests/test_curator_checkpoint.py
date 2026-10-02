@@ -50,7 +50,7 @@ class CuratorCheckpointTests(unittest.IsolatedAsyncioTestCase):
         config = {"configurable": {"thread_id": thread_id}}
         async with open_checkpointer() as saver:
             graph = build_graph(checkpointer=saver)
-            await graph.ainvoke({**_initial_state("python courses", thread_id), "user_id": "ckpt-user"}, config)
+            await graph.ainvoke({**_initial_state("python courses"), "user_id": "ckpt-user"}, config)
             await graph.aupdate_state(config, {"manager_feedback": "discard: I'm done with udemy"})
             await graph.ainvoke(None, config)
             state = await graph.aget_state(config)

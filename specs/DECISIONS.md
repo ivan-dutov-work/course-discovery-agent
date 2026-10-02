@@ -124,11 +124,22 @@ leave it and append a new one that says which it replaces and what changed.
   user-derived text; storing it in the shared cache reaches a table erasure cannot cover (the
   flow-rule check flags it) and lets loosely matched courses pollute later lookups. Topics come
   from the course's own content, by a tagging step that is not built. (notes: 05-scale-and-scope.md)
-- **Do not restructure `AgentState` wholesale.** It is wide (32 channels) but the width is mostly
+- **Do not restructure `AgentState` wholesale.** It is wide (34 channels, 28 after the top-level pass below) but the width is mostly
   the article's subject: per-stage candidate lists are checkpoint history, and reducers and `Pii`
   markers are per channel, so nesting channels hides both from `flow_specs.py`. Fix the real
   redundancy (duplicate counters, budgets held as state) and try private schemas on new code
   first (the P5 curator). Backlog S1.
+- **Top-level state holds only what cannot be derived.** The run id is the `thread_id`; the two
+  budgets are optional `configurable` keys with in-code defaults; the review round is
+  `len(feedback_history)`; `manager_feedback` is an inbox cleared once interpreted;
+  `metrics` is the only home of the counters; the gateway failure sets `discard_reason` and
+  the edge reads that, not a second `error` flag. `user_id` stays a channel because the `Pii`
+  markers and `flow_specs.py` anchor on it. Budgets are not persisted by LangGraph, so a caller
+  that resumes with a different config changes them (measured in `tests/test_top_level_state.py`);
+  accepted because the CLI is the only caller and always passes the defaults. `Command(goto=...)`
+  for the gateway failure stays out (`STATUS.md`, "Not in the code"). In-flight runs must be finished
+  or discarded before deploying it: a thread paused under the old channel set does not resume
+  (`ARCHITECTURE.md`, "Naming"). (notes: 02-durability-replay-effects.md)
 - **The curator writes only fields a next-run consumer reads.** `career_goals`,
   `learning_style_notes` and `preferred_course_length` are refused by `propose_patch`; free-text
   preferences go into scoped notes, which the ranking prompt reads. Cases 5 and 6 of

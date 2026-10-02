@@ -65,7 +65,7 @@ class RedactPiiFacadeTests(unittest.TestCase):
 
 class BoundaryTests(unittest.TestCase):
     def test_initial_state_never_holds_raw_query(self):
-        state = _initial_state(RAW_QUERY, "run-1")
+        state = _initial_state(RAW_QUERY)
         for value in RAW_VALUES:
             self.assertNotIn(value, state["user_query"])
 
@@ -87,7 +87,7 @@ class BoundaryTests(unittest.TestCase):
             seen.append(query)
             return _fallback(query)
 
-        state = _initial_state(RAW_QUERY, "run-1")
+        state = _initial_state(RAW_QUERY)
         state["user_query"] = RAW_QUERY
         with patch("course_discovery.app.gateway._parse_filters", side_effect=fake_parse):
             gateway_node(state)
@@ -100,7 +100,7 @@ class CheckpointPlacementTests(unittest.IsolatedAsyncioTestCase):
     async def _persisted_blob(self, state) -> str:
         saver = memory_saver()
         graph = build_graph(checkpointer=saver)
-        config = {"configurable": {"thread_id": state["run_id"]}, "recursion_limit": 60}
+        config = {"configurable": {"thread_id": "pii-placement"}, "recursion_limit": 60}
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("OPENROUTER_API_KEY", None)
             async for _ in graph.astream(state, config):
@@ -108,12 +108,12 @@ class CheckpointPlacementTests(unittest.IsolatedAsyncioTestCase):
         return repr(saver.storage) + repr(saver.blobs) + repr(saver.writes)
 
     async def test_ingress_redaction_keeps_pii_out_of_every_checkpoint(self):
-        blob = await self._persisted_blob(_initial_state(RAW_QUERY, "ingress"))
+        blob = await self._persisted_blob(_initial_state(RAW_QUERY))
         for value in RAW_VALUES:
             self.assertNotIn(value, blob)
 
     async def test_gateway_only_redaction_cannot_keep_pii_out_of_checkpoints(self):
-        state = _initial_state("placeholder", "gateway-only")
+        state = _initial_state("placeholder")
         state["user_query"] = RAW_QUERY
         blob = await self._persisted_blob(state)
         self.assertIn("Anna Kovalenko", blob)

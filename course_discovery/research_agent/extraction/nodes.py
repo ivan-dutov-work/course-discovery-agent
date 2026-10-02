@@ -4,6 +4,7 @@ import re
 from urllib.parse import urlparse
 
 from course_discovery.domain.models import CourseCandidate, EvidenceItem
+from course_discovery.domain.run_config import current_run_id
 from course_discovery.domain.state import AgentState
 from course_discovery.observability.logging import get_logger
 
@@ -86,7 +87,7 @@ def candidate_extractor_node(state: AgentState) -> dict:
         "candidate_extraction_complete",
         extra={
             "event": "extractor.complete",
-            "run_id": state.get("run_id", "unknown"),
+            "run_id": current_run_id(),
             "result_count": len(state.get("tavily_results", [])),
             "candidate_count": len(candidates),
         },

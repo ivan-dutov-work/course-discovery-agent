@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from langchain_core.runnables import RunnableConfig
+
 from course_discovery.domain.models import DeliveryStatus
+from course_discovery.domain.run_config import current_run_id, run_id_of
 from course_discovery.domain.state import AgentState
 from course_discovery.observability.logging import get_logger
 from course_discovery.research_agent.memory.repository import (
@@ -18,7 +21,7 @@ def user_memory_lookup_node(state: AgentState) -> dict:
         "user_memory_lookup_complete",
         extra={
             "event": "memory.lookup_complete",
-            "run_id": state.get("run_id", "unknown"),
+            "run_id": current_run_id(),
             "preferred_provider_count": len(memory.preferred_providers),
             "avoided_provider_count": len(memory.avoided_providers),
             "completed_count": len(memory.completed_course_urls),
@@ -28,9 +31,9 @@ def user_memory_lookup_node(state: AgentState) -> dict:
     return {"user_memory": memory}
 
 
-def user_memory_update_node(state: AgentState) -> dict:
-    history = state.get("feedback_history") or []
-    feedback = "\n".join(history) or state.get("manager_feedback")
+def user_memory_update_node(state: AgentState, config: RunnableConfig) -> dict:
+    run_id = run_id_of(config)
+    feedback = "\n".join(state.get("feedback_history") or []) or None
     accepted = state.get("publish_status") in {DeliveryStatus.QUEUED, DeliveryStatus.DELIVERED}
     record_feedback(
         state.get("user_id"),
@@ -38,13 +41,13 @@ def user_memory_update_node(state: AgentState) -> dict:
         state.get("user_query", ""),
         accepted=accepted,
         feedback_text=feedback,
-        run_id=state.get("run_id"),
+        run_id=run_id,
     )
     logger.info(
         "user_memory_update_complete",
         extra={
             "event": "memory.update_complete",
-            "run_id": state.get("run_id", "unknown"),
+            "run_id": run_id,
             "accepted": accepted,
             "course_count": len(state.get("valid_courses", [])),
         },
