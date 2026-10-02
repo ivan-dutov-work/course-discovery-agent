@@ -7,6 +7,8 @@ import httpx
 from course_discovery.research_agent.embeddings.base import EMBEDDING_DIMENSION, EmbeddingError
 
 DEFAULT_MODEL = "openai/text-embedding-3-small"
+DEFAULT_TOPIC_FLOOR = 0.22
+DEFAULT_RELATIVE_CUTOFF = 0.70
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 BATCH_SIZE = 100
 
@@ -33,6 +35,10 @@ class OpenRouterEmbedder:
         if not self._api_key:
             raise EmbeddingError("OPENROUTER_API_KEY is required for the openrouter embedder")
         self.model = model or os.getenv("EMBEDDING_MODEL", DEFAULT_MODEL)
+        self.topic_floor = float(os.getenv("EMBEDDING_TOPIC_FLOOR", DEFAULT_TOPIC_FLOOR))
+        self.relative_cutoff = float(
+            os.getenv("EMBEDDING_RELATIVE_CUTOFF", DEFAULT_RELATIVE_CUTOFF)
+        )
         self._url = f"{(base_url or DEFAULT_BASE_URL).rstrip('/')}/embeddings"
         self._client = client or httpx.Client(
             timeout=timeout or float(os.getenv("EMBEDDING_TIMEOUT_SECONDS", "10"))

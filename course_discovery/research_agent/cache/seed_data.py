@@ -7,8 +7,9 @@ from course_discovery.domain.models import (
     UserMemory,
 )
 from course_discovery.research_agent.cache.scoring import (
-    MIN_TOPIC_SIMILARITY,
     cosine,
+    topic_floor,
+    topic_relative_cutoff,
     topic_score,
     topic_vector,
 )
@@ -72,7 +73,8 @@ def seed_cache(
     ]
     query = topic_vector(filters.topic)
     profile = profile_vector(memory)
-    ranked: list[tuple[float, CourseCandidate]] = []
+    floor = topic_floor()
+    eligible: list[tuple[float, CourseCandidate]] = []
     for course in seed:
         if (
             course.url in memory.completed_course_urls
@@ -84,10 +86,17 @@ def seed_cache(
         course_vector = embed_texts([course_text(course.title, course.description, [])])[0]
         if query is not None:
             similarity = cosine(query, course_vector)
-            if similarity < MIN_TOPIC_SIMILARITY:
+            if similarity < floor:
                 continue
         if profile is not None:
             course = course.model_copy(update={"profile_similarity": cosine(profile, course_vector)})
-        ranked.append((topic_score(similarity, course.confidence, 0), course))
+        eligible.append((similarity, course))
+    best = max((similarity for similarity, _ in eligible), default=0.0)
+    cutoff = topic_relative_cutoff() * best if query is not None else 0.0
+    ranked = [
+        (topic_score(similarity, course.confidence, 0), course)
+        for similarity, course in eligible
+        if similarity >= cutoff
+    ]
     ranked.sort(key=lambda item: item[0], reverse=True)
     return [course for _, course in ranked[:limit]]

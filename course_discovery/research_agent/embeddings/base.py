@@ -4,6 +4,7 @@ import os
 from functools import lru_cache
 from typing import Protocol, runtime_checkable
 
+from course_discovery.research_agent.embeddings.facets import strip_facets
 from course_discovery.resilience import is_transient
 
 EMBEDDING_DIMENSION = 1536
@@ -68,7 +69,7 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
 
 
 def course_text(title: str, description: str | None, topics: list[str]) -> str:
-    return " ".join(part for part in (title, description or "", *topics) if part)
+    return strip_facets(" ".join(part for part in (title, description or "", *topics) if part))
 
 
 def to_pgvector(vector: list[float]) -> str:

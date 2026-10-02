@@ -14,7 +14,7 @@ from course_discovery.domain.models import (
 )
 from course_discovery.research_agent.cache.nodes import course_cache_lookup_node
 from course_discovery.research_agent.cache.repository import search_course_cache, upsert_courses
-from course_discovery.research_agent.embeddings import EmbeddingError, set_embedder
+from course_discovery.research_agent.embeddings import EmbeddingError, HashingEmbedder, set_embedder
 from course_discovery.research_agent.embeddings.__main__ import backfill
 from course_discovery.research_agent.planning.nodes import research_planner_node
 from tests.test_embeddings import BrokenEmbedder
@@ -50,12 +50,32 @@ def _filters(topic: str, **kwargs) -> SearchFilters:
     return SearchFilters(topic=topic, **kwargs)
 
 
+class FixedEmbedder:
+    dimension = 1536
+    topic_floor = 0.1
+
+    def __init__(self, relative_cutoff: float) -> None:
+        self.relative_cutoff = relative_cutoff
+
+    def embed(self, texts):
+        vectors = []
+        for text in texts:
+            head = [1.0, 0.0] if text == "python" else [0.0, 1.0]
+            if text.startswith("Python for Everybody"):
+                head = [0.8, 0.6]
+            elif text.startswith("CS50"):
+                head = [0.5, 0.866]
+            vectors.append(head + [0.0] * 1534)
+        return vectors
+
+
 class SeedCacheTopicTests(unittest.TestCase):
     def setUp(self):
         env = patch.dict(os.environ, {}, clear=False)
         env.start()
         self.addCleanup(env.stop)
         os.environ.pop("DATABASE_URL", None)
+        set_embedder(HashingEmbedder())
         self.addCleanup(set_embedder, None)
 
     def _titles(self, topic: str, memory: UserMemory | None = None) -> list[str]:
@@ -69,6 +89,42 @@ class SeedCacheTopicTests(unittest.TestCase):
     def test_unrelated_topics_return_nothing(self):
         for topic in ["cooking", "javascript", "quantum physics", "machine learning"]:
             self.assertEqual(self._titles(topic), [], topic)
+
+    def test_floor_follows_the_embedder(self):
+        from course_discovery.research_agent.cache.scoring import MIN_TOPIC_SIMILARITY, topic_floor
+
+        class Fake:
+            dimension = 1536
+            topic_floor = 0.4
+
+        class Bare:
+            dimension = 1536
+
+        set_embedder(Fake())
+        self.assertEqual(topic_floor(), 0.4)
+        set_embedder(Bare())
+        self.assertEqual(topic_floor(), MIN_TOPIC_SIMILARITY)
+
+    def test_relative_cutoff_drops_courses_far_below_the_best(self):
+        set_embedder(FixedEmbedder(relative_cutoff=0.7))
+        self.assertEqual(self._titles("python"), ["Python for Everybody"])
+        set_embedder(FixedEmbedder(relative_cutoff=0.5))
+        self.assertEqual(len(self._titles("python")), 2)
+        set_embedder(FixedEmbedder(relative_cutoff=0.0))
+        self.assertEqual(len(self._titles("python")), 2)
+
+    def test_blank_topic_never_reaches_the_embedder(self):
+        class RejectsEmptyInput:
+            dimension = 1536
+
+            def embed(self, texts):
+                if any(not text.strip() for text in texts):
+                    raise EmbeddingError("empty input")
+                return [[1.0] + [0.0] * 1535 for _ in texts]
+
+        set_embedder(RejectsEmptyInput())
+        for topic in ["", "   "]:
+            self.assertGreaterEqual(len(self._titles(topic)), 0, topic)
 
     def test_query_with_facet_words_still_matches_on_topic_only(self):
         self.assertEqual(len(self._titles("Find free Python certificate beginners")), 2)
@@ -116,6 +172,7 @@ class PostgresCacheTopicTests(unittest.TestCase):
         env = patch.dict(os.environ, {"DATABASE_URL": TEST_DATABASE_URL})
         env.start()
         self.addCleanup(env.stop)
+        set_embedder(HashingEmbedder())
         self.addCleanup(set_embedder, None)
         self.conn = psycopg.connect(TEST_DATABASE_URL, autocommit=True)
         self.addCleanup(self.conn.close)
@@ -146,7 +203,7 @@ class PostgresCacheTopicTests(unittest.TestCase):
 
     def test_embedder_failure_rolls_back_the_whole_upsert(self):
         set_embedder(BrokenEmbedder())
-        with self.assertRaises(EmbeddingError):
+        with self.assertRaises(ConnectionError):
             self._store(["py1", "py2"])
         self.assertEqual(self.conn.execute("SELECT count(*) FROM courses").fetchone()[0], 0)
 
@@ -213,8 +270,32 @@ class PostgresCacheTopicTests(unittest.TestCase):
     def test_embedder_failure_propagates(self):
         self._store(["py1"])
         set_embedder(BrokenEmbedder())
-        with self.assertRaises(EmbeddingError):
+        with self.assertRaises(ConnectionError):
             self._titles("python")
+
+    def test_relative_cutoff_drops_courses_far_below_the_best(self):
+        set_embedder(FixedEmbedder(relative_cutoff=0.7))
+        self._store(["py1", "py2", "js1"])
+        self.assertEqual(self._titles("python"), ["Python for Everybody"])
+        set_embedder(FixedEmbedder(relative_cutoff=0.5))
+        self.assertEqual(len(self._titles("python")), 2)
+        set_embedder(FixedEmbedder(relative_cutoff=0.0))
+        self.assertEqual(len(self._titles("python")), 2)
+
+    def test_relative_cutoff_is_measured_against_the_filtered_best(self):
+        set_embedder(FixedEmbedder(relative_cutoff=0.7))
+        self._store(["py1", "py2"])
+        self.conn.execute("UPDATE courses SET is_free = FALSE WHERE title = 'Python for Everybody'")
+        self.assertEqual(self._titles("python", max_price=0), ["CS50's Introduction to Programming with Python"])
+
+    def test_backfill_all_reembeds_rows_that_already_have_a_vector(self):
+        self._store(["py1", "py2"])
+        before = self.conn.execute("SELECT course_embedding::text FROM courses ORDER BY id").fetchall()
+        set_embedder(FixedEmbedder(relative_cutoff=0.0))
+        self.assertEqual(backfill(), 0)
+        self.assertEqual(backfill(everything=True), 2)
+        after = self.conn.execute("SELECT course_embedding::text FROM courses ORDER BY id").fetchall()
+        self.assertNotEqual(before, after)
 
     def test_backfill_fills_only_null_rows(self):
         self._store(["py1", "py2", "js1"])
@@ -241,7 +322,7 @@ class PostgresCacheTopicTests(unittest.TestCase):
         self._store(["py1"])
         self.conn.execute("UPDATE courses SET course_embedding = NULL")
         set_embedder(BrokenEmbedder())
-        with self.assertRaises(EmbeddingError):
+        with self.assertRaises(ConnectionError):
             backfill()
         self.assertEqual(
             self.conn.execute("SELECT count(*) FROM courses WHERE course_embedding IS NULL").fetchone()[0], 1

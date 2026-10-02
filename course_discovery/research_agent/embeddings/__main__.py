@@ -11,8 +11,9 @@ from course_discovery.research_agent.embeddings.base import (
 )
 
 
-def backfill(batch_size: int = 200) -> int:
+def backfill(batch_size: int = 200, *, everything: bool = False) -> int:
     filled = 0
+    last_id = 0
     with connect() as conn:
         if conn is None:
             raise SystemExit("DATABASE_URL is not set")
@@ -21,12 +22,12 @@ def backfill(batch_size: int = 200) -> int:
                 rows = conn.execute(
                     """
                     SELECT id, title, description, topics FROM courses
-                    WHERE course_embedding IS NULL
+                    WHERE id > %s AND (%s OR course_embedding IS NULL)
                     ORDER BY id
                     LIMIT %s
                     FOR UPDATE SKIP LOCKED
                     """,
-                    (batch_size,),
+                    (last_id, everything, batch_size),
                 ).fetchall()
                 if not rows:
                     return filled
@@ -37,13 +38,15 @@ def backfill(batch_size: int = 200) -> int:
                         (to_pgvector(vector), row[0]),
                     )
                 filled += len(rows)
+                last_id = rows[-1][0]
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="course_discovery.research_agent.embeddings")
     parser.add_argument("command", choices=["backfill"])
-    parser.parse_args(argv)
-    print(f"backfilled {backfill()} courses")
+    parser.add_argument("--all", action="store_true", help="re-embed rows that already have a vector")
+    args = parser.parse_args(argv)
+    print(f"backfilled {backfill(everything=args.all)} courses")
     return 0
 
 

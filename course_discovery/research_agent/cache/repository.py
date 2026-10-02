@@ -14,10 +14,11 @@ from course_discovery.observability.metrics import record_db_error
 from course_discovery.persistence.postgres import connect
 from course_discovery.research_agent.cache.scoring import (
     CONFIDENCE_WEIGHT,
-    MIN_TOPIC_SIMILARITY,
     SIMILARITY_WEIGHT,
     USE_COUNT_CAP,
     USE_COUNT_WEIGHT,
+    topic_floor,
+    topic_relative_cutoff,
     topic_vector,
 )
 from course_discovery.research_agent.cache.seed_data import seed_cache
@@ -42,10 +43,31 @@ def search_course_cache(
         try:
             rows = conn.execute(
                 """
+                WITH matched AS (
+                  SELECT c.id, s.sim, s.psim
+                  FROM courses c
+                  CROSS JOIN LATERAL (
+                    SELECT CASE WHEN c.course_embedding IS NOT NULL
+                                THEN 1 - (c.course_embedding <=> %(query)s::vector) END AS sim,
+                           (SELECT 1 - (c.course_embedding <=> up.profile_embedding)
+                            FROM user_preferences up
+                            WHERE up.user_id = %(user_id)s
+                              AND up.profile_embedding IS NOT NULL
+                              AND c.course_embedding IS NOT NULL) AS psim
+                  ) s
+                  WHERE c.validation_status = 'valid'
+                    AND (%(free_only)s = FALSE OR c.is_free = TRUE)
+                    AND (%(certificate)s = FALSE OR c.has_certificate = TRUE)
+                    AND (%(level)s = 'any' OR c.level = %(level)s OR c.level IS NULL)
+                    AND (c.language = ANY(%(languages)s) OR c.language IS NULL)
+                    AND NOT (c.canonical_url = ANY(%(completed)s))
+                    AND NOT (c.canonical_url = ANY(%(rejected)s))
+                    AND (s.sim IS NULL OR s.sim >= %(floor)s)
+                )
                 SELECT c.title, c.provider, c.canonical_url, c.description, c.price_text,
                        c.is_free, c.has_certificate, c.level, c.language, c.rating,
                        c.published_or_updated, c.validation_confidence,
-                       s.psim, c.duration_hours,
+                       m.psim, c.duration_hours,
                        COALESCE(
                          jsonb_agg(
                            jsonb_build_object(
@@ -56,28 +78,14 @@ def search_course_cache(
                          ) FILTER (WHERE e.id IS NOT NULL),
                          '[]'::jsonb
                        ) AS evidence
-                FROM courses c
+                FROM matched m
+                JOIN courses c ON c.id = m.id
                 LEFT JOIN course_evidence e ON e.course_id = c.id
-                CROSS JOIN LATERAL (
-                  SELECT CASE WHEN c.course_embedding IS NOT NULL
-                              THEN 1 - (c.course_embedding <=> %(query)s::vector) END AS sim,
-                         (SELECT 1 - (c.course_embedding <=> up.profile_embedding)
-                          FROM user_preferences up
-                          WHERE up.user_id = %(user_id)s
-                            AND up.profile_embedding IS NOT NULL
-                            AND c.course_embedding IS NOT NULL) AS psim
-                ) s
-                WHERE c.validation_status = 'valid'
-                  AND (%(free_only)s = FALSE OR c.is_free = TRUE)
-                  AND (%(certificate)s = FALSE OR c.has_certificate = TRUE)
-                  AND (%(level)s = 'any' OR c.level = %(level)s OR c.level IS NULL)
-                  AND (c.language = ANY(%(languages)s) OR c.language IS NULL)
-                  AND NOT (c.canonical_url = ANY(%(completed)s))
-                  AND NOT (c.canonical_url = ANY(%(rejected)s))
-                  AND (s.sim IS NULL OR s.sim >= %(floor)s)
-                GROUP BY c.id, s.sim, s.psim
-                ORDER BY (s.sim IS NULL),
-                         (%(w_sim)s * COALESCE(s.sim, 0)
+                WHERE m.sim IS NULL
+                   OR m.sim >= %(relative)s * (SELECT max(sim) FROM matched)
+                GROUP BY c.id, m.sim, m.psim
+                ORDER BY (m.sim IS NULL),
+                         (%(w_sim)s * COALESCE(m.sim, 0)
                           + %(w_conf)s * c.validation_confidence
                           + %(w_use)s * LEAST(c.use_count, %(use_cap)s) / %(use_cap)s::float) DESC,
                          c.id
@@ -92,7 +100,8 @@ def search_course_cache(
                     "languages": filters.content_languages,
                     "completed": memory.completed_course_urls,
                     "rejected": memory.rejected_course_urls,
-                    "floor": MIN_TOPIC_SIMILARITY,
+                    "floor": topic_floor(),
+                    "relative": topic_relative_cutoff(),
                     "w_sim": SIMILARITY_WEIGHT,
                     "w_conf": CONFIDENCE_WEIGHT,
                     "w_use": USE_COUNT_WEIGHT,
