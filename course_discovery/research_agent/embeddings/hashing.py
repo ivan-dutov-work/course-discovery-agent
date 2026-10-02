@@ -6,12 +6,12 @@ import re
 from collections import Counter
 
 from course_discovery.research_agent.embeddings.base import EMBEDDING_DIMENSION
+from course_discovery.research_agent.embeddings.facets import FACET_WORDS
 
 _TOKEN = re.compile(r"[a-z0-9+#]+")
 _STOPWORDS = frozenset(
-    "a an and are as at be by course courses find for from in into is it of on or the to with "
-    "your free beginner intermediate advanced certificate certification certified".split()
-)
+    "a an and are as at be by course courses find for from in into is it of on or the to with your".split()
+) | frozenset(FACET_WORDS)
 
 
 def _stem(token: str) -> str:
@@ -33,6 +33,9 @@ def _bucket(feature: str, dimension: int) -> tuple[int, float]:
 
 class HashingEmbedder:
     """Lexical feature-hashed embedding: shared words and word pairs, not meaning."""
+
+    topic_floor = 0.12
+    relative_cutoff = 0.0
 
     def __init__(self, dimension: int = EMBEDDING_DIMENSION) -> None:
         self.dimension = dimension

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from urllib.parse import urlparse
 
 from course_discovery.domain.models import CourseCandidate, EvidenceItem
@@ -22,6 +23,17 @@ def _is_aggregator(url: str) -> bool:
         marker in host
         for marker in ["medium.com", "reddit.com", "quora.com", "classcentral.com"]
     )
+
+
+_HOURS = re.compile(r"(\d+(?:\.\d+)?)(?:\s*-\s*\d+(?:\.\d+)?)?\s*(?:hours?|hrs?)\b(?!\s*(?:/|a|per)\s*(?:week|day))", re.I)
+
+
+def _duration_hours(result) -> float | None:
+    structured = (result.raw_metadata or {}).get("duration_hours")
+    if isinstance(structured, (int, float)) and structured > 0:
+        return float(structured)
+    match = _HOURS.search(result.snippet or "")
+    return float(match.group(1)) if match and float(match.group(1)) > 0 else None
 
 
 def _extract_result(result) -> CourseCandidate | None:
@@ -50,6 +62,7 @@ def _extract_result(result) -> CourseCandidate | None:
         language="en",
         rating=None,
         published_or_updated=None,
+        duration_hours=_duration_hours(result),
         source="tavily",
         evidence=[
             EvidenceItem(

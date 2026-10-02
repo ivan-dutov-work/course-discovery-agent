@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from course_discovery.research_agent.embeddings import embed_texts
+from course_discovery.research_agent.embeddings import embed_texts, get_embedder
+from course_discovery.research_agent.embeddings.facets import strip_facets
 
 MIN_TOPIC_SIMILARITY = 0.12
 SIMILARITY_WEIGHT = 0.7
@@ -9,8 +10,19 @@ USE_COUNT_WEIGHT = 0.1
 USE_COUNT_CAP = 10
 
 
+def topic_floor() -> float:
+    return getattr(get_embedder(), "topic_floor", MIN_TOPIC_SIMILARITY)
+
+
+def topic_relative_cutoff() -> float:
+    return getattr(get_embedder(), "relative_cutoff", 0.0)
+
+
 def topic_vector(topic: str) -> list[float] | None:
-    vector = embed_texts([topic])[0]
+    text = strip_facets(topic)
+    if not text:
+        return None
+    vector = embed_texts([text])[0]
     return vector if any(vector) else None
 
 

@@ -31,6 +31,9 @@ def history_curator(messages, _turn):
     text = messages[1].content
     prefer = [p.lower() for p in re.findall(r"prefer (\w+)", text, re.I)]
     avoid = [p.lower() for p in re.findall(r"done with (\w+)", text, re.I)]
+    if calls == 1 and "too long" in text:
+        patch_ = {"set": {"preferred_course_length": "short"}}
+        return reply(call("propose_patch", scope="durable", reason="stated", patch=patch_))
     if calls == 1 and (prefer or avoid):
         patch_ = {"add": {"preferred_providers": prefer, "avoided_providers": avoid}}
         return reply(call("propose_patch", scope="durable", reason="stated", patch=patch_))
@@ -95,7 +98,20 @@ class FeedbackToNextRunScenario:
         self.assertEqual({provider_of(c.url) for c in second["valid_courses"]} & {AVOIDED}, set())
 
 
-class FakeStoreE2E(FeedbackToNextRunScenario, unittest.IsolatedAsyncioTestCase):
+class CourseLengthScenario(FeedbackToNextRunScenario):
+    async def test_too_long_feedback_is_stored_and_run_two_leads_with_a_short_course(self):
+        user = self.user("busy")
+        feedback = "discard: too long, I have 2 hours a week"
+        first = await self._run(user, [feedback])
+        self.assertEqual(first["memory_update"], "committed")
+        self.assertEqual(self.profile(user).preferred_course_length, "short")
+
+        second = await self._run(user, ["approve"])
+        first_course = {c.url: c for c in second["valid_courses"]}[digest_urls(second["digest"])[0]]
+        self.assertLessEqual(first_course.duration_hours, 10)
+
+
+class FakeStoreE2E(CourseLengthScenario, unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         env = patch.dict(os.environ, {}, clear=False)
         env.start()
@@ -130,7 +146,7 @@ class FakeStoreE2E(FeedbackToNextRunScenario, unittest.IsolatedAsyncioTestCase):
 
 
 @unittest.skipUnless(os.getenv("TEST_DATABASE_URL"), "TEST_DATABASE_URL not set")
-class PostgresE2E(FeedbackToNextRunScenario, unittest.IsolatedAsyncioTestCase):
+class PostgresE2E(CourseLengthScenario, unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.url = os.environ["TEST_DATABASE_URL"]
         env = patch.dict(os.environ, {"DATABASE_URL": self.url})

@@ -8,11 +8,13 @@ class MockListing:
         title: str,
         url: str,
         snippet: str,
+        duration_hours: float | None = None,
     ) -> None:
         self.keywords = keywords
         self.title = title
         self.url = url
         self.snippet = snippet
+        self.duration_hours = duration_hours
 
 
 CATALOG: list[MockListing] = [
@@ -26,6 +28,7 @@ CATALOG: list[MockListing] = [
             "4.8 rating from 45,000+ reviews. Includes a shareable certificate "
             "upon paid completion."
         ),
+        duration_hours=60,
     ),
     MockListing(
         keywords=["python", "beginner", "free"],
@@ -36,6 +39,7 @@ CATALOG: list[MockListing] = [
             "track (verified certificate available for a fee via edX). Beginner "
             "level, English, self-paced."
         ),
+        duration_hours=10,
     ),
     MockListing(
         keywords=["python", "intermediate", "certificate"],
@@ -46,6 +50,7 @@ CATALOG: list[MockListing] = [
             "Includes a certificate of completion. Intermediate level, English, "
             "4.7 rating."
         ),
+        duration_hours=60,
     ),
     MockListing(
         keywords=["javascript", "beginner", "free", "certificate"],
@@ -56,6 +61,7 @@ CATALOG: list[MockListing] = [
             "Beginner level, English, self-paced, no rating system on the "
             "platform itself."
         ),
+        duration_hours=300,
     ),
     MockListing(
         keywords=["javascript", "web", "intermediate"],
@@ -65,6 +71,7 @@ CATALOG: list[MockListing] = [
             "Udemy course, paid ($54.99 list price), includes certificate. "
             "Intermediate level, English, 4.7 rating from 190,000+ students."
         ),
+        duration_hours=70,
     ),
     MockListing(
         keywords=["data", "science", "python", "free", "certificate"],
@@ -75,6 +82,7 @@ CATALOG: list[MockListing] = [
             "graded certificate ($39/month). Beginner-to-intermediate, English, "
             "4.6 rating."
         ),
+        duration_hours=120,
     ),
     MockListing(
         keywords=["machine", "learning", "free", "certificate"],
@@ -85,6 +93,7 @@ CATALOG: list[MockListing] = [
             "certificate requires payment. Intermediate level, English, 4.9 "
             "rating."
         ),
+        duration_hours=80,
     ),
     MockListing(
         keywords=["sql", "database", "beginner", "free"],
@@ -94,6 +103,7 @@ CATALOG: list[MockListing] = [
             "Khan Academy, entirely free, no certificate offered. Beginner "
             "level, English, self-paced with practice exercises."
         ),
+        duration_hours=6,
     ),
     MockListing(
         keywords=["web", "development", "html", "css", "free", "certificate"],
@@ -103,6 +113,7 @@ CATALOG: list[MockListing] = [
             "freeCodeCamp, fully free, includes a verified certificate. "
             "Beginner level, English, project-based curriculum."
         ),
+        duration_hours=300,
     ),
     MockListing(
         keywords=["react", "javascript", "intermediate", "certificate"],
@@ -113,6 +124,7 @@ CATALOG: list[MockListing] = [
             "certificate. Intermediate level, English, 4.6 rating from 200,000+ "
             "students."
         ),
+        duration_hours=68,
     ),
     MockListing(
         keywords=["cloud", "aws", "certificate", "intermediate"],
@@ -123,6 +135,7 @@ CATALOG: list[MockListing] = [
             "exam is a separate paid exam ($100). Beginner-to-intermediate level, "
             "English."
         ),
+        duration_hours=6,
     ),
     MockListing(
         keywords=["cybersecurity", "beginner", "free", "certificate"],
@@ -132,6 +145,7 @@ CATALOG: list[MockListing] = [
             "Coursera, free to audit, certificate requires a paid subscription "
             "($49/month). Beginner level, English, 4.8 rating."
         ),
+        duration_hours=120,
     ),
     MockListing(
         keywords=["python", "advanced", "free"],
@@ -141,6 +155,7 @@ CATALOG: list[MockListing] = [
             "Free tutorials, no certificate offered. Advanced level, English, "
             "self-paced articles and videos."
         ),
+        duration_hours=8,
     ),
     MockListing(
         keywords=["data", "science", "sql", "free"],
@@ -150,6 +165,7 @@ CATALOG: list[MockListing] = [
             "freeCodeCamp, fully free, includes a verified certificate. "
             "Intermediate level, English, project-based."
         ),
+        duration_hours=30,
     ),
     MockListing(
         keywords=["javascript", "advanced", "certificate"],
@@ -159,5 +175,6 @@ CATALOG: list[MockListing] = [
             "Udemy course, paid ($44.99 list price), includes certificate. "
             "Advanced level, English, 4.7 rating."
         ),
+        duration_hours=25,
     ),
 ]

@@ -21,6 +21,19 @@ class DeliveryStatus(str, Enum):
     DEAD = "dead"
 
 
+COURSE_LENGTHS = ("short", "medium", "long")
+SHORT_COURSE_MAX_HOURS = 10.0
+MEDIUM_COURSE_MAX_HOURS = 40.0
+
+
+def length_bucket(hours: float | None) -> str | None:
+    if hours is None:
+        return None
+    if hours <= SHORT_COURSE_MAX_HOURS:
+        return "short"
+    return "medium" if hours <= MEDIUM_COURSE_MAX_HOURS else "long"
+
+
 class SearchFilters(BaseModel):
     topic: str = Field(default="general programming")
     max_price: float = Field(default=0.0, ge=0)
@@ -106,6 +119,9 @@ class MemoryPatch(BaseModel):
         )
         if unknown:
             raise ValueError(f"unknown memory fields: {sorted(unknown)}")
+        length = self.set.get("preferred_course_length")
+        if length is not None and length not in COURSE_LENGTHS:
+            raise ValueError(f"preferred_course_length must be one of {', '.join(COURSE_LENGTHS)}")
         if self.set.get("certificate_importance") not in {None, "required", "preferred", "irrelevant"}:
             raise ValueError("certificate_importance must be required, preferred or irrelevant")
         return self
@@ -150,6 +166,8 @@ class CourseCandidate(BaseModel):
     source: Literal["cache", "tavily", "manual"]
     evidence: list[EvidenceItem] = Field(default_factory=list)
     confidence: float = Field(default=0.0, ge=0, le=1)
+    duration_hours: float | None = Field(default=None, gt=0)
+    profile_similarity: float | None = None
 
 
 class CandidateValidation(BaseModel):

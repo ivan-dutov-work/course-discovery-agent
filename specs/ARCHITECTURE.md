@@ -120,7 +120,7 @@ parent and the shared reducer channel `feedback_history` is not echoed back and 
 - The user id and run id come from state; no tool takes either, so feedback text cannot aim a
   write at another user.
 - `propose_patch` is refused before `read_profile`, refuses fields without a consumer
-  (`career_goals`, `learning_style_notes`, `preferred_course_length`), refuses unknown fields and
+  (`career_goals`, `learning_style_notes`), refuses unknown fields and
   top-level extras, and never stores `this_run` or `not_a_preference`. A `topic:<x>` scope takes
   notes only and stamps the scope.
 - Idempotent per `run_id`: the claim row in `memory_updates` (also the audit trail, holding the
@@ -139,14 +139,28 @@ completed, rejected, avoided provider) are unchanged.
 - Embedder: `research_agent/embeddings/`, a port (`dimension`, `embed`) with a local
   `HashingEmbedder` default: feature-hashed word and word-pair counts into 1536 dimensions,
   L2-normalised, no network. It is lexical, not semantic: it matches shared words, not meaning.
-  Level, price and certificate words (`free`, `beginner`, `certificate`, ...) are ignored,
-  because they are separate filters and would otherwise match unrelated courses.
-- Floor: `MIN_TOPIC_SIMILARITY = 0.12`. Below it a course is dropped. Rows with a `NULL`
+  `EMBEDDER=openrouter` selects `OpenRouterEmbedder` (`/embeddings`, `dimensions=1536`, batches
+  of 100). The floor is a property of the embedder (`topic_floor`, fitted separately for each);
+  the weights are shared. After a switch, run `embeddings backfill --all`; after changing the model,
+  rerun `scripts/calibrate_topic_floor.py` and set `EMBEDDING_TOPIC_FLOOR` and
+  `EMBEDDING_RELATIVE_CUTOFF`.
+  Level, price and certificate words (`free`, `beginner`, `certificate`, ...) are removed from the
+  topic and from the stored course text before embedding (`embeddings/facets.py`), because they
+  are separate filters and would otherwise match unrelated courses.
+- Floor: `topic_floor()`, read from the embedder: 0.12 for `HashingEmbedder`, 0.22 for
+  `OpenRouterEmbedder` on `openai/text-embedding-3-small` (`EMBEDDING_TOPIC_FLOOR` overrides it;
+  an embedder without the attribute gets `MIN_TOPIC_SIMILARITY = 0.12`). Below it a course is
+  dropped. After the floor, `topic_relative_cutoff()` drops courses scoring below that fraction of
+  the best remaining similarity: 0.70 for `OpenRouterEmbedder` (`EMBEDDING_RELATIVE_CUTOFF`), none for
+  `HashingEmbedder`, whose scores are not compressed and lose recall under it (SQL: a `matched`
+  CTE, so the best is taken over courses that already pass the facet filters). Rows with a `NULL`
   embedding (written before the embeddings existed) skip the floor and sort last until
-  `python -m course_discovery.research_agent.embeddings backfill` fills them. A topic with no
+  `python -m course_discovery.research_agent.embeddings backfill` fills them (`--all` re-embeds
+  every row, needed after the stored text or the model changes). A topic with no
   content words (only facet words) skips the floor and similarity ordering.
 - Score: `0.7 * similarity + 0.2 * validation_confidence + 0.1 * min(use_count, 10) / 10`,
-  descending, ties by `id`. The weights are a choice, not a fit; only the floor was calibrated.
+  descending, ties by `id`. The weights were checked, not fitted: ordering quality is flat across
+  the range tried on both embedders, with 0.7 / 0.2 / 0.1 at or tied for the best (`DECISIONS.md`).
 - Write side: `upsert_courses` stores the embedding of title, description and the row's stored
   `topics` in the same transaction as the row. `topics` describes the course and is never
   derived from the user's query, so nothing writes it yet and it is left untouched on conflict.
@@ -156,8 +170,14 @@ completed, rejected, avoided provider) are unchanged.
 - The planner's threshold on cache hit count (`min_valid = 3`) now counts topical hits.
 - The HNSW index (`migrations/007`) exists for a later nearest-neighbour pre-filter; the
   blended `ORDER BY` does not use it, and at this size a scan is fine.
-- A remote `Embedder` would receive the topic, which derives from the redacted query. Declare
-  it as a sink in `privacy/flow_specs.py` when adding one.
+- A remote `Embedder` receives the topic (from the redacted query), course text and the redacted
+  profile text; it is declared as a sink in `privacy/flow_specs.py`.
+- Profile tie-break: `save_user_memory` writes `user_preferences.profile_embedding` (career goals,
+  learning style, notes, level, preferred providers) in the save transaction; the cache query
+  returns `1 - cosine` as `CourseCandidate.profile_similarity`, and the seed path computes the
+  same from `UserMemory`. The vector never enters state. `_rank_courses` orders by preference
+  score, price, similarity rounded to 0.1, then rating. Web candidates have no stored
+  embedding and carry `None`, which ranks as 0.
 
 ## State and memory
 
@@ -187,11 +207,11 @@ Each of these is a stand-in that the article should name as such, not a finished
 design.
 
 1. **Courses have no topics.** The embedding sees only title and description, so a course
-   whose text lacks the topic word is missed (recall 0.72 against 0.81 with ideal tags on the
+   whose text lacks the topic word is missed (recall 0.75 against 0.81 with ideal tags on the
    mock catalog, `notes/05`). A course-side tagging step that fills `courses.topics` from the
    course's own content is not built (`BACKLOG.md`).
-2. **`profile_embedding` is provisioned but unused.** `course_embedding` is written and read;
-   the profile column is not. Fix: P4b.
+2. **The profile tie-break covers cache candidates only.** Web candidates have no embedding
+   and are not embedded on the fly, so they never get a profile bonus.
 3. **Deduplication is lexical.** URL, title+host hash and fuzzy title cannot merge the
    same course listed under different titles on different hosts.
 4. **Search and ingestion share the request path.** Discovery, extraction, validation
@@ -202,8 +222,7 @@ design.
 5. **Learned preferences are narrow and not yet checked against a live model.** The curator
    writes only fields with a consumer: providers, level, language, budget, certificate,
    rejected and completed URLs, and scoped notes. `career_goals` and `learning_style_notes` have
-   no consumer and `preferred_course_length` has none until P4c, so feedback about them is
-   dropped, not stored. The stubbed-model tests pin the loop; how a real model behaves on the
+   no consumer beyond the profile vector, so feedback about them is dropped, not stored. The stubbed-model tests pin the loop; how a real model behaves on the
    case list is unmeasured (P6). Cases: `FEEDBACK.md`.
 6. **Reducer channels double-count across review rounds.** `tavily_calls`, `completed_queries`
    and `research_notes` are added to again each time `course_research` returns, so a REWRITE or

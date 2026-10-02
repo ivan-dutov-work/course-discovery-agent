@@ -13,47 +13,13 @@ fixed in this pass.
 Every item ends with tests (success and failure modes) and the doc updates named in `CLAUDE.md`.
 Before starting P6 read `specs/FEEDBACK.md`; it holds the case list the tests come from.
 
-### P3a. OpenRouter `Embedder` (before or right after merging the topic-cache PR)
-
-Proves the `Embedder` port swap works with a real semantic model; the hashing default stays for
-tests and offline runs.
-
-- `OpenRouterEmbedder` implementing `Embedder` (`dimension = 1536`), selected in
-  `embeddings/base.py:_default_embedder` by an env switch (default stays `HashingEmbedder`).
-  Pick a model that returns or accepts 1536 dimensions (column size is fixed by migration 001).
-  Transient errors propagate so `RetryPolicy` can fire; failures raise `EmbeddingError`.
-- Run `scripts/calibrate_topic_floor.py` against it (parametrize the script by embedder), refit
-  the topic floor and the 0.7 / 0.2 / 0.1 blend weights if they do not transfer, and record both
-  sets of numbers in `notes/05-scale-and-scope.md` and the outcome in `DECISIONS.md`.
-- Existing rows keep hashing vectors: document that switching embedders needs
-  `python -m course_discovery.research_agent.embeddings backfill`.
-- Tests: stubbed HTTP success, wrong dimension, transport error; a live test that skips without
-  `OPENROUTER_API_KEY`.
-- Docs: `ARCHITECTURE.md`, `STATUS.md`, CLAUDE.md environment section, article claim upgraded
-  from "topic-aware" to "semantic" only if the calibration supports it.
-
-### P4b. `profile_embedding` (gap 2)
-
-Write the profile vector on each profile save and use it as a ranking tie-break. The vector
-(1536 floats) never enters `AgentState`: compute it from the stored profile inside the
-repository and apply the tie-break in SQL or in a node-local read, so only the derived order
-reaches state. Web candidates have no stored embedding, so decide what the tie-break does for
-them (embed on the fly, or skip). Depends on the profile writer (done).
-
-### P4c. Course duration and the `preferred_course_length` consumer. Depends on the profile writer (done)
-
-`CourseCandidate` has no duration, so `preferred_course_length` is stored but read by
-nothing. Extract a duration from listings into `CourseCandidate` (mock catalog first), then boost
-matching courses in `rank_and_summarize_courses`. Until this lands P5 must not write the field
-(`DECISIONS.md`: a learned preference needs a named consumer).
-
 ### P6. End-to-end feedback tests with a judge
 
 Spec: `specs/FEEDBACK.md`, "Test layers".
 
 - `tests/test_memory_e2e.py` already holds the run-one/run-two scenario (feedback to curator to
   profile to run two, in-memory and Postgres) with a scripted curator model. Extend it to the
-  cases as parametrized fixtures; cases 5 and 6 wait for their consumers. Layer 2 (stubbed model, CI)
+  cases as parametrized fixtures; case 6 waits for its consumer. Layer 2 (stubbed model, CI)
   asserts run two's results exactly. Layer 3 (live model plus judge) skips without
   `OPENROUTER_API_KEY`.
 - `tests/judge.py`: Pydantic verdict, the five-point rubric, three calls and majority, through
@@ -131,7 +97,7 @@ Until that is decided, `CLAUDE.md`'s "Never auto-publish" stands and nothing her
   The input is untrusted search text, so do it with the prompt-injection item below. Then
   re-embed with `python -m course_discovery.research_agent.embeddings backfill` (extend it to
   `--all`), rerun `scripts/calibrate_topic_floor.py` and refit the floor. Expected gain on the
-  mock catalog: recall 0.72 to 0.81.
+  mock catalog: recall 0.75 to 0.81 on the hashing embedder.
 - **Prompt-injection check for untrusted search content.** The old plan named
   `extract_courses_from_results` and `verify_course_claims` as the insertion points, but both
   are rules, not LLM nodes. Re-derive the real surface (search snippets reaching the

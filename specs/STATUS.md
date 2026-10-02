@@ -22,7 +22,7 @@ Integration tests need `docker compose up -d` and
 
 ## Retrieval
 
-- `Embedder` port with a local lexical `HashingEmbedder`, embeddings stored with each cached course: `research_agent/embeddings/`, `tests/test_embeddings.py`.
+- `Embedder` port with a local lexical `HashingEmbedder` default and an `OpenRouterEmbedder` selected by `EMBEDDER=openrouter` (1536 dimensions, batched, transient errors propagate for `RetryPolicy`, other failures raise `EmbeddingError`); embeddings stored with each cached course: `research_agent/embeddings/`, `tests/test_embeddings.py`, `tests/test_openrouter_embedder.py` (stubbed HTTP; the live test skips without a key). The calibration script takes the embedder from `EMBEDDER`; it was run against `openai/text-embedding-3-small`, which set a per-embedder floor and relative cutoff (`topic_floor` 0.12 / 0.22, `relative_cutoff` none / 0.70) and confirmed the blend weights; facet words are stripped from the topic and the stored course text, a blank topic never reaches the embedder, and `embeddings backfill --all` re-embeds existing rows.
 - Topic-aware cache lookup (similarity floor plus blended score), same ranking on the seed path: `research_agent/cache/`, `tests/test_cache_topic.py`, `scripts/calibrate_topic_floor.py`.
 
 ## Durability and effects
@@ -52,12 +52,15 @@ Integration tests need `docker compose up -d` and
 
 ## User memory
 
-- Writable profile: `save_user_memory` (one transaction, row lock, merge, redacted free text), `MemoryPatch`, `MemoryNote`; `preferred_course_length` stored, no consumer yet: `research_agent/memory/repository.py`, `tests/test_user_profile.py`. Only the curator's `commit` calls it.
+- Writable profile: `save_user_memory` (one transaction, row lock, merge, redacted free text), `MemoryPatch`, `MemoryNote`; `save_user_memory` also writes `profile_embedding` in the same transaction: `research_agent/memory/repository.py`, `tests/test_user_profile.py`. Only the curator's `commit` calls it.
 - Profile consumers: stored budget and certificate defaults in `parse_user_request`; preferred provider, level, language boost and scoped notes in `rank_and_summarize_courses`: `research_agent/memory/defaults.py`, `research_agent/synthesis/nodes.py`.
 - `feedback_history` accumulates every review round (redacted); DISCARD now goes through `record_review_outcome`; the research subgraph runs on `ResearchState`, which omits the channel: `domain/state.py`, `tests/test_memory_e2e.py` (feedback in run one changes run two, in-memory and Postgres).
 
+- Profile similarity as a ranking tie-break: the cache query (and the seed path) returns a scalar `CourseCandidate.profile_similarity`, never the vector; `_rank_courses` uses it in 0.1 buckets after explicit preferences and price, before rating. Web candidates have none: `research_agent/memory/profile_vector.py`, `research_agent/cache/repository.py`, `tests/test_profile_and_duration.py` (Postgres cases skip without `TEST_DATABASE_URL`, not run in the session that wrote them).
+- Course duration: `CourseCandidate.duration_hours` from listing metadata or snippet text (`extraction/nodes.py`), stored in `courses.duration_hours` (migration 009). `preferred_course_length` is `short` (up to 10 h), `medium` (up to 40 h) or `long`, validated in `MemoryPatch`, writable by the curator, and counted as one match in `_preference_score`: `tests/test_profile_and_duration.py`, `tests/test_memory_e2e.py` (case 5).
+
 - Memory curator subgraph `curate_user_memory` after `record_review_outcome`: bounded tool loop (`read_profile`, `read_run_events`, `propose_patch`, `finish`), 4-step cap, fail-closed commit, idempotent per `run_id` through `memory_updates` (migration 008, erasable); uses `input_schema`/`output_schema`: `memory_curator/`, `tests/test_memory_curator.py` (cases 1, 2, 3, 7, 10 to 18 with a scripted model, plus Postgres), `tests/test_curator_checkpoint.py` (private channels through the encrypted Postgres checkpointer). `tests/test_memory_e2e.py` now runs the real curator between run one and run two.
-- Not built yet: cases 5 and 6 of `FEEDBACK.md` (no consumer for course length or career goals), cases 4 and 8 need a live model and the judge (P6).
+- Not built yet: case 6 of `FEEDBACK.md` (no consumer for career goals), cases 4 and 8 need a live model and the judge (P6).
 
 ## Observability
 

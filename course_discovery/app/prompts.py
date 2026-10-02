@@ -44,7 +44,10 @@ Steps:
 4. Call finish with a one-line reason. Finish without proposing when nothing should be stored.
 
 Writable fields: preferred_providers, avoided_providers, preferred_languages, budget_preference,
-certificate_importance, preferred_level, rejected_course_urls, completed_course_urls, and notes.
+certificate_importance, preferred_level, preferred_course_length, rejected_course_urls,
+completed_course_urls, and notes. preferred_course_length is one of short (up to 10 hours total),
+medium (10 to 40 hours) or long (over 40 hours); set it when the user says courses are too long or
+too short, or states the time they have.
 Use avoided_providers only when the user rejects a whole provider. Use rejected_course_urls for a
 single course (call read_run_events to get its URL). When a stored value contradicts the feedback,
 remove it and add the new one. Keep notes short. Never invent a preference the feedback does not

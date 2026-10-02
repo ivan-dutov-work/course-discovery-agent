@@ -13,8 +13,9 @@ describes what the memory update must handle and how each case is pinned by a te
   cache query, seed cache); `budget_preference` and `certificate_importance` (defaults in
   `parse_user_request`, only where the query does not state them); `preferred_providers`,
   `preferred_level`, `preferred_languages` (ranking boost) and `notes` (scoped, in the ranking
-  prompt). `preferred_course_length` is stored and read by nothing until P4c;
-  `learning_style_notes` and `career_goals` are loaded and unused.
+  prompt). `preferred_course_length` (`short | medium | long`, matched against
+  `CourseCandidate.duration_hours`) is a ranking boost; `learning_style_notes` is unused and
+  `career_goals` only feeds the profile vector.
 - A DISCARD goes through `record_review_outcome`, so a rejected digest records its events.
 - `feedback_history` holds every review round, redacted; `manager_feedback` still holds only
   the latest.
@@ -31,7 +32,8 @@ Structured fields (exact assertions, consumed by code):
 | `avoided_providers`, `rejected_course_urls`, `completed_course_urls` | already consumed: verifier, cache query |
 | `preferred_providers`, `preferred_level`, `preferred_languages` | ranking boost in `rank_and_summarize_courses` |
 | `budget_preference`, `certificate_importance` | default constraints when the query does not state them (`parse_user_request`) |
-| `preferred_course_length` (new on `UserMemory`) | ranking boost |
+| `preferred_course_length` (`short`, `medium`, `long`) | ranking boost against `duration_hours` |
+| `career_goals`, `learning_style_notes`, `notes` | `profile_embedding`, a ranking tie-break |
 
 Free-text notes (judged, injected into the ranking prompt): `notes: list[MemoryNote]`, each
 `{text, scope, learned_at, source_run_id}` with `scope` one of `durable` or `topic:<x>`.
@@ -48,7 +50,7 @@ Every row is a parametrized fixture in the tests. "Writes nothing" is a valid, a
 | 2 | "skip the outdated Udemy one" | `rejected_course_urls += that URL`, provider untouched | run two excludes the URL, still returns other Udemy courses |
 | 3 | "cheaper this time" | writes nothing (`this_run`) | row unchanged |
 | 4 | "hands-on for Python, theory is fine for math" | one `topic:python` note, none for math | note scope; judge for wording |
-| 5 | "too long, I have 2 hours a week" | `preferred_course_length` set | exact; deferred until P4c gives the field a consumer |
+| 5 | "too long, I have 2 hours a week" | `preferred_course_length = short` | row; run two's first course is at most 10 hours |
 | 6 | "I'm switching from Python to Rust" | old goal removed, new added, dated | goals list; judge for polarity; deferred until `career_goals` has a consumer |
 | 7 | Stored: prefers Coursera. Feedback: "Coursera keeps being paywalled" | `read_profile` first, then remove plus add | tool-call trace plus row |
 | 8 | "publish these, but I'm done with Udemy" (PUBLISH) | routes PUBLISH; curator still gets the raw text; avoids Udemy | route and row |
