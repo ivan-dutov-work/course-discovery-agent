@@ -12,7 +12,6 @@ from course_discovery.persistence.checkpointer import memory_saver
 from course_discovery.research_agent.memory.nodes import user_memory_update_node
 from course_discovery.review.nodes import review_gate_node
 from course_discovery.review.router import (
-    augment_dispatch_node,
     discard_node,
     publish_node,
     router_node,
@@ -43,7 +42,6 @@ def build_graph(checkpointer=None, research_compile_kwargs=None):
     builder.add_node("course_research", build_research_graph(**(research_compile_kwargs or {})))
     builder.add_node("await_human_review", review_gate_node)
     builder.add_node("interpret_review_feedback", router_node)
-    builder.add_node("prepare_augmented_search", augment_dispatch_node)
     builder.add_node("send_approved_courses", publish_node, retry_policy=retry)
     builder.add_node("discard_run", discard_node)
     builder.add_node("record_review_outcome", user_memory_update_node, retry_policy=retry)
@@ -65,12 +63,11 @@ def build_graph(checkpointer=None, research_compile_kwargs=None):
         {
             RoutingAction.PUBLISH: "send_approved_courses",
             RoutingAction.REWRITE: "course_research",
-            RoutingAction.AUGMENT: "prepare_augmented_search",
+            RoutingAction.AUGMENT: "course_research",
             RoutingAction.RESET: "parse_user_request",
             RoutingAction.DISCARD: "discard_run",
         },
     )
-    builder.add_edge("prepare_augmented_search", "course_research")
     builder.add_edge("send_approved_courses", "record_review_outcome")
     builder.add_edge("record_review_outcome", END)
     builder.add_edge("discard_run", END)
@@ -84,7 +81,7 @@ def build_graph(checkpointer=None, research_compile_kwargs=None):
         "graph_compiled",
         extra={
             "event": "outer_graph.compiled",
-            "node_count": 8,
+            "node_count": 7,
             "duration_ms": int((time.perf_counter() - start_ts) * 1000),
             "interrupt_before": ["await_human_review"],
         },

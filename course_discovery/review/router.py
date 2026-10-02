@@ -178,10 +178,6 @@ def _route(state: AgentState) -> dict:
         }
 
 
-def augment_dispatch_node(state: AgentState) -> dict:
-    return {}
-
-
 def publish_node(state: AgentState) -> dict:
     run_id = state["run_id"]
     effect = Effect(

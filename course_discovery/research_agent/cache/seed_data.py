@@ -6,6 +6,13 @@ from course_discovery.domain.models import (
     SearchFilters,
     UserMemory,
 )
+from course_discovery.research_agent.cache.scoring import (
+    MIN_TOPIC_SIMILARITY,
+    cosine,
+    topic_score,
+    topic_vector,
+)
+from course_discovery.research_agent.embeddings import course_text, embed_texts
 
 
 def seed_cache(
@@ -14,11 +21,6 @@ def seed_cache(
     *,
     limit: int,
 ) -> list[CourseCandidate]:
-    topic_terms = {
-        term
-        for term in filters.topic.lower().replace("-", " ").split()
-        if len(term) > 2 and term not in {"find", "free", "with", "for", "and", "the"}
-    }
     seed = [
         CourseCandidate(
             title="Python for Everybody",
@@ -65,18 +67,20 @@ def seed_cache(
             confidence=0.86,
         ),
     ]
-    candidates = [
-        course
-        for course in seed
-        if course.url not in memory.completed_course_urls
-        and course.url not in memory.rejected_course_urls
-        and (course.provider or "") not in memory.avoided_providers
-        and (
-            not topic_terms
-            or any(
-                term in (course.title + " " + (course.description or "")).lower()
-                for term in topic_terms
-            )
-        )
-    ]
-    return candidates[:limit]
+    query = topic_vector(filters.topic)
+    ranked: list[tuple[float, CourseCandidate]] = []
+    for course in seed:
+        if (
+            course.url in memory.completed_course_urls
+            or course.url in memory.rejected_course_urls
+            or (course.provider or "") in memory.avoided_providers
+        ):
+            continue
+        similarity = 0.0
+        if query is not None:
+            similarity = cosine(query, embed_texts([course_text(course.title, course.description, [])])[0])
+            if similarity < MIN_TOPIC_SIMILARITY:
+                continue
+        ranked.append((topic_score(similarity, course.confidence, 0), course))
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return [course for _, course in ranked[:limit]]

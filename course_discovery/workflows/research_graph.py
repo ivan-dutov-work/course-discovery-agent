@@ -30,10 +30,6 @@ from course_discovery.research_agent.validation.nodes import (
 logger = get_logger(__name__)
 
 
-def research_entry_node(_: AgentState) -> dict:
-    return {}
-
-
 def _route_from_entry(state: AgentState):
     if state.get("routing_decision") == RoutingAction.AUGMENT:
         return "plan_gap_search"
@@ -42,7 +38,7 @@ def _route_from_entry(state: AgentState):
 
 def _dispatch_search_queries(state: AgentState):
     if state.get("error"):
-        return "end_research_on_error"
+        return "error"
     plan = state.get("research_plan")
     if not plan or not plan.search_queries:
         return "merge_known_and_found_courses"
@@ -64,7 +60,6 @@ def _dispatch_search_queries(state: AgentState):
 def build_research_graph(**compile_kwargs):
     builder = StateGraph(AgentState)
 
-    builder.add_node("start_research", research_entry_node)
     retry = transient_retry()
     builder.add_node("load_user_profile", user_memory_lookup_node, retry_policy=retry)
     builder.add_node("find_known_courses", course_cache_lookup_node, retry_policy=retry)
@@ -77,11 +72,8 @@ def build_research_graph(**compile_kwargs):
     builder.add_node("plan_gap_search", replanner_node)
     builder.add_node("save_verified_courses", course_cache_upsert_node, retry_policy=retry)
     builder.add_node("rank_and_summarize_courses", synthesizer_node)
-    builder.add_node("end_research_on_error", lambda _: {})
 
-    builder.set_entry_point("start_research")
-    builder.add_conditional_edges(
-        "start_research",
+    builder.set_conditional_entry_point(
         _route_from_entry,
         {
             "load_user_profile": "load_user_profile",
@@ -95,7 +87,7 @@ def build_research_graph(**compile_kwargs):
         _dispatch_search_queries,
         {
             "merge_known_and_found_courses": "merge_known_and_found_courses",
-            "end_research_on_error": "end_research_on_error",
+            "error": END,
         },
     )
     builder.add_edge("search_web_for_courses", "extract_courses_from_results")
@@ -115,11 +107,10 @@ def build_research_graph(**compile_kwargs):
         _dispatch_search_queries,
         {
             "merge_known_and_found_courses": "merge_known_and_found_courses",
-            "end_research_on_error": "end_research_on_error",
+            "error": END,
         },
     )
     builder.add_edge("save_verified_courses", "rank_and_summarize_courses")
     builder.add_edge("rank_and_summarize_courses", END)
-    builder.add_edge("end_research_on_error", END)
 
     return builder.compile(**compile_kwargs)

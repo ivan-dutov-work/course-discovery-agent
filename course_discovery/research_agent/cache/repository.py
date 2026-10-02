@@ -12,7 +12,16 @@ from course_discovery.domain.models import (
 from course_discovery.observability.logging import get_logger, sanitize_error
 from course_discovery.observability.metrics import record_db_error
 from course_discovery.persistence.postgres import connect
+from course_discovery.research_agent.cache.scoring import (
+    CONFIDENCE_WEIGHT,
+    MIN_TOPIC_SIMILARITY,
+    SIMILARITY_WEIGHT,
+    USE_COUNT_CAP,
+    USE_COUNT_WEIGHT,
+    topic_vector,
+)
 from course_discovery.research_agent.cache.seed_data import seed_cache
+from course_discovery.research_agent.embeddings import course_text, embed_texts, to_pgvector
 
 
 logger = get_logger(__name__)
@@ -24,6 +33,7 @@ def search_course_cache(
     *,
     limit: int = 12,
 ) -> list[CourseCandidate]:
+    query = topic_vector(filters.topic)
     with connect() as conn:
         if conn is None:
             return seed_cache(filters, memory, limit=limit)
@@ -46,27 +56,41 @@ def search_course_cache(
                        ) AS evidence
                 FROM courses c
                 LEFT JOIN course_evidence e ON e.course_id = c.id
+                CROSS JOIN LATERAL (
+                  SELECT CASE WHEN c.course_embedding IS NOT NULL
+                              THEN 1 - (c.course_embedding <=> %(query)s::vector) END AS sim
+                ) s
                 WHERE c.validation_status = 'valid'
-                  AND (%s = FALSE OR c.is_free = TRUE)
-                  AND (%s = FALSE OR c.has_certificate = TRUE)
-                  AND (%s = 'any' OR c.level = %s OR c.level IS NULL)
-                  AND (c.language = ANY(%s) OR c.language IS NULL)
-                  AND NOT (c.canonical_url = ANY(%s))
-                  AND NOT (c.canonical_url = ANY(%s))
-                GROUP BY c.id
-                ORDER BY c.use_count DESC, c.validation_confidence DESC, c.last_seen_at DESC
-                LIMIT %s
+                  AND (%(free_only)s = FALSE OR c.is_free = TRUE)
+                  AND (%(certificate)s = FALSE OR c.has_certificate = TRUE)
+                  AND (%(level)s = 'any' OR c.level = %(level)s OR c.level IS NULL)
+                  AND (c.language = ANY(%(languages)s) OR c.language IS NULL)
+                  AND NOT (c.canonical_url = ANY(%(completed)s))
+                  AND NOT (c.canonical_url = ANY(%(rejected)s))
+                  AND (s.sim IS NULL OR s.sim >= %(floor)s)
+                GROUP BY c.id, s.sim
+                ORDER BY (s.sim IS NULL),
+                         (%(w_sim)s * COALESCE(s.sim, 0)
+                          + %(w_conf)s * c.validation_confidence
+                          + %(w_use)s * LEAST(c.use_count, %(use_cap)s) / %(use_cap)s::float) DESC,
+                         c.id
+                LIMIT %(limit)s
                 """,
-                (
-                    filters.max_price == 0,
-                    filters.include_certificate,
-                    filters.level,
-                    filters.level,
-                    filters.content_languages,
-                    memory.completed_course_urls,
-                    memory.rejected_course_urls,
-                    limit,
-                ),
+                {
+                    "query": to_pgvector(query) if query is not None else None,
+                    "free_only": filters.max_price == 0,
+                    "certificate": filters.include_certificate,
+                    "level": filters.level,
+                    "languages": filters.content_languages,
+                    "completed": memory.completed_course_urls,
+                    "rejected": memory.rejected_course_urls,
+                    "floor": MIN_TOPIC_SIMILARITY,
+                    "w_sim": SIMILARITY_WEIGHT,
+                    "w_conf": CONFIDENCE_WEIGHT,
+                    "w_use": USE_COUNT_WEIGHT,
+                    "use_cap": USE_COUNT_CAP,
+                    "limit": limit,
+                },
             ).fetchall()
         except Exception as exc:  # noqa: BLE001
             record_db_error("course_cache_search")
@@ -118,6 +142,7 @@ def upsert_courses(
 
         try:
             with conn.transaction():
+                stored: list[tuple[int, CourseCandidate, list[str]]] = []
                 for course in courses:
                     validation = validation_by_url.get(course.url)
                     status = validation.status if validation else "uncertain"
@@ -144,7 +169,7 @@ def upsert_courses(
                           validation_status = EXCLUDED.validation_status,
                           validation_confidence = EXCLUDED.validation_confidence,
                           updated_at = now()
-                        RETURNING id
+                        RETURNING id, topics
                         """,
                         (
                             course.url,
@@ -164,6 +189,7 @@ def upsert_courses(
                         ),
                     ).fetchone()
                     course_id = row[0]
+                    stored.append((course_id, course, list(row[1] or [])))
                     for evidence in course.evidence:
                         conn.execute(
                             """
@@ -188,6 +214,14 @@ def upsert_courses(
                                 course.confidence,
                             ),
                         )
+                vectors = embed_texts(
+                    [course_text(c.title, c.description, topics) for _, c, topics in stored]
+                )
+                for (course_id, _, _), vector in zip(stored, vectors):
+                    conn.execute(
+                        "UPDATE courses SET course_embedding = %s::vector WHERE id = %s",
+                        (to_pgvector(vector), course_id),
+                    )
             conn.commit()
         except Exception as exc:  # noqa: BLE001
             record_db_error("course_cache_upsert")

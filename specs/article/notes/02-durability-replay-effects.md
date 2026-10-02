@@ -122,3 +122,11 @@ boundaries; completed nodes are not re-run on resume, the interrupted node is re
   execution at the activity level, which the outbox plus keys approximates by hand. A short
   "when to reach for it instead" paragraph, not a comparison. Don't claim LangGraph Platform
   background-run semantics without verifying.
+
+- **Removing nodes from a graph with a paused checkpoint (verified, langgraph 1.1.2, Postgres
+  checkpointer).** A run was paused at `await_human_review` under the graph that still had
+  `start_research`, `prepare_augmented_search` and `end_research_on_error`, then resumed
+  (`update_state` as `await_human_review`, `ainvoke(None)`) under the graph without them. It ran
+  to `send_approved_courses` and finished with `publish_status` set. The checkpoint stores the
+  pending node name, so removing nodes that are not pending is safe; renaming the pending node
+  is not. Checked with two checkouts (old at HEAD, new working tree) against one database.

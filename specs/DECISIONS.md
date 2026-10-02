@@ -31,6 +31,10 @@ leave it and append a new one that says which it replaces and what changed.
   wiring control flow. At most a parenthetical: each node calls whatever Runnable it is bound to.
 - **The outline follows one spine:** a checkpoint is exact at node boundaries, so production
   correctness is about the seam between nodes.
+- **The design target is many users, not one reviewing manager.** Per-run human approval does
+  not scale, and the consequential shared state is the course cache, not a single digest. The
+  article still teaches LangGraph mechanics; the reframing is prose in §13, and the per-run gate
+  is unchanged until backlog N2 is decided.
 
 ## Design
 
@@ -57,9 +61,62 @@ leave it and append a new one that says which it replaces and what changed.
 - **`async` durability is not tested under a hard kill:** whether the last background write
   lands is a race.
 - **Cross-worker patterns (§11) are architectural descriptions,** with no implementation.
+- **Feedback handling is one bounded agentic step; the rest stays a workflow.** Refines
+  "Workflow, not agent": planning, extraction and validation stay rules, but turning free-text
+  feedback into memory changes depends on the data (read the profile, detect a conflict, decide
+  it is not a preference), so it gets a tool loop with a closed tool set, a step cap and a
+  fail-closed commit. The model proposes a validated patch and never writes. Spec and cases in
+  `FEEDBACK.md`; backlog P5.
+- **Memory update is judged by exact assertions plus an LLM judge, never by embeddings.**
+  Embeddings score topical closeness, not polarity, so a wrong-sign update passes. Structured
+  fields are asserted exactly, free-text fields go to a rubric judge, and run two's behavior is
+  the primary check.
+- **A learned preference is written only if a named consumer changes the next run.** Today only
+  three `UserMemory` fields are read; storing the others without a consumer would pass a judge
+  and change nothing.
+- **Embeddings sit behind an `Embedder` port with a deterministic local default** for tests and
+  CI. It is lexical, not semantic, so the article claims topic-aware retrieval, not semantic
+  search. A real provider is another implementation of the same port (1536 dimensions, fixed by
+  migration 001).
+- **The four no-op anchors are reduced to one.** `start_research`, `prepare_augmented_search`
+  and `end_research_on_error` are removed (conditional entry point, direct edges).
+  `await_human_review` stays because `interrupt_before` needs a real node to pause in front of.
+- **Shared-cache promotion is a cascade: rules, then a cheap typed verifier with confidence,
+  then an LLM reviewer, then a human queue,** and an item moves up a tier only when the tier
+  below is not confident or the tiers disagree. Promotion needs a higher confidence than
+  rejection because a wrong promotion reaches every user. A random audit sample of
+  auto-accepted items feeds the human queue and the threshold fit. The verifier sits behind a
+  port; JEV (TypeSafe, hosted, early access) is one adapter, and its published cost, latency
+  and accuracy figures are vendor claims until measured on our data. Its confidence
+  calibration did not transfer between tasks in the paper, so thresholds are fitted on our
+  own labels. Backlog N1.
+- **Implicit feedback is not built.** Course choices are sparse per user, so the realistic
+  methods are decayed counters, an embedding moving average and batched LLM personas;
+  collaborative filtering needs cross-user scale this domain will not have soon. Article prose
+  in §13 only.
+- **Level, price and certificate words are stopwords in the embedder.** They are structured
+  filters, and left in the topic they matched unrelated courses: the fallback parser's topic
+  `Find free Python certificate beginners` ranked a web-design certification above the Python
+  courses. Stopwords are removed after stemming (`beginners` first leaked through).
+  (notes: 05-scale-and-scope.md)
+- **Topic floor 0.12; blend weights 0.7 / 0.2 / 0.1 are not fitted.** The floor is the last one
+  before recall drops (0.72 to 0.59) on the mock catalog, and precision is preferred because web
+  search fills a miss. The weights only order courses already past the floor. Refit both if the
+  embedder or the stored text changes. (notes: 05-scale-and-scope.md)
+- **`ResearchPlan.cache_query` is removed.** The cache lookup runs before the plan exists and
+  reads `filters.topic`. Checkpoints that still hold the field load, because the model ignores
+  extra keys (test in `tests/test_checkpointer.py`). (notes: 01-state-and-control-flow.md)
+- **`courses.topics` is a property of the course, never of the query.** The run's topic is
+  user-derived text; storing it in the shared cache reaches a table erasure cannot cover (the
+  flow-rule check flags it) and lets loosely matched courses pollute later lookups. Topics come
+  from the course's own content, by a tagging step that is not built. (notes: 05-scale-and-scope.md)
 
 ## Compliance
 
+- **The privacy controls are justified by many users' stored data,** not by a single
+  reviewer's admin panel: per-user profiles, checkpoints and events are what erasure,
+  ownership checks and encryption protect. Do not argue them away by narrowing the product to
+  one manager.
 - **A boundary, not a feature.** LangGraph has no compliance tooling. The app owns the
   user-to-thread index (`run_threads`); the model-provider boundary (ZDR, DPAs, region) is
   invisible to the graph.

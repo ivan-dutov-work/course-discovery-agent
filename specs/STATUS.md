@@ -13,10 +13,17 @@ Integration tests need `docker compose up -d` and
 - Reducers on parallel-written channels (`tavily_results`, `completed_queries`,
   `research_notes`, `tavily_calls`); `extracted_candidates` is a plain list (§2.2; open question in BACKLOG).
 - Plan-driven `Send` fan-out: `workflows/research_graph.py` (§3.2).
+- Only `await_human_review` remains as a no-op anchor; the research entry is a conditional
+  entry point: `workflows/`, `tests/test_graph_topology.py` (§3.1, §4.1).
 - Research graph mounted as a subgraph of the outer graph (§3.3).
 - Static `interrupt_before=["await_human_review"]` with five review routes (§4.1, §4.3).
 - `recursion_limit` set in `app/cli.py` (§4.4).
 - `stream_mode=["updates", "custom"]` in `app/cli.py` (§9.2).
+
+## Retrieval
+
+- `Embedder` port with a local lexical `HashingEmbedder`, embeddings stored with each cached course: `research_agent/embeddings/`, `tests/test_embeddings.py`.
+- Topic-aware cache lookup (similarity floor plus blended score), same ranking on the seed path: `research_agent/cache/`, `tests/test_cache_topic.py`, `scripts/calibrate_topic_floor.py`.
 
 ## Durability and effects
 

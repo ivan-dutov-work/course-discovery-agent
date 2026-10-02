@@ -32,7 +32,7 @@ parse_user_request ──ok──▶ course_research ──▶ [interrupt] await
         │                                                                                   │
         └─error─▶ discard_run ─▶ END                                                        ├─ PUBLISH ─▶ send_approved_courses ─▶ record_review_outcome ─▶ END
                                                                                             ├─ REWRITE ─▶ course_research
-                                                                                            ├─ AUGMENT ─▶ prepare_augmented_search ─▶ course_research
+                                                                                            ├─ AUGMENT ─▶ course_research
                                                                                             ├─ RESET   ─▶ parse_user_request
                                                                                             └─ DISCARD ─▶ discard_run ─▶ END
 ```
@@ -43,12 +43,12 @@ without passing it.
 ## Research subgraph
 
 ```
-start_research ──(AUGMENT)──────────────────────────────────────────────▶ plan_gap_search
-      │
-      └─▶ load_user_profile ─▶ find_known_courses ─▶ plan_web_search
-                                                          │
-                     ┌──── no queries needed ─────────────┤
-                     ▼                                    ├─ error ─▶ end_research_on_error ─▶ END
+START ──(AUGMENT)───────────────────────────────────────────────────────▶ plan_gap_search
+  │
+  └─▶ load_user_profile ─▶ find_known_courses ─▶ plan_web_search
+                                                      │
+                 ┌──── no queries needed ─────────────┤
+                 ▼                                    ├─ error ─▶ END
        merge_known_and_found_courses ◀─ extract_courses_from_results ◀─ search_web_for_courses (×N, Send)
                      │
         remove_duplicate_courses ─▶ verify_course_claims ──┬─ enough valid, or budget spent ─▶ save_verified_courses ─▶ rank_and_summarize_courses ─▶ END
@@ -72,7 +72,6 @@ One responsibility each. "Rules" means deterministic code with no model call.
 | `course_research` | Run the research subgraph | subgraph |
 | `await_human_review` | The pause point where the interrupt fires; does nothing itself | anchor |
 | `interpret_review_feedback` | Map reviewer feedback to one routing action | LLM, rule fallback |
-| `prepare_augmented_search` | Anchor before an augment rerun; does nothing itself | anchor |
 | `send_approved_courses` | Submit the publish effect through `EffectGateway` with a key derived from `run_id` | side effect |
 | `record_review_outcome` | Record accept or reject feedback for the user | DB write |
 | `discard_run` | End the run as discarded, with a reason | terminal |
@@ -81,9 +80,8 @@ One responsibility each. "Rules" means deterministic code with no model call.
 
 | Node | Responsibility | Kind |
 |---|---|---|
-| `start_research` | Entry anchor; routes an AUGMENT rerun straight to gap planning | anchor |
 | `load_user_profile` | Load preferences, completed and rejected courses | DB read |
-| `find_known_courses` | Fetch previously validated courses from the cache | DB read |
+| `find_known_courses` | Fetch previously validated courses from the cache, ranked by topic similarity | DB read |
 | `plan_web_search` | Decide which queries are needed: none if the cache holds enough candidates | rules |
 | `search_web_for_courses` | Run one query against the search provider; dispatched once per query via `Send` | I/O (mocked) |
 | `extract_courses_from_results` | Turn raw search results into `CourseCandidate`s with evidence | rules |
@@ -91,11 +89,39 @@ One responsibility each. "Rules" means deterministic code with no model call.
 | `remove_duplicate_courses` | Drop duplicates by normalized URL, title+host fingerprint and fuzzy title | pure |
 | `verify_course_claims` | Mark each candidate valid, uncertain or rejected against the filters and the user profile | rules |
 | `plan_gap_search` | Build new queries from missing evidence and increment the iteration counter | rules |
-| `save_verified_courses` | Persist valid and uncertain courses to the cache | DB write |
+| `save_verified_courses` | Persist valid and uncertain courses to the cache with the run topic and an embedding | DB write |
 | `rank_and_summarize_courses` | Rank valid courses and write the digest | LLM, template fallback |
-| `end_research_on_error` | Terminal for the error path | anchor |
 
 Evidence rule: a missing piece of evidence yields `uncertain`, never `valid`.
+
+## Cache lookup
+
+`find_known_courses` embeds `filters.topic` and ranks cached courses by cosine similarity to
+`courses.course_embedding`. The structural filters (price, certificate, level, language,
+completed, rejected, avoided provider) are unchanged.
+
+- Embedder: `research_agent/embeddings/`, a port (`dimension`, `embed`) with a local
+  `HashingEmbedder` default: feature-hashed word and word-pair counts into 1536 dimensions,
+  L2-normalised, no network. It is lexical, not semantic: it matches shared words, not meaning.
+  Level, price and certificate words (`free`, `beginner`, `certificate`, ...) are ignored,
+  because they are separate filters and would otherwise match unrelated courses.
+- Floor: `MIN_TOPIC_SIMILARITY = 0.12`. Below it a course is dropped. Rows with a `NULL`
+  embedding (written before the embeddings existed) skip the floor and sort last until
+  `python -m course_discovery.research_agent.embeddings backfill` fills them. A topic with no
+  content words (only facet words) skips the floor and similarity ordering.
+- Score: `0.7 * similarity + 0.2 * validation_confidence + 0.1 * min(use_count, 10) / 10`,
+  descending, ties by `id`. The weights are a choice, not a fit; only the floor was calibrated.
+- Write side: `upsert_courses` stores the embedding of title, description and the row's stored
+  `topics` in the same transaction as the row. `topics` describes the course and is never
+  derived from the user's query, so nothing writes it yet and it is left untouched on conflict.
+  An embedder error or a wrong dimension aborts the write; `save_verified_courses` keeps its
+  `RetryPolicy`.
+- Without `DATABASE_URL`, `seed_cache` ranks with the same embedder, floor and score.
+- The planner's threshold on cache hit count (`min_valid = 3`) now counts topical hits.
+- The HNSW index (`migrations/007`) exists for a later nearest-neighbour pre-filter; the
+  blended `ORDER BY` does not use it, and at this size a scan is fine.
+- A remote `Embedder` would receive the topic, which derives from the redacted query. Declare
+  it as a sink in `privacy/flow_specs.py` when adding one.
 
 ## State and memory
 
@@ -119,12 +145,12 @@ next run's profile, not the pass in progress.
 Each of these is a stand-in that the article should name as such, not a finished
 design.
 
-1. **The cache ignores topic.** `find_known_courses` filters on price, certificate,
-   level, language and the user's rejected or completed URLs. No topic predicate and
-   no similarity term appear in the query, so results depend on `use_count`, not on
-   relevance. `ResearchPlan.cache_query` carries the topic but nothing reads it.
-2. **Embeddings are provisioned but unused.** `course_embedding` and
-   `profile_embedding` exist in migration 001; no code writes or reads them.
+1. **Courses have no topics.** The embedding sees only title and description, so a course
+   whose text lacks the topic word is missed (recall 0.72 against 0.81 with ideal tags on the
+   mock catalog, `notes/05`). A course-side tagging step that fills `courses.topics` from the
+   course's own content is not built (`BACKLOG.md`).
+2. **`profile_embedding` is provisioned but unused.** `course_embedding` is written and read;
+   the profile column is not. Fix: P4.
 3. **Deduplication is lexical.** URL, title+host hash and fuzzy title cannot merge the
    same course listed under different titles on different hosts.
 4. **Search and ingestion share the request path.** Discovery, extraction, validation
@@ -132,25 +158,31 @@ design.
    asynchronous ingestion pipeline (crawl, extract, validate, embed, deduplicate) from
    a request path that does hybrid retrieval first and falls back to web search only
    for thin coverage, feeding results back through ingestion.
-5. **Feedback is recorded, not folded back.** `record_review_outcome` stores events;
-   whether they update `user_preferences` automatically is not established here.
-6. **Four anchor nodes do no work.** `start_research`, `await_human_review`,
-   `prepare_augmented_search` and `end_research_on_error` exist for routing and the
-   interrupt, not for computation.
+5. **Feedback is recorded, not folded back.** `record_review_outcome` stores events and
+   nothing writes `user_preferences`. Only `avoided_providers`, `rejected_course_urls` and
+   `completed_course_urls` are read by any node; the other profile fields are loaded and
+   ignored. A DISCARD skips `record_review_outcome`, so rejections record nothing, and
+   `manager_feedback` keeps only the latest round. Cases and design: `FEEDBACK.md`; fix: P4
+   to P6.
 
 ## Naming
 
 Node names are span names, checkpoint interrupt targets and `flow_specs.py` keys, so
 they appear in traces and in stored checkpoints. Checkpoints written before the
 rename hold the old names, so a run paused at the old `review_gate` should be treated
-as unable to resume against the renamed graph. Not verified here; finish or discard
-in-flight runs before deploying the rename.
+as unable to resume against the renamed graph. Not verified for that rename; finish or discard
+in-flight runs before deploying it. Removing the three no-op anchors is different: a run
+paused at `await_human_review` under the earlier graph resumed and published under the
+current one (`notes/02`), because the paused node's name did not change.
+
+`await_human_review` is the one anchor left. It does no work and stays because
+`interrupt_before` needs a real node to pause in front of.
 
 | Before | After |
 |---|---|
 | `gateway` | `parse_user_request` |
 | `research_agent` | `course_research` |
-| `research_entry` | `start_research` |
+| `research_entry` | removed (conditional entry point) |
 | `user_memory_lookup` | `load_user_profile` |
 | `course_cache_lookup` | `find_known_courses` |
 | `research_planner` | `plan_web_search` |
@@ -162,10 +194,10 @@ in-flight runs before deploying the rename.
 | `replanner` | `plan_gap_search` |
 | `course_cache_upsert` | `save_verified_courses` |
 | `synthesizer` | `rank_and_summarize_courses` |
-| `research_done` | `end_research_on_error` |
+| `research_done` | removed (edge to `END`) |
 | `review_gate` | `await_human_review` |
 | `router` | `interpret_review_feedback` |
-| `augment_dispatch` | `prepare_augmented_search` |
+| `augment_dispatch` | removed (direct edge to `course_research`) |
 | `publish_node` | `send_approved_courses` |
 | `user_memory_update` | `record_review_outcome` |
 | `discard_node` | `discard_run` |

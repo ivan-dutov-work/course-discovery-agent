@@ -59,7 +59,6 @@ class UserMemory(BaseModel):
 class ResearchPlan(BaseModel):
     topic: str
     constraints: list[str] = Field(default_factory=list)
-    cache_query: str
     search_queries: list[str] = Field(default_factory=list)
     target_sources: list[str] = Field(default_factory=list)
     exclude_patterns: list[str] = Field(default_factory=list)

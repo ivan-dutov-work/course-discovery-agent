@@ -20,7 +20,6 @@ OUTER: dict[str, NodeFlow] = {
         sinks=(LLM,),
         redacts={"manager_feedback"},
     ),
-    "prepare_augmented_search": flow(),
     "send_approved_courses": flow(
         reads={"user_id", "user_query", "digest", "valid_courses", "run_id"},
         writes={"publish_status"},
@@ -35,8 +34,6 @@ OUTER: dict[str, NodeFlow] = {
 }
 
 RESEARCH: dict[str, NodeFlow] = {
-    "start_research": flow(),
-    "end_research_on_error": flow(),
     "load_user_profile": flow(reads={"user_id"}, writes={"user_memory"}),
     "find_known_courses": flow(
         reads={"search_filters", "user_memory", "metrics"},

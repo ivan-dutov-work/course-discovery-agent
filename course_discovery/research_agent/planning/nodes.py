@@ -71,7 +71,6 @@ def research_planner_node(state: AgentState) -> dict:
     plan = ResearchPlan(
         topic=filters.topic,
         constraints=_constraints(filters),
-        cache_query=filters.topic,
         search_queries=search_queries,
         target_sources=filters.providers,
         exclude_patterns=filters.domain_blacklist,
@@ -133,7 +132,6 @@ def replanner_node(state: AgentState) -> dict:
     plan = ResearchPlan(
         topic=filters.topic,
         constraints=_constraints(filters),
-        cache_query=current_plan.cache_query if current_plan else filters.topic,
         search_queries=search_queries[:4],
         target_sources=filters.providers,
         exclude_patterns=filters.domain_blacklist,

@@ -34,8 +34,7 @@ parse_user_request
 The research subgraph owns the bounded research loop. Node responsibilities and known gaps are in `specs/ARCHITECTURE.md`.
 
 ```text
-start_research
-  -> load_user_profile
+load_user_profile
   -> find_known_courses
   -> plan_web_search
   -> search_web_for_courses(s) via Send when needed
@@ -48,7 +47,7 @@ start_research
   -> rank_and_summarize_courses
 ```
 
-Without `DATABASE_URL` the graph checkpoints in memory. With it, the CLI checkpoints to Postgres (optionally AES-GCM sealed), the course cache and user memory live in Postgres, and publishing can go through an outbox worker (`EFFECT_GATEWAY=outbox`, `python -m course_discovery.effects`). The pgvector embedding columns in `migrations/001_postgres_pgvector.sql` are provisioned but not used yet; cache lookup filters structurally and ignores topic (`specs/ARCHITECTURE.md`, known gaps).
+Without `DATABASE_URL` the graph checkpoints in memory. With it, the CLI checkpoints to Postgres (optionally AES-GCM sealed), the course cache and user memory live in Postgres, and publishing can go through an outbox worker (`EFFECT_GATEWAY=outbox`, `python -m course_discovery.effects`). Cache lookup ranks courses by topic similarity using stored embeddings (`course_embedding`; a local lexical `HashingEmbedder`, not a semantic model), and `python -m course_discovery.research_agent.embeddings backfill` fills rows written before that (`specs/ARCHITECTURE.md`, cache lookup).
 
 ## Search is mocked
 

@@ -60,3 +60,11 @@ Evidence for drafting. Load when working on these sections. Observations are fro
 - Routing today lives on conditional edges (`_dispatch_search_queries`). A `Command(update=...,
   goto=[Send(...)])` return would fold the routing into the node. Not implemented; label the
   section doc-only or add a small honest use.
+
+## Removing a field from a checkpointed model
+
+Verified with langgraph 1.1.2 and the repo's msgpack allowlist serde: a `ResearchPlan` written
+with `cache_query`, then loaded after the field was deleted from the model, restores as a
+`ResearchPlan` without the field and with no serde warning. Pydantic ignores the extra key.
+Removing a field is safe for old checkpoints; adding a required one is not (old payloads lack
+it). Pinned by `tests/test_checkpointer.py`.
