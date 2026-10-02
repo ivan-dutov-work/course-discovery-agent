@@ -22,7 +22,7 @@ Integration tests need `docker compose up -d` and
 
 ## Retrieval
 
-- `Embedder` port with a local lexical `HashingEmbedder` default and an `OpenRouterEmbedder` selected by `EMBEDDER=openrouter` (1536 dimensions, batched, transient errors propagate for `RetryPolicy`, other failures raise `EmbeddingError`); embeddings stored with each cached course: `research_agent/embeddings/`, `tests/test_embeddings.py`, `tests/test_openrouter_embedder.py` (stubbed HTTP; the live test skips without a key). The calibration script takes the embedder from `EMBEDDER`; it has not been run against the real model, so the floor and weights are still the hashing fit.
+- `Embedder` port with a local lexical `HashingEmbedder` default and an `OpenRouterEmbedder` selected by `EMBEDDER=openrouter` (1536 dimensions, batched, transient errors propagate for `RetryPolicy`, other failures raise `EmbeddingError`); embeddings stored with each cached course: `research_agent/embeddings/`, `tests/test_embeddings.py`, `tests/test_openrouter_embedder.py` (stubbed HTTP; the live test skips without a key). The calibration script takes the embedder from `EMBEDDER`; it was run against `openai/text-embedding-3-small`, which set a per-embedder floor and relative cutoff (`topic_floor` 0.12 / 0.22, `relative_cutoff` none / 0.70) and confirmed the blend weights; facet words are stripped from the topic and the stored course text, a blank topic never reaches the embedder, and `embeddings backfill --all` re-embeds existing rows.
 - Topic-aware cache lookup (similarity floor plus blended score), same ranking on the seed path: `research_agent/cache/`, `tests/test_cache_topic.py`, `scripts/calibrate_topic_floor.py`.
 
 ## Durability and effects

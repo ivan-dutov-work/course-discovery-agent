@@ -99,10 +99,24 @@ leave it and append a new one that says which it replaces and what changed.
   `Find free Python certificate beginners` ranked a web-design certification above the Python
   courses. Stopwords are removed after stemming (`beginners` first leaked through).
   (notes: 05-scale-and-scope.md)
-- **Topic floor 0.12; blend weights 0.7 / 0.2 / 0.1 are not fitted.** The floor is the last one
-  before recall drops (0.72 to 0.59) on the mock catalog, and precision is preferred because web
-  search fills a miss. The weights only order courses already past the floor. Refit both if the
-  embedder or the stored text changes. (notes: 05-scale-and-scope.md)
+- **The topic floor and relative cutoff belong to the embedder.** Hashing: floor 0.12, no relative
+  cutoff. `openai/text-embedding-3-small`: floor 0.22, relative cutoff 0.70 (keep courses scoring
+  at least 70% of the best remaining match). The hashing floor gave the real model precision 0.22,
+  because unrelated topics such as `cooking` score 0.06 to 0.18 against every course. Level, price
+  and certificate words are stripped from the topic and the stored course text for every embedder
+  (`embeddings/facets.py`); the real model had been matching `free certificate beginners` against
+  unrelated courses. On the mock catalog this took the real model from precision 0.68 / recall
+  0.89 to 0.84 / 0.86 (stripping the topic did all of it; stripping the course text changed
+  nothing measurable here). The relative cutoff adds little at the best floor (F1 0.849 to 0.861)
+  but removes the cliff: F1 stays at or above 0.849 for floors 0.19 to 0.24, against 0.61 to 0.82
+  without it, so the floor is set mid-plateau. It hurts hashing (F1 0.857 to 0.64), whose scores
+  are not compressed, hence per embedder. Blend weights 0.7 / 0.2 / 0.1 stay: they only order
+  courses past the floor and mean average precision is flat across the weights tried (real model
+  0.920 to 0.924, hashing 1.000). `confidence` and `use_count` have no ground truth in the
+  catalog, so that is a robustness check against random values, not a fit. Refit the floor and
+  cutoff if the model or the stored text changes, then `embeddings backfill --all`. The article
+  keeps "topic-aware", not "semantic": the real model reaches recall 0.86 against 0.75 for
+  hashing at precision 0.84 against 1.00, on 13 topics and 14 courses. (notes: 05-scale-and-scope.md)
 - **`ResearchPlan.cache_query` is removed.** The cache lookup runs before the plan exists and
   reads `filters.topic`. Checkpoints that still hold the field load, because the model ignores
   extra keys (test in `tests/test_checkpointer.py`). (notes: 01-state-and-control-flow.md)

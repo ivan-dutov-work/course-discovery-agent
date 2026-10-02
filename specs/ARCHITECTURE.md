@@ -140,16 +140,27 @@ completed, rejected, avoided provider) are unchanged.
   `HashingEmbedder` default: feature-hashed word and word-pair counts into 1536 dimensions,
   L2-normalised, no network. It is lexical, not semantic: it matches shared words, not meaning.
   `EMBEDDER=openrouter` selects `OpenRouterEmbedder` (`/embeddings`, `dimensions=1536`, batches
-  of 100). The floor and weights below were fitted on the hashing embedder only; after a switch,
-  rerun `scripts/calibrate_topic_floor.py` and `embeddings backfill`.
-  Level, price and certificate words (`free`, `beginner`, `certificate`, ...) are ignored,
-  because they are separate filters and would otherwise match unrelated courses.
-- Floor: `MIN_TOPIC_SIMILARITY = 0.12`. Below it a course is dropped. Rows with a `NULL`
+  of 100). The floor is a property of the embedder (`topic_floor`, fitted separately for each);
+  the weights are shared. After a switch, run `embeddings backfill --all`; after changing the model,
+  rerun `scripts/calibrate_topic_floor.py` and set `EMBEDDING_TOPIC_FLOOR` and
+  `EMBEDDING_RELATIVE_CUTOFF`.
+  Level, price and certificate words (`free`, `beginner`, `certificate`, ...) are removed from the
+  topic and from the stored course text before embedding (`embeddings/facets.py`), because they
+  are separate filters and would otherwise match unrelated courses.
+- Floor: `topic_floor()`, read from the embedder: 0.12 for `HashingEmbedder`, 0.22 for
+  `OpenRouterEmbedder` on `openai/text-embedding-3-small` (`EMBEDDING_TOPIC_FLOOR` overrides it;
+  an embedder without the attribute gets `MIN_TOPIC_SIMILARITY = 0.12`). Below it a course is
+  dropped. After the floor, `topic_relative_cutoff()` drops courses scoring below that fraction of
+  the best remaining similarity: 0.70 for `OpenRouterEmbedder` (`EMBEDDING_RELATIVE_CUTOFF`), none for
+  `HashingEmbedder`, whose scores are not compressed and lose recall under it (SQL: a `matched`
+  CTE, so the best is taken over courses that already pass the facet filters). Rows with a `NULL`
   embedding (written before the embeddings existed) skip the floor and sort last until
-  `python -m course_discovery.research_agent.embeddings backfill` fills them. A topic with no
+  `python -m course_discovery.research_agent.embeddings backfill` fills them (`--all` re-embeds
+  every row, needed after the stored text or the model changes). A topic with no
   content words (only facet words) skips the floor and similarity ordering.
 - Score: `0.7 * similarity + 0.2 * validation_confidence + 0.1 * min(use_count, 10) / 10`,
-  descending, ties by `id`. The weights are a choice, not a fit; only the floor was calibrated.
+  descending, ties by `id`. The weights were checked, not fitted: ordering quality is flat across
+  the range tried on both embedders, with 0.7 / 0.2 / 0.1 at or tied for the best (`DECISIONS.md`).
 - Write side: `upsert_courses` stores the embedding of title, description and the row's stored
   `topics` in the same transaction as the row. `topics` describes the course and is never
   derived from the user's query, so nothing writes it yet and it is left untouched on conflict.
@@ -196,7 +207,7 @@ Each of these is a stand-in that the article should name as such, not a finished
 design.
 
 1. **Courses have no topics.** The embedding sees only title and description, so a course
-   whose text lacks the topic word is missed (recall 0.72 against 0.81 with ideal tags on the
+   whose text lacks the topic word is missed (recall 0.75 against 0.81 with ideal tags on the
    mock catalog, `notes/05`). A course-side tagging step that fills `courses.topics` from the
    course's own content is not built (`BACKLOG.md`).
 2. **The profile tie-break covers cache candidates only.** Web candidates have no embedding

@@ -13,18 +13,6 @@ fixed in this pass.
 Every item ends with tests (success and failure modes) and the doc updates named in `CLAUDE.md`.
 Before starting P6 read `specs/FEEDBACK.md`; it holds the case list the tests come from.
 
-### P3a. Calibrate the topic floor and blend weights on the real embedder
-
-`OpenRouterEmbedder` exists (`EMBEDDER=openrouter`) and `scripts/calibrate_topic_floor.py` takes
-the embedder from the environment, but the script has not been run against the real model.
-
-- Run it with `OPENROUTER_API_KEY` set, refit the topic floor and the 0.7 / 0.2 / 0.1 blend
-  weights if they do not transfer, and record both sets of numbers in `notes/05-scale-and-scope.md`
-  and the outcome in `DECISIONS.md`.
-- Run the live embedder test (`tests/test_openrouter_embedder.py`) and the Postgres cases in
-  `tests/test_profile_and_duration.py`, which skip without keys and were not run when written.
-- Upgrade the article claim from "topic-aware" to "semantic" only if the calibration supports it.
-
 ### P6. End-to-end feedback tests with a judge
 
 Spec: `specs/FEEDBACK.md`, "Test layers".
@@ -109,7 +97,7 @@ Until that is decided, `CLAUDE.md`'s "Never auto-publish" stands and nothing her
   The input is untrusted search text, so do it with the prompt-injection item below. Then
   re-embed with `python -m course_discovery.research_agent.embeddings backfill` (extend it to
   `--all`), rerun `scripts/calibrate_topic_floor.py` and refit the floor. Expected gain on the
-  mock catalog: recall 0.72 to 0.81.
+  mock catalog: recall 0.75 to 0.81 on the hashing embedder.
 - **Prompt-injection check for untrusted search content.** The old plan named
   `extract_courses_from_results` and `verify_course_claims` as the insertion points, but both
   are rules, not LLM nodes. Re-derive the real surface (search snippets reaching the
