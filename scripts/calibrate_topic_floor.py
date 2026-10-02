@@ -1,6 +1,7 @@
-"""Print topic-to-course cosine similarity for HashingEmbedder over the seed cache and mock catalog.
+"""Print topic-to-course cosine similarity for the configured embedder over the seed cache and mock catalog.
 
 Run from the repo root: PYTHONPATH=. uv run python scripts/calibrate_topic_floor.py
+Select the embedder with EMBEDDER=hashing (default) or EMBEDDER=openrouter (needs OPENROUTER_API_KEY).
 """
 
 from __future__ import annotations
@@ -8,7 +9,7 @@ from __future__ import annotations
 from course_discovery.app.gateway import _fallback_parse_filters
 from course_discovery.domain.models import SearchFilters, UserMemory
 from course_discovery.research_agent.cache.seed_data import seed_cache
-from course_discovery.research_agent.embeddings import HashingEmbedder, course_text
+from course_discovery.research_agent.embeddings import course_text, get_embedder
 from course_discovery.research_agent.search.mock_catalog import CATALOG
 
 STANDARD_QUERY = "Find free Python courses with certificate for beginners"
@@ -31,7 +32,8 @@ TOPICS = [
     "quantum physics",
 ]
 
-embedder = HashingEmbedder()
+embedder = get_embedder()
+print(f"embedder: {type(embedder).__name__} {getattr(embedder, 'model', '')}".strip())
 
 
 def cosine(a: list[float], b: list[float]) -> float:
@@ -48,7 +50,7 @@ documents = {
 }
 
 DETAIL_FLOOR = 0.12
-FLOORS = [0.05, 0.08, 0.10, 0.12, 0.15, 0.20]
+FLOORS = [0.05, 0.08, 0.10, 0.12, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.50]
 RELEVANT_KEYWORD = {
     TOPICS[0]: "python",
     "python": "python",

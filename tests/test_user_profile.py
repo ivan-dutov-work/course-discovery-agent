@@ -45,7 +45,7 @@ class PatchTests(unittest.TestCase):
         merged = apply_patch(
             memory,
             MemoryPatch(
-                set={"preferred_level": "advanced", "preferred_course_length": "2h/week"},
+                set={"preferred_level": "advanced", "preferred_course_length": "short"},
                 add={"avoided_providers": ["udemy", "edx"], "career_goals": ["rust"]},
                 remove={"avoided_providers": ["udemy"]},
                 add_notes=[
@@ -55,7 +55,7 @@ class PatchTests(unittest.TestCase):
             ),
         )
         self.assertEqual(merged.preferred_level, "advanced")
-        self.assertEqual(merged.preferred_course_length, "2h/week")
+        self.assertEqual(merged.preferred_course_length, "short")
         self.assertEqual(merged.avoided_providers, ["edx"])
         self.assertEqual(merged.career_goals, ["rust"])
         self.assertEqual([n.text for n in merged.notes], ["likes labs", "theory ok"])
@@ -227,7 +227,7 @@ class ProfileStoreTests(unittest.IsolatedAsyncioTestCase):
                     "preferred_level": "intermediate",
                     "budget_preference": "free",
                     "certificate_importance": "required",
-                    "preferred_course_length": "2h/week",
+                    "preferred_course_length": "short",
                 },
                 add={
                     "preferred_providers": ["coursera"],
@@ -242,7 +242,7 @@ class ProfileStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(memory.preferred_level, "intermediate")
         self.assertEqual(memory.budget_preference, "free")
         self.assertEqual(memory.certificate_importance, "required")
-        self.assertEqual(memory.preferred_course_length, "2h/week")
+        self.assertEqual(memory.preferred_course_length, "short")
         self.assertEqual(memory.preferred_providers, ["coursera"])
         self.assertEqual(memory.avoided_providers, ["udemy"])
         self.assertEqual(memory.rejected_course_urls, ["https://x.test/a"])

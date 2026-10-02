@@ -21,7 +21,9 @@ def course_cache_lookup_node(state: AgentState) -> dict:
             "research_notes": ["Cache lookup skipped because filters were unavailable."],
         }
 
-    candidates = search_course_cache(filters, state.get("user_memory") or UserMemory())
+    candidates = search_course_cache(
+        filters, state.get("user_memory") or UserMemory(), user_id=state.get("user_id")
+    )
     metrics = (state.get("metrics") or ResearchRunMetrics()).model_copy(
         update={"cache_hits": len(candidates)}
     )

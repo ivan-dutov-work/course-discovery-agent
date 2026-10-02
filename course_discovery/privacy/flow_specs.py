@@ -4,6 +4,7 @@ from course_discovery.privacy.flow import NodeFlow, SUBJECT, external, flow, sto
 
 LLM = external("llm:openrouter", accepts=frozenset({SUBJECT}))
 SEARCH = external("search:tavily", accepts=frozenset({SUBJECT}))
+EMBED = external("embeddings:openrouter", accepts=frozenset({SUBJECT}))
 
 OUTER: dict[str, NodeFlow] = {
     "parse_user_request": flow(
@@ -51,8 +52,10 @@ OUTER: dict[str, NodeFlow] = {
 RESEARCH: dict[str, NodeFlow] = {
     "load_user_profile": flow(reads={"user_id"}, writes={"user_memory"}),
     "find_known_courses": flow(
-        reads={"search_filters", "user_memory", "metrics"},
+        reads={"search_filters", "user_memory", "metrics", "user_id"},
         writes={"cache_candidates", "cache_hits", "metrics", "research_notes"},
+        sinks=(EMBED,),
+        redacts={"user_memory"},
         declassifies={
             "cache_candidates": "catalog rows; memory only filters them",
             "cache_hits": "counter",
@@ -110,7 +113,7 @@ RESEARCH: dict[str, NodeFlow] = {
     ),
     "save_verified_courses": flow(
         reads={"valid_courses", "uncertain_courses", "validation_results"},
-        sinks=(store("courses", frozenset()), store("course_evidence", frozenset())),
+        sinks=(store("courses", frozenset()), store("course_evidence", frozenset()), EMBED),
     ),
     "rank_and_summarize_courses": flow(
         reads={
@@ -147,7 +150,7 @@ CURATOR: dict[str, NodeFlow] = {
     "commit": flow(
         reads={"user_id", "run_id", "feedback_history"},
         writes={"memory_update"},
-        sinks=(store("user_preferences"), store("memory_updates")),
+        sinks=(store("user_preferences"), store("memory_updates"), EMBED),
         declassifies={"memory_update": "status string only"},
     ),
 }

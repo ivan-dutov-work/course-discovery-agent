@@ -141,6 +141,22 @@ leave it and append a new one that says which it replaces and what changed.
   subgraph, after parsing. Only the two scalar defaults are read, and they reach
   `search_filters`, never the LLM prompt.
 
+- **Profile similarity is a coarse tie-break, and web candidates are not embedded for it.**
+  The query returns a scalar (`profile_similarity`), never the vector, and `_rank_courses`
+  rounds it to 0.1 and places it after explicit preferences and price but before rating, because
+  a continuous score would never tie and would replace rating outright. Embedding web candidates
+  on the fly would add one remote call per candidate on the request path for a tie-break.
+  Refines the "profile vector never enters state" entry above.
+- **`preferred_course_length` is `short | medium | long`, not free text.** Up to 10 hours,
+  up to 40 hours, more. Free text such as "2h/week" has no comparison against a total duration,
+  and the curator model picks from three words reliably. Weekly effort is not a duration and is
+  ignored by the extractor. Supersedes the entry that kept the field unwritable.
+- **`OpenRouterEmbedder` sends `dimensions=1536`** so models with adjustable output fit the
+  fixed column; the default `openai/text-embedding-3-small` is natively 1536. A transient error
+  (transport, 429, 5xx) propagates unwrapped so `RetryPolicy` fires; anything else becomes
+  `EmbeddingError`. Vectors from different embedders are not comparable, so switching needs a
+  backfill.
+
 ## Compliance
 
 - **The privacy controls are justified by many users' stored data,** not by a single

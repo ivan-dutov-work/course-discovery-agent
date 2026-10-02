@@ -17,6 +17,7 @@ WRITABLE_FIELDS = frozenset(
         "budget_preference",
         "certificate_importance",
         "preferred_level",
+        "preferred_course_length",
         "rejected_course_urls",
         "completed_course_urls",
     }

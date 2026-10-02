@@ -99,7 +99,7 @@ class SeedCacheTopicTests(unittest.TestCase):
 
     def test_embedder_failure_propagates(self):
         set_embedder(BrokenEmbedder())
-        with self.assertRaises(EmbeddingError):
+        with self.assertRaises(ConnectionError):
             search_course_cache(_filters("python"), UserMemory())
 
     def test_unrelated_topic_makes_the_planner_dispatch_web_search(self):

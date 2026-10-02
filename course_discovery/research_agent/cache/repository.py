@@ -32,6 +32,7 @@ def search_course_cache(
     memory: UserMemory,
     *,
     limit: int = 12,
+    user_id: str | None = None,
 ) -> list[CourseCandidate]:
     query = topic_vector(filters.topic)
     with connect() as conn:
@@ -44,6 +45,7 @@ def search_course_cache(
                 SELECT c.title, c.provider, c.canonical_url, c.description, c.price_text,
                        c.is_free, c.has_certificate, c.level, c.language, c.rating,
                        c.published_or_updated, c.validation_confidence,
+                       s.psim, c.duration_hours,
                        COALESCE(
                          jsonb_agg(
                            jsonb_build_object(
@@ -58,7 +60,12 @@ def search_course_cache(
                 LEFT JOIN course_evidence e ON e.course_id = c.id
                 CROSS JOIN LATERAL (
                   SELECT CASE WHEN c.course_embedding IS NOT NULL
-                              THEN 1 - (c.course_embedding <=> %(query)s::vector) END AS sim
+                              THEN 1 - (c.course_embedding <=> %(query)s::vector) END AS sim,
+                         (SELECT 1 - (c.course_embedding <=> up.profile_embedding)
+                          FROM user_preferences up
+                          WHERE up.user_id = %(user_id)s
+                            AND up.profile_embedding IS NOT NULL
+                            AND c.course_embedding IS NOT NULL) AS psim
                 ) s
                 WHERE c.validation_status = 'valid'
                   AND (%(free_only)s = FALSE OR c.is_free = TRUE)
@@ -68,7 +75,7 @@ def search_course_cache(
                   AND NOT (c.canonical_url = ANY(%(completed)s))
                   AND NOT (c.canonical_url = ANY(%(rejected)s))
                   AND (s.sim IS NULL OR s.sim >= %(floor)s)
-                GROUP BY c.id, s.sim
+                GROUP BY c.id, s.sim, s.psim
                 ORDER BY (s.sim IS NULL),
                          (%(w_sim)s * COALESCE(s.sim, 0)
                           + %(w_conf)s * c.validation_confidence
@@ -78,6 +85,7 @@ def search_course_cache(
                 """,
                 {
                     "query": to_pgvector(query) if query is not None else None,
+                    "user_id": user_id,
                     "free_only": filters.max_price == 0,
                     "certificate": filters.include_certificate,
                     "level": filters.level,
@@ -106,7 +114,7 @@ def search_course_cache(
             continue
         evidence = [
             EvidenceItem.model_validate(item)
-            for item in (row[12] if isinstance(row[12], list) else json.loads(row[12]))
+            for item in (row[14] if isinstance(row[14], list) else json.loads(row[14]))
         ]
         candidates.append(
             CourseCandidate(
@@ -124,6 +132,8 @@ def search_course_cache(
                 source="cache",
                 evidence=evidence,
                 confidence=float(row[11] or 0.7),
+                profile_similarity=float(row[12]) if row[12] is not None else None,
+                duration_hours=float(row[13]) if row[13] is not None else None,
             )
         )
     return candidates
@@ -151,9 +161,10 @@ def upsert_courses(
                         INSERT INTO courses (
                           canonical_url, title, provider, description, topics, level, language,
                           price_text, is_free, has_certificate, rating, published_or_updated,
-                          last_seen_at, validation_status, validation_confidence, use_count
+                          last_seen_at, validation_status, validation_confidence, use_count,
+                          duration_hours
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), %s, %s, 0)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), %s, %s, 0, %s)
                         ON CONFLICT (canonical_url) DO UPDATE SET
                           title = EXCLUDED.title,
                           provider = EXCLUDED.provider,
@@ -168,6 +179,7 @@ def upsert_courses(
                           last_seen_at = now(),
                           validation_status = EXCLUDED.validation_status,
                           validation_confidence = EXCLUDED.validation_confidence,
+                          duration_hours = COALESCE(EXCLUDED.duration_hours, courses.duration_hours),
                           updated_at = now()
                         RETURNING id, topics
                         """,
@@ -186,6 +198,7 @@ def upsert_courses(
                             course.published_or_updated,
                             status,
                             course.confidence,
+                            course.duration_hours,
                         ),
                     ).fetchone()
                     course_id = row[0]

@@ -44,6 +44,13 @@ class BrokenEmbedder:
         raise ConnectionError("provider down")
 
 
+class CorruptEmbedder:
+    dimension = EMBEDDING_DIMENSION
+
+    def embed(self, texts):
+        raise ValueError("bad payload")
+
+
 class HashingEmbedderTests(unittest.TestCase):
     def setUp(self):
         self.embedder = HashingEmbedder()
@@ -125,11 +132,16 @@ class EmbedderPortTests(unittest.TestCase):
         with self.assertRaises(EmbeddingError):
             embed_texts(["python"])
 
-    def test_provider_failure_is_wrapped_and_not_swallowed(self):
+    def test_transient_provider_failure_propagates_for_retry(self):
         set_embedder(BrokenEmbedder())
+        with self.assertRaises(ConnectionError):
+            embed_texts(["python"])
+
+    def test_other_provider_failure_is_wrapped_and_not_swallowed(self):
+        set_embedder(CorruptEmbedder())
         with self.assertRaises(EmbeddingError) as ctx:
             embed_texts(["python"])
-        self.assertIsInstance(ctx.exception.__cause__, ConnectionError)
+        self.assertIsInstance(ctx.exception.__cause__, ValueError)
 
     def test_empty_batch_skips_the_embedder(self):
         set_embedder(BrokenEmbedder())

@@ -72,6 +72,7 @@ archive/            superseded docs, never read for context
 ```powershell
 $env:OPENROUTER_API_KEY   # DeepSeek V4.1 Flash (Gemini 2.5 Flash Lite fallback) for gateway/synthesis/router
 $env:DATABASE_URL     # Postgres+pgvector (in-memory seed cache if absent)
+$env:EMBEDDER         # hashing (default, offline) or openrouter (uses OPENROUTER_API_KEY; EMBEDDING_MODEL, default openai/text-embedding-3-small)
 ```
 
 No search API key is required — `search_web_for_courses` reads from the mock catalog.
@@ -91,7 +92,7 @@ export TEST_DATABASE_URL=postgresql://course:course@localhost:55432/course_disco
 uv run python -m unittest discover tests
 ```
 
-Without `TEST_DATABASE_URL` the integration tests skip. `docker-compose.yml` applies `migrations/` on a fresh volume only; apply a new migration by hand to an existing one (`008_memory_updates.sql` is the latest, `007_course_embedding_index.sql` added the embedding index; rows written before it keep `NULL` embeddings until `python -m course_discovery.research_agent.embeddings backfill`).
+Without `TEST_DATABASE_URL` the integration tests skip. `docker-compose.yml` applies `migrations/` on a fresh volume only; apply a new migration by hand to an existing one (`009_course_duration.sql` is the latest, `007_course_embedding_index.sql` added the embedding index; rows written before it keep `NULL` embeddings until `python -m course_discovery.research_agent.embeddings backfill`, and the same command is needed after switching `EMBEDDER`, because vectors from different models are not comparable; `courses.duration_hours` stays `NULL` until a course is seen again).
 
 Tracing is off until an exporter is configured. `docker compose --profile tracing up -d jaeger`, then `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 uv run python main.py` and open http://localhost:16686 (`OTEL_TRACES_EXPORTER=console` prints spans instead, `OTEL_SDK_DISABLED=true` turns it off). Prompt and state content is redacted from spans unless `OTEL_CAPTURE_CONTENT=true`. Exporter failures never fail a run. Metrics (cache lookups by hit/miss, run duration per segment and outcome, run and review outcomes, review wait, degraded/fail-closed paths by component and reason, search calls, LLM calls/errors/fallbacks/latency/tokens on the GenAI conventions, transient errors seen by `RetryPolicy`, outbox outcomes with dead-letter reason, delivery latency, backlog/dead-letter/oldest-age gauges) are off until `OTEL_METRICS_EXPORTER=otlp` or `console`; Jaeger does not ingest metrics, so point OTLP at a collector. Spans are flushed at the end of each run segment and batched every 1s (`OTEL_BSP_SCHEDULE_DELAY`), so a SIGKILL loses at most the last second of spans plus any span still open. Metrics are force-flushed at the same points but otherwise export every 60s (`OTEL_METRIC_EXPORT_INTERVAL`), so a SIGKILL loses the counters recorded since the last segment end. Log previews of queries, feedback and titles are `null` unless `OTEL_CAPTURE_CONTENT=true`; `SERVICE_VERSION` and `DEPLOYMENT_ENVIRONMENT` set the matching resource attributes.
 

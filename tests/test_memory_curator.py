@@ -227,7 +227,6 @@ class CuratorCaseTests(unittest.TestCase):
 
     def test_fields_without_a_consumer_are_not_writable(self):
         for fields in (
-            {"set": {"preferred_course_length": "short"}},
             {"set": {"learning_style_notes": "visual"}},
             {"add": {"career_goals": ["rust"]}},
         ):

@@ -91,3 +91,7 @@ whose keywords contain `python`), not tuned to the result. 13 topics, 15 courses
   let loosely matched courses pollute later lookups. With it, the same runs gave `python` 5
   hits, `javascript` 4, `cybersecurity` 1 and the second Python run 5 cache hits.
 - Tested on Postgres 17 with pgvector 0.8.6.
+- **Calibration against a real embedder is not done.** `scripts/calibrate_topic_floor.py` now
+  takes `EMBEDDER=hashing|openrouter` and prints the embedder it used; the floors it sweeps run
+  to 0.50 so a semantic model's higher cosines are covered. Every number above is still
+  `HashingEmbedder`; the hashing output was reproduced unchanged after the script change.

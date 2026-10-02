@@ -13,6 +13,7 @@ from course_discovery.research_agent.cache.scoring import (
     topic_vector,
 )
 from course_discovery.research_agent.embeddings import course_text, embed_texts
+from course_discovery.research_agent.memory.profile_vector import profile_vector
 
 
 def seed_cache(
@@ -34,6 +35,7 @@ def seed_cache(
             language="en",
             rating=4.8,
             published_or_updated="2025-11-15",
+            duration_hours=60,
             source="cache",
             evidence=[
                 EvidenceItem(
@@ -56,6 +58,7 @@ def seed_cache(
             language="en",
             rating=4.9,
             published_or_updated="2025-12-01",
+            duration_hours=10,
             source="cache",
             evidence=[
                 EvidenceItem(
@@ -68,6 +71,7 @@ def seed_cache(
         ),
     ]
     query = topic_vector(filters.topic)
+    profile = profile_vector(memory)
     ranked: list[tuple[float, CourseCandidate]] = []
     for course in seed:
         if (
@@ -77,10 +81,13 @@ def seed_cache(
         ):
             continue
         similarity = 0.0
+        course_vector = embed_texts([course_text(course.title, course.description, [])])[0]
         if query is not None:
-            similarity = cosine(query, embed_texts([course_text(course.title, course.description, [])])[0])
+            similarity = cosine(query, course_vector)
             if similarity < MIN_TOPIC_SIMILARITY:
                 continue
+        if profile is not None:
+            course = course.model_copy(update={"profile_similarity": cosine(profile, course_vector)})
         ranked.append((topic_score(similarity, course.confidence, 0), course))
     ranked.sort(key=lambda item: item[0], reverse=True)
     return [course for _, course in ranked[:limit]]

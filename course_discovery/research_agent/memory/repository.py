@@ -13,6 +13,8 @@ from course_discovery.guardrails import redact_pii
 from course_discovery.observability.logging import get_logger, sanitize_error
 from course_discovery.observability.metrics import record_db_error
 from course_discovery.persistence.postgres import connect
+from course_discovery.research_agent.embeddings import to_pgvector
+from course_discovery.research_agent.memory.profile_vector import profile_vector
 
 
 logger = get_logger(__name__)
@@ -141,6 +143,7 @@ def save_user_memory(
                 )
                 row = conn.execute(_SELECT_PREFERENCES + " FOR UPDATE", (user_id,)).fetchone()
                 merged = apply_patch(_row_to_memory(row), patch)
+                vector = profile_vector(merged)
                 raw_memory = dict(row[8] or {})
                 raw_memory.update(
                     completed_course_urls=merged.completed_course_urls,
@@ -154,7 +157,8 @@ def save_user_memory(
                         preferred_languages = %s, budget_preference = %s,
                         certificate_importance = %s, preferred_level = %s,
                         preferred_course_length = %s, learning_style_notes = %s,
-                        career_goals = %s, raw_memory_json = %s, updated_at = now()
+                        career_goals = %s, raw_memory_json = %s,
+                        profile_embedding = %s::vector, updated_at = now()
                     WHERE user_id = %s
                     """,
                     (
@@ -168,6 +172,7 @@ def save_user_memory(
                         merged.learning_style_notes,
                         merged.career_goals,
                         Jsonb(raw_memory),
+                        to_pgvector(vector) if vector is not None else None,
                         user_id,
                     ),
                 )
