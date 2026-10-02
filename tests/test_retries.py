@@ -100,7 +100,7 @@ class GraphRetryTests(unittest.IsolatedAsyncioTestCase):
     async def test_gateway_recovers_from_transient_failures(self):
         parse, calls = self.flaky_parse([ConnectionError("a"), TimeoutError("b")])
         with patch.object(gateway_module, "_parse_filters", parse):
-            await build_graph().ainvoke(_initial_state(QUERY, "r-recover"), _config("r-recover"))
+            await build_graph().ainvoke(_initial_state(QUERY), _config("r-recover"))
 
         self.assertEqual(calls["n"], 3)
 
@@ -109,7 +109,7 @@ class GraphRetryTests(unittest.IsolatedAsyncioTestCase):
         graph = build_graph()
         with patch.object(gateway_module, "_parse_filters", parse):
             with self.assertRaises(ConnectionError):
-                await graph.ainvoke(_initial_state(QUERY, "r-giveup"), _config("r-giveup"))
+                await graph.ainvoke(_initial_state(QUERY), _config("r-giveup"))
 
         self.assertEqual(calls["n"], RETRY_SETTINGS["max_attempts"])
 
@@ -117,12 +117,12 @@ class GraphRetryTests(unittest.IsolatedAsyncioTestCase):
         parse, calls = self.flaky_parse([ValueError("unparseable")])
         with patch.object(gateway_module, "_parse_filters", parse):
             result = await build_graph().ainvoke(
-                _initial_state(QUERY, "r-perm"), _config("r-perm")
+                _initial_state(QUERY), _config("r-perm")
             )
 
         self.assertEqual(calls["n"], 1)
-        self.assertEqual(result["routing_decision"], RoutingAction.DISCARD)
-        self.assertIn("Gateway parsing failed", result["error"])
+        self.assertIsNone(result["routing_decision"])
+        self.assertIn("Gateway failed (ValueError)", result["discard_reason"])
 
     async def _resume_after_search_outage(self, graph, state, run_id):
         real = TavilyClient.search
@@ -154,23 +154,23 @@ class GraphRetryTests(unittest.IsolatedAsyncioTestCase):
         return siblings, final
 
     async def test_standalone_graph_resume_keeps_completed_sibling_writes(self):
-        state = _initial_state(QUERY, "r-flat")
+        state = _initial_state(QUERY)
         state.update(gateway_module.gateway_node(state))
 
         siblings, final = await self._resume_after_search_outage(
             build_research_graph(checkpointer=memory_saver()), state, "r-flat"
         )
-        self.assertEqual(final["tavily_calls"], len(set(final["completed_queries"])))
+        self.assertEqual(final["metrics"].tavily_calls, len(set(final["completed_queries"])))
 
         self.assertTrue(all(n == 1 for n in siblings.values()), siblings)
 
     async def test_subgraph_resume_reruns_completed_sibling_without_double_counting(self):
         siblings, final = await self._resume_after_search_outage(
-            build_graph(), _initial_state(QUERY, "r-nested"), "r-nested"
+            build_graph(), _initial_state(QUERY), "r-nested"
         )
 
         self.assertTrue(all(n == 2 for n in siblings.values()), siblings)
-        self.assertEqual(final["tavily_calls"], len(set(final["completed_queries"])))
+        self.assertEqual(final["metrics"].tavily_calls, len(set(final["completed_queries"])))
 
     async def test_search_timeout_is_retried_as_transient(self):
         calls = Counter()
@@ -183,7 +183,7 @@ class GraphRetryTests(unittest.IsolatedAsyncioTestCase):
             search_nodes, "SEARCH_TIMEOUT_SECONDS", 0.01
         ):
             with self.assertRaises(TimeoutError):
-                await build_graph().ainvoke(_initial_state(QUERY, "r-hang"), _config("r-hang"))
+                await build_graph().ainvoke(_initial_state(QUERY), _config("r-hang"))
 
         self.assertTrue(all(n == RETRY_SETTINGS["max_attempts"] for n in calls.values()))
 
@@ -196,7 +196,7 @@ class GraphRetryTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(TavilyClient, "search", broken):
             result = await build_graph().ainvoke(
-                _initial_state(QUERY, "r-badsearch"), _config("r-badsearch")
+                _initial_state(QUERY), _config("r-badsearch")
             )
 
         self.assertTrue(all(n == 1 for n in calls.values()))
@@ -213,7 +213,7 @@ class GraphRetryTests(unittest.IsolatedAsyncioTestCase):
 
         graph = build_graph()
         config = _config("r-write")
-        await graph.ainvoke(_initial_state(QUERY, "r-write"), config)
+        await graph.ainvoke(_initial_state(QUERY), config)
         graph.update_state(config, {"manager_feedback": "approve"})
         with patch.object(memory_nodes, "record_feedback", record):
             result = await graph.ainvoke(None, config)
@@ -230,7 +230,7 @@ class GraphRetryTests(unittest.IsolatedAsyncioTestCase):
 
         graph = build_graph()
         config = _config("r-integrity")
-        await graph.ainvoke(_initial_state(QUERY, "r-integrity"), config)
+        await graph.ainvoke(_initial_state(QUERY), config)
         graph.update_state(config, {"manager_feedback": "approve"})
         with patch.object(memory_nodes, "record_feedback", record):
             with self.assertRaises(psycopg.errors.CheckViolation):
@@ -250,7 +250,7 @@ class GraphRetryTests(unittest.IsolatedAsyncioTestCase):
             return real(user_id)
 
         with patch.object(memory_nodes, "load_user_memory", load):
-            await build_graph().ainvoke(_initial_state(QUERY, "r-read"), _config("r-read"))
+            await build_graph().ainvoke(_initial_state(QUERY), _config("r-read"))
 
         self.assertEqual(calls["n"], 3)
 
@@ -264,7 +264,7 @@ class GraphRetryTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(cache_nodes, "search_course_cache", search):
             with self.assertRaises(psycopg.errors.UndefinedTable):
                 await build_graph().ainvoke(
-                    _initial_state(QUERY, "r-cache-read"), _config("r-cache-read")
+                    _initial_state(QUERY), _config("r-cache-read")
                 )
 
         self.assertEqual(calls["n"], 1)
@@ -289,7 +289,7 @@ class GraphRetryTests(unittest.IsolatedAsyncioTestCase):
         set_gateway(FlakySubmit())
         graph = build_graph()
         config = _config("r-submit")
-        await graph.ainvoke(_initial_state(QUERY, "r-submit"), config)
+        await graph.ainvoke(_initial_state(QUERY), config)
         graph.update_state(config, {"manager_feedback": "approve"})
 
         result = await graph.ainvoke(None, config)

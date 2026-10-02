@@ -84,7 +84,7 @@ class ProcessKillTests(unittest.IsolatedAsyncioTestCase):
             await saver.setup()
             self.assertEqual([c async for c in saver.alist(_thread(thread_id))], [])
             graph = build_graph(checkpointer=saver)
-            await graph.ainvoke(_initial_state(QUERY, thread_id), _thread(thread_id))
+            await graph.ainvoke(_initial_state(QUERY), _thread(thread_id))
             state = await graph.aget_state(_thread(thread_id))
 
         self.assertEqual(state.next, ("await_human_review",))

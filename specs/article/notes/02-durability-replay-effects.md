@@ -78,6 +78,18 @@ boundaries; completed nodes are not re-run on resume, the interrupted node is re
   subgraph (AUGMENT re-enters at `plan_gap_search` and reads them); those need a reducer that is
   idempotent over the echo. Open, `BACKLOG.md` S1. Pinned for the new channel by
   `tests/test_memory_e2e.py`.
+- **Budgets in `configurable` are per invocation, not per thread.** langgraph 1.1.2, memory saver,
+  no LLM key: a run started with `max_review_rounds=1` and resumed with a config that omits the key
+  ran its second review round on the default (3) instead of discarding
+  (`tests/test_top_level_state.py`). The checkpoint stores the run's state, not the caller's
+  config. `max_research_iterations` behaves the same: 0, 1 and the default gave 0, 1 and 2
+  replans on an all-rejected run. `tavily_calls` is no longer a channel; `metrics.tavily_calls`
+  is `len(completed_queries)`, so it inherits the echo above until S1 item 0.
+- **Removing channels breaks resume of an old pause.** langgraph 1.1.2, memory saver: a thread
+  paused under the graph with `run_id`, `iteration_count` and the other removed channels, its
+  storage pickled and loaded by the slimmed graph, accepts `update_state` but `astream(None)` then
+  yields only `__interrupt__`, twice; nothing publishes. The same sequence without the pickle round
+  trip publishes. Cause not isolated. Postgres not run.
 - **Approved digest equals published digest.** `send_approved_courses` reads `digest` from
   checkpointed state. The router LLM can classify differently if re-run after a crash, but the
   reviewer's text is already in `manager_feedback`. Not tested end to end.

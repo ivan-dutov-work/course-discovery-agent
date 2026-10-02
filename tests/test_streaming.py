@@ -29,7 +29,7 @@ class StreamingRunTests(unittest.IsolatedAsyncioTestCase):
 
         with contextlib.redirect_stdout(out):
             state = await _stream_until_pause(
-                graph, _initial_state(QUERY, "stream-1"), config, resume=False
+                graph, _initial_state(QUERY), config, resume=False
             )
 
         lines = out.getvalue().splitlines()
@@ -46,7 +46,7 @@ class StreamingRunTests(unittest.IsolatedAsyncioTestCase):
 
         with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(GraphRecursionError):
             await _stream_until_pause(
-                graph, _initial_state(QUERY, "stream-2"), config, resume=False
+                graph, _initial_state(QUERY), config, resume=False
             )
 
 

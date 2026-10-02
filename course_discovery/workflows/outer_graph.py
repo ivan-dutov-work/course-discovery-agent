@@ -25,7 +25,7 @@ logger = get_logger(__name__)
 
 
 def _after_gateway(state: AgentState):
-    if state.get("error"):
+    if state.get("discard_reason"):
         return "discard_run"
     return "course_research"
 

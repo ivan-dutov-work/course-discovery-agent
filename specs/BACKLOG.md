@@ -28,30 +28,32 @@ Spec: `specs/FEEDBACK.md`, "Test layers".
 
 ### S1. State hygiene
 
-`AgentState` is 32 flat channels across seven concerns. Decision and reasoning are in
-`DECISIONS.md` ("Do not restructure `AgentState` wholesale"). The P5 curator subgraph was the pilot
-for private schemas: `input_schema`/`output_schema` kept its channels private and returned only a
-status string, so the reducer echo did not occur. Apply that to the research subgraph here.
+The top-level pass is done: the outer graph owns 12 of what were 34 flat channels (table in
+`ARCHITECTURE.md`, "Top-level state and run configuration"; decision in `DECISIONS.md`). What is
+left is the research subgraph's channels. The P5 curator subgraph was the pilot for private
+schemas: `input_schema`/`output_schema` kept its channels private and returned only a status
+string, so the reducer echo did not occur. Apply that to the research subgraph here.
 
-0. Fix the reducer double-count: `tavily_calls`, `completed_queries` and `research_notes` grow
-   1, 2, 4 across REWRITE and AUGMENT rounds because the subgraph returns its channel value and
-   the parent's `operator.add` adds it again (`article/notes/02`). They cannot simply leave the
-   subgraph schema, since the parent needs them for AUGMENT; use reducers that are idempotent
-   over the echo, and add a regression test over two rounds.
-1. One source for the counters: `cache_hits` and `tavily_calls` exist both as channels and in
-   `ResearchRunMetrics`. Keep one and update every reader and `flow_specs.py`.
-2. Move `max_iterations` and `max_research_iterations` out of state into run configuration.
-   Check that a resumed run keeps the budget it started with.
-3. Verify whether the search-loop channels (`research_plan`, `active_search_query`,
+0. Fix the reducer double-count: `completed_queries` and `research_notes` (and so
+   `metrics.tavily_calls`, derived from `completed_queries`) grow 1, 2, 4 across REWRITE and
+   AUGMENT rounds because the subgraph returns its channel value and the parent's `operator.add`
+   adds it again (`article/notes/02`). They cannot simply leave the subgraph schema, since the
+   parent needs them for AUGMENT; use reducers that are idempotent over the echo, and add a
+   regression test over two rounds.
+1. Verify whether the search-loop channels (`research_plan`, `active_search_query`,
    `tavily_results`, `completed_queries`) can be private to `course_research` with an
    `output_schema`. AUGMENT re-enters at `plan_gap_search` and reads `completed_queries`,
    `research_plan` and `validation_results` from the previous pass, so this only works if they
-   persist across invocations; test that on LangGraph 1.1.2 before changing anything.
-4. Keep the intermediate candidate lists (`extracted_candidates`, `scraped_courses`,
+   persist across invocations; test that on LangGraph 1.1.2 before changing anything. The
+   boundary to aim for: in `search_filters`, `user_id`, `routing_decision`,
+   `rewrite_instructions`; out `valid_courses`, `digest` and a small summary for the CLI and
+   tracing (today they read `metrics`, `rejected_courses` and `uncertain_courses`).
+2. Keep the intermediate candidate lists (`extracted_candidates`, `scraped_courses`,
    `deduplicated_courses`) as they are: they are the checkpoint history the article shows.
-5. Check that `flow_specs.py` and `Pii` markers still see every channel after any regrouping;
+3. Check that `flow_specs.py` and `Pii` markers still see every channel after any regrouping;
    nested fields are invisible to a channel-level check.
-6. Checkpoints written before the change do not resume (see "Naming" in `ARCHITECTURE.md`).
+4. Checkpoints written before the top-level pass do not resume (verified on the memory saver,
+   not on Postgres; see "Naming" in `ARCHITECTURE.md`).
 
 Closes the state-size item under Optional and gives the article's §2.3 (`input_schema`,
 `output_schema`) an honest use.
@@ -82,6 +84,10 @@ Until that is decided, `CLAUDE.md`'s "Never auto-publish" stands and nothing her
 
 ## Verify
 
+- **`research_iteration` is never reset between review rounds** (only `plan_gap_search`
+  increments it), so a REWRITE or AUGMENT round after a pass that spent the replan budget may get
+  no replans. Run two rounds on an all-rejected query to confirm; if it is a bug, reset it where
+  `course_research` is re-entered.
 - **`extracted_candidates` has no reducer** but is written by every parallel `Send` branch.
   Add a regression test with a plan of two or more queries. If it raises `InvalidUpdateError`,
   add the reducer and make it the §2.2 example; if it doesn't, record why in the notes.

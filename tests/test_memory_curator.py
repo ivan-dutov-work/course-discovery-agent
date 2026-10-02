@@ -24,11 +24,11 @@ def invoke(feedback: list[str], run_id: str = "run-1", user_id: str | None = USE
     return build_curator_graph().invoke(
         {
             "user_id": user_id,
-            "run_id": run_id,
             "feedback_history": feedback,
             "valid_courses": [COURSE],
             "publish_status": DeliveryStatus.DELIVERED,
-        }
+        },
+        {"configurable": {"thread_id": run_id}},
     )
 
 

@@ -105,7 +105,7 @@ All LLM nodes go through `course_discovery/app/llm.py:build_llm()`, which return
 ## Key Constraints
 
 - **Never auto-publish.** `interrupt_before=["await_human_review"]` is always compiled in.
-- **Loop budget.** `max_research_iterations` caps the replanning loop (default: 2–3).
+- **Loop budget.** `max_research_iterations` caps the replanning loop and `max_review_rounds` the review rounds; both are optional `configurable` keys (defaults 2 and 3), supplied by the caller on every invocation, not state.
 - **Evidence over claims.** Treat missing evidence as `uncertain`, not `valid`.
 - **Cache first.** The search worker is only dispatched for gaps, freshness checks, or new topics.
 - **PII never persists raw.** User queries and review feedback go through `guardrails.redact_pii` (backed by `pii_redaction.PresidioRedactor`, local spaCy `en_core_web_sm`, no network; to move it out of process, add another `Redactor` implementation, e.g. an HTTP client, and return it from `guardrails/pii.py:_default_redactor`) before entering `AgentState`, the gateway LLM call, `record_feedback`, and log previews/error messages. Redaction failure raises `PiiGuardrailError`. `PII_GUARDRAIL=off` disables it for local debugging only. Person names in queries (e.g. an instructor) are redacted too.

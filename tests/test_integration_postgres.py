@@ -24,7 +24,7 @@ USER_ID = "cli-user"
 
 QUERY = "Find free Python courses with certificate for beginners"
 FAST_RETRY = {**RETRY_SETTINGS, "initial_interval": 0.0, "jitter": False}
-STATE_KEYS = ("valid_courses", "digest", "cache_hits", "tavily_calls", "routing_decision")
+STATE_KEYS = ("valid_courses", "digest", "routing_decision")
 
 
 def _count(conn, sql: str) -> int:
@@ -97,7 +97,7 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
         graph = build_graph()
         config: RunnableConfig = {"configurable": {"thread_id": run_id}}
         query = "Find free Python courses with certificate for beginners"
-        await graph.ainvoke(_initial_state(query, run_id), config)
+        await graph.ainvoke(_initial_state(query), config)
         graph.update_state(config, {"manager_feedback": "approve"})
         result = await graph.ainvoke(None, config)
         return graph, config, result
@@ -128,7 +128,7 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_write_failure_is_raised_and_leaves_no_partial_rows(self):
         graph = build_graph()
         config = _thread("run-write-fail")
-        await graph.ainvoke(_initial_state(QUERY, "run-write-fail"), config)
+        await graph.ainvoke(_initial_state(QUERY), config)
         graph.update_state(config, {"manager_feedback": "approve"})
         self.conn.execute("ALTER TABLE recommendation_events ADD CONSTRAINT no_events CHECK (false)")
         self.addCleanup(
@@ -168,7 +168,7 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
         saver = memory_saver()
         graph = build_graph(checkpointer=saver)
         config = _thread("run-sub")
-        await graph.ainvoke(_initial_state(QUERY, "run-sub"), config)
+        await graph.ainvoke(_initial_state(QUERY), config)
         before = _view(graph.get_state(config).values)
         events_before = _count(self.conn, "SELECT count(*) FROM course_evidence")
 
@@ -193,7 +193,7 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
         async with _durable_saver() as saver:
             await saver.setup()
             first = build_graph(checkpointer=saver)
-            await first.ainvoke(_initial_state(QUERY, thread_id), config)
+            await first.ainvoke(_initial_state(QUERY), config)
             before = _view((await first.aget_state(config)).values)
         evidence = _count(self.conn, "SELECT count(*) FROM course_evidence")
 
@@ -253,7 +253,7 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 await saver.setup()
                 graph = build_graph(checkpointer=saver)
                 with self.assertRaises(ConnectionError):
-                    await graph.ainvoke(_initial_state(QUERY, thread_id), config, durability=mode)
+                    await graph.ainvoke(_initial_state(QUERY), config, durability=mode)
                 written = len([c async for c in saver.alist(config)])
 
                 outage["active"] = False
@@ -270,7 +270,7 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
             research_compile_kwargs={"interrupt_before": ["save_verified_courses"]},
         )
         config = _thread("run-mid")
-        await graph.ainvoke(_initial_state(QUERY, "run-mid"), config)
+        await graph.ainvoke(_initial_state(QUERY), config)
 
         paused = graph.get_state(config, subgraphs=True)
         self.assertEqual(paused.next, ("course_research",))

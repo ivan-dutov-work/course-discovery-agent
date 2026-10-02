@@ -5,6 +5,7 @@ import time
 
 from langgraph.config import get_stream_writer
 
+from course_discovery.domain.run_config import current_run_id
 from course_discovery.domain.state import AgentState
 from course_discovery.observability.logging import get_logger, sanitize_error
 from course_discovery.observability.metrics import record_degradation, record_search
@@ -25,7 +26,7 @@ def _emit_progress(message: str) -> None:
 async def tavily_search_worker_node(state: AgentState) -> dict:
     start_ts = time.perf_counter()
     query = state.get("active_search_query")
-    run_id = state.get("run_id", "unknown")
+    run_id = current_run_id()
     if not query:
         return {"research_notes": ["Skipped Tavily worker without active query."]}
 
@@ -52,7 +53,6 @@ async def tavily_search_worker_node(state: AgentState) -> dict:
         return {
             "tavily_results": results,
             "completed_queries": [query],
-            "tavily_calls": 1,
         }
     except Exception as exc:  # noqa: BLE001
         if is_transient(exc):

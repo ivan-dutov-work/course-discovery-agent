@@ -5,6 +5,7 @@ from course_discovery.domain.models import (
     CourseCandidate,
     ResearchRunMetrics,
 )
+from course_discovery.domain.run_config import current_run_id, max_research_iterations
 from course_discovery.domain.state import AgentState
 from course_discovery.observability.logging import get_logger
 from course_discovery.observability.metrics import record_degradation, record_validation
@@ -19,7 +20,7 @@ def aggregate_node(state: AgentState) -> dict:
         "aggregate_complete",
         extra={
             "event": "aggregate.complete",
-            "run_id": state.get("run_id", "unknown"),
+            "run_id": current_run_id(),
             "cache_count": len(state.get("cache_candidates", [])),
             "web_count": len(state.get("extracted_candidates", [])),
             "merged_count": len(merged),
@@ -98,7 +99,7 @@ def evidence_validator_node(state: AgentState) -> dict:
             "rejected_count": len(rejected),
             "uncertain_count": len(uncertain),
             "queries_run": len(state.get("completed_queries", [])),
-            "tavily_calls": state.get("tavily_calls", 0),
+            "tavily_calls": len(state.get("completed_queries", [])),
             "unsupported_claim_count": sum(len(item.missing_evidence) for item in validations),
         }
     )
@@ -107,7 +108,7 @@ def evidence_validator_node(state: AgentState) -> dict:
         "evidence_validation_complete",
         extra={
             "event": "validator.complete",
-            "run_id": state.get("run_id", "unknown"),
+            "run_id": current_run_id(),
             "valid_count": len(valid),
             "rejected_count": len(rejected),
             "uncertain_count": len(uncertain),
@@ -127,14 +128,14 @@ def enough_valid(state: AgentState):
     min_valid = plan.min_valid_candidates if plan else 3
     if len(state.get("valid_courses", [])) >= min_valid:
         return "save_verified_courses"
-    if state.get("research_iteration", 0) < state.get("max_research_iterations", 2):
+    if state.get("research_iteration", 0) < max_research_iterations():
         return "plan_gap_search"
     record_degradation("research", "replan_budget_exhausted")
     logger.warning(
         "replan_budget_exhausted",
         extra={
             "event": "validator.replan_budget_exhausted",
-            "run_id": state.get("run_id", "unknown"),
+            "run_id": current_run_id(),
             "valid_count": len(state.get("valid_courses", [])),
             "min_valid": min_valid,
             "research_iteration": state.get("research_iteration", 0),

@@ -42,7 +42,6 @@ The merge strategy is declared on the field, as a reducer:
 tavily_results: Annotated[list[TavilySearchResult], operator.add]
 completed_queries: Annotated[list[str], operator.add]
 research_notes: Annotated[list[str], operator.add]
-tavily_calls: Annotated[int, operator.add]
 ```
 
 Instead of "last write wins", LangGraph concatenates every branch's contribution
@@ -671,8 +670,8 @@ class AgentState(TypedDict):
 LLM = external("llm:openrouter", accepts=frozenset({"subject"}))
 
 "parse_user_request": flow(
-    reads={"user_query", "manager_feedback"}, writes={"search_filters"},
-    sinks=(LLM,), redacts={"user_query", "manager_feedback"},
+    reads={"user_query", "feedback_history"}, writes={"search_filters"},
+    sinks=(LLM,), redacts={"user_query", "feedback_history"},
 ),
 "verify_course_claims": flow(
     reads={"search_filters", "user_memory", "deduplicated_courses"},

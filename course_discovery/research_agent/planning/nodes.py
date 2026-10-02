@@ -5,6 +5,7 @@ from course_discovery.domain.models import (
     ResearchRunMetrics,
     SearchFilters,
 )
+from course_discovery.domain.run_config import current_run_id
 from course_discovery.domain.state import AgentState
 from course_discovery.observability.logging import get_logger
 from course_discovery.observability.metrics import record_replan
@@ -87,7 +88,7 @@ def research_planner_node(state: AgentState) -> dict:
         "research_plan_complete",
         extra={
             "event": "planner.complete",
-            "run_id": state.get("run_id", "unknown"),
+            "run_id": current_run_id(),
             "cache_candidate_count": len(cache_candidates),
             "search_query_count": len(search_queries),
             "min_valid_candidates": min_valid,
@@ -148,7 +149,7 @@ def replanner_node(state: AgentState) -> dict:
         "research_replan_complete",
         extra={
             "event": "planner.replan_complete",
-            "run_id": state.get("run_id", "unknown"),
+            "run_id": current_run_id(),
             "research_iteration": iteration,
             "search_query_count": len(plan.search_queries),
             "missing_evidence": missing,
