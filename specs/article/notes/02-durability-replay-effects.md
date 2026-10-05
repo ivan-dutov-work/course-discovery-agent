@@ -74,17 +74,22 @@ boundaries; completed nodes are not re-run on resume, the interrupted node is re
   and a new `operator.add` channel `feedback_history` went `[a]` to `[a, a, b]`. Fix for a
   channel the subgraph never uses: build the subgraph on a state schema without it
   (`domain/state.py:ResearchState`), so it is neither passed in nor echoed back. Not applicable
-  to `completed_queries`, `tavily_calls` and `research_notes`, which the parent needs from the
-  subgraph (AUGMENT re-enters at `plan_gap_search` and reads them); those need a reducer that is
-  idempotent over the echo. Open, `BACKLOG.md` S1. Pinned for the new channel by
-  `tests/test_memory_e2e.py`.
+  to `completed_queries`, `tavily_results` and `research_notes`, which the parent needs from the
+  subgraph (AUGMENT re-enters at `plan_gap_search` and reads them). Fixed by declaring the
+  reducer only on the subgraph's schema (`ResearchState`, where the `Send` branches meet) and
+  leaving the parent's copy a plain list: the subgraph receives the parent's value, appends to
+  it, and the parent overwrites with the result. Before the fix, two consecutive `rewrite:` rounds
+  gave `len(completed_queries)` 2, 4, 8 and `tavily_results` 10, 20, 40; after it 2, 2, 2 and 10,
+  10, 10 (a REWRITE plans no new query because every planned one is already in
+  `completed_queries`), and `augment:` gave 2, 3, 3. Pinned by `tests/test_state_hygiene.py`
+  (fails on the earlier schema) and, for `feedback_history`, by `tests/test_memory_e2e.py`.
 - **Budgets in `configurable` are per invocation, not per thread.** langgraph 1.1.2, memory saver,
   no LLM key: a run started with `max_review_rounds=1` and resumed with a config that omits the key
   ran its second review round on the default (3) instead of discarding
   (`tests/test_top_level_state.py`). The checkpoint stores the run's state, not the caller's
   config. `max_research_iterations` behaves the same: 0, 1 and the default gave 0, 1 and 2
   replans on an all-rejected run. `tavily_calls` is no longer a channel; `metrics.tavily_calls`
-  is `len(completed_queries)`, so it inherits the echo above until S1 item 0.
+  is `len(completed_queries)`.
 - **Removing channels breaks resume of an old pause (cause isolated, verified on Postgres).**
   langgraph 1.1.2. A thread paused under the old graph (`725f85a`: `run_id`, `iteration_count`
   and four more channels) and resumed under the slimmed one accepts `update_state` and then

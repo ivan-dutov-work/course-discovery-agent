@@ -212,6 +212,10 @@ Three stores, three lifetimes.
   outlives runs. `load_user_profile` reads it at the start; `record_review_outcome`
   writes feedback events after publish or discard. `save_user_memory` is the one writer of
   `user_preferences` (one transaction, row lock, merge); only the curator's `commit` calls it.
+- **Fan-in reducers live on the subgraph's schema only.** `tavily_results`, `completed_queries` and
+  `research_notes` are plain lists in `AgentState` and `operator.add` channels in `ResearchState`
+  (`domain/state.py`), so the `Send` branches merge inside the subgraph and the parent overwrites
+  with the result instead of adding it to itself.
 - **`feedback_history`** is the one channel that keeps every review round (`manager_feedback`
   is only the inbox the reviewer's text arrives in, cleared once interpreted). It is outer-graph only: the research subgraph runs on
   `ResearchState`, which omits it, because a reducer channel that a subgraph shares is added to
@@ -278,10 +282,6 @@ design.
    rejected and completed URLs, and scoped notes. `career_goals` and `learning_style_notes` have
    no consumer beyond the profile vector, so feedback about them is dropped, not stored. The stubbed-model tests pin the loop; how a real model behaves on the
    case list is unmeasured (P6). Cases: `FEEDBACK.md`.
-6. **Reducer channels double-count across review rounds.** `completed_queries` and
-   `research_notes` (and `metrics.tavily_calls`, which is derived from `completed_queries`)
-   are added to again each time `course_research` returns, so a REWRITE or
-   AUGMENT round doubles them (measured 1, 2, 4; `article/notes/02`). Fix: backlog S1.
 7. **The injection screen is one layer, on one prompt.** JEV can be steered by text that argues
    for its own classification, no deterministic rule or prompt fencing sits beside it, the
    thresholds are unfitted, and the tagging step is not screened (`BACKLOG.md`).

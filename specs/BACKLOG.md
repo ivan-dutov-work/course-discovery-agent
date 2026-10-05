@@ -34,12 +34,6 @@ left is the research subgraph's channels. The P5 curator subgraph was the pilot 
 schemas: `input_schema`/`output_schema` kept its channels private and returned only a status
 string, so the reducer echo did not occur. Apply that to the research subgraph here.
 
-0. Fix the reducer double-count: `completed_queries` and `research_notes` (and so
-   `metrics.tavily_calls`, derived from `completed_queries`) grow 1, 2, 4 across REWRITE and
-   AUGMENT rounds because the subgraph returns its channel value and the parent's `operator.add`
-   adds it again (`article/notes/02`). They cannot simply leave the subgraph schema, since the
-   parent needs them for AUGMENT; use reducers that are idempotent over the echo, and add a
-   regression test over two rounds.
 1. Verify whether the search-loop channels (`research_plan`, `active_search_query`,
    `tavily_results`, `completed_queries`) can be private to `course_research` with an
    `output_schema`. AUGMENT re-enters at `plan_gap_search` and reads `completed_queries`,

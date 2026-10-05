@@ -49,6 +49,15 @@ into the shared key, or sums it for a counter. Three workers in the same
 superstep each return their own slice of the results, and the graph appends all
 three rather than keeping one.
 
+A reducer belongs on the schema where the branches meet, and only there. The research
+subgraph is a node of the outer graph, and when it returns, the outer graph merges its
+channels with the outer graph's own reducer. A channel declared `operator.add` on both sides
+is therefore appended to itself on every pass: the subgraph starts from the outer value, adds
+its branches, and the outer reducer adds the whole result again. After two review rounds the
+query ledger read 2, 4, 8. The fix is to keep the reducer on the subgraph's schema and leave the
+outer field a plain list, so the outer graph overwrites with a result that already contains
+the old value.
+
 Worth being precise about what *isn't* reduced. A field written once per branch,
 where each branch produces a self-contained value, needs no reducer: there is no
 cross-branch merge to protect. A list of extracted candidates produced by a

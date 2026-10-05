@@ -24,7 +24,7 @@ class AgentState(TypedDict):
     user_memory: Annotated[UserMemory | None, Pii(subject="user_id", redacted=False)]
     cache_candidates: list[CourseCandidate]
     research_plan: ResearchPlan | None
-    tavily_results: Annotated[list[TavilySearchResult], operator.add]
+    tavily_results: list[TavilySearchResult]
     extracted_candidates: list[CourseCandidate]
     scraped_courses: list[CourseCandidate]
     deduplicated_courses: list[CourseCandidate]
@@ -38,8 +38,8 @@ class AgentState(TypedDict):
     rewrite_instructions: str | None
     routing_decision: RoutingAction | None
     research_iteration: int
-    completed_queries: Annotated[list[str], operator.add]
-    research_notes: Annotated[list[str], operator.add]
+    completed_queries: list[str]
+    research_notes: list[str]
     metrics: ResearchRunMetrics
     active_search_query: str | None
     error: str | None
@@ -50,11 +50,20 @@ class AgentState(TypedDict):
 
 OUTER_ONLY_CHANNELS = frozenset({"feedback_history"})
 
+RESEARCH_FAN_IN_CHANNELS = {
+    "tavily_results": Annotated[list[TavilySearchResult], operator.add],
+    "completed_queries": Annotated[list[str], operator.add],
+    "research_notes": Annotated[list[str], operator.add],
+}
+
 ResearchState = TypedDict(
     "ResearchState",
     {
-        name: hint
-        for name, hint in get_type_hints(AgentState, include_extras=True).items()
-        if name not in OUTER_ONLY_CHANNELS
+        **{
+            name: hint
+            for name, hint in get_type_hints(AgentState, include_extras=True).items()
+            if name not in OUTER_ONLY_CHANNELS
+        },
+        **RESEARCH_FAN_IN_CHANNELS,
     },
 )

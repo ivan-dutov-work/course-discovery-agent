@@ -129,6 +129,12 @@ leave it and append a new one that says which it replaces and what changed.
   markers are per channel, so nesting channels hides both from `flow_specs.py`. Fix the real
   redundancy (duplicate counters, budgets held as state) and try private schemas on new code
   first (the P5 curator). Backlog S1.
+- **A fan-in reducer is declared on the schema where the branches meet, not on the parent's.**
+  `tavily_results`, `completed_queries` and `research_notes` are `operator.add` in `ResearchState`
+  and plain in `AgentState`. The alternative, a reducer on the parent that is idempotent over the
+  echo (prefix test or dedup), was ruled out: it cannot tell an echo from a repeated query, and
+  `metrics.tavily_calls` is a count of calls. A REWRITE round therefore adds no queries, because
+  the planner skips every `completed_queries` entry. (notes: 02-durability-replay-effects.md)
 - **Top-level state holds only what cannot be derived.** The run id is the `thread_id`; the two
   budgets are optional `configurable` keys with in-code defaults; the review round is
   `len(feedback_history)`; `manager_feedback` is an inbox cleared once interpreted;
