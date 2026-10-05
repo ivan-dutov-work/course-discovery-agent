@@ -155,6 +155,35 @@ unless marked as documentation.
   six hand-labelled outputs and the model versions served. The redaction finding predicts that
   cases 1, 2, 7 and 8 fail live until provider names stop being redacted; that is a prediction.
 
+## Live memory layer and judge calibration (E1 milestone 3, 2026-10-05)
+
+- **Method.** `LIVE_LLM_TESTS=1`, key from `.env`, fake profile store, no database. Model versions served
+  were not captured: `build_llm` returns the alias, and the run did not log OpenRouter's `model` field.
+  Add that before quoting a model name as measured.
+- **The first live run was mostly a harness failure.** 3 trials, 1 hour: 33 failures and 1 error of 14
+  tests. The live class never pointed `memory_curator.graph` at the fake store, so every save returned
+  `None` (`skipped:not_applied`); it lacked `recorded_rejection`; and `case_12` compared digest order
+  across runs, which the live ranking model does not keep stable. Fixed in the harness, not the cases.
+- **After the fixes, 1 trial: 7 of 12 cases fail, 5 for one reason.** Cases 1, 7, 8, 9 and 14 end
+  `skipped:no_changes`. `redact_pii` turns `Udemy`, `Coursera` into `<PERSON>` (checked directly), so the
+  curator sees "I'm done with <PERSON>" and has nothing to store. This confirms the prediction above and the
+  provider-name item in `BACKLOG.md`. One trial per case is not a failure rate.
+- **Two failures are not redaction.** `case_04` stored a `topic:math` note beside the `topic:python` one
+  (the case forbids a note for math): a model failure, one trial. `case_13` expects `committed` because
+  the scripted curator obeys the injected instruction; a live model that ignores it writes nothing, which is
+  the correct outcome, so the expectation is scripted-only and needs a live variant.
+- **Judge against six hand labels (3 calls, majority).** 5 of 6 agree. It passed
+  `topic_stored_as_durable` (a topic-only statement stored as durable), three calls of three, reasoning that
+  durable storage "is acceptable".
+- **Judge against 32 generated outputs, labelled by the generator, not the owner (provisional).**
+  TPR/TNR with failure as the positive class: captured 0.86/0.89, polarity 1.00/0.97, scope 0.67/0.92,
+  no_invention 0.85/1.00, no_loss 1.00/0.97. Polarity and no_loss have 3 failing examples each, so those
+  rates carry little weight. Weakest on scope, and on generalising ("dislikes audio content" from
+  "avoid text-to-speech" passed as reasonable). Owner labels are still to come; replace this paragraph then.
+- **Labelling needs a convention.** The first intended labels listed one criterion per flaw; the judge also
+  failed `captured` and `no_invention` for a flipped note, correctly. Convention: list every criterion a
+  careful reader would fail (`EVALS.md`).
+
 ## CI rehearsal (E1 milestone 2)
 
 - **Method (2026-10-05).** A fresh `pgvector/pgvector:pg17` container with no mounted migrations, a fresh

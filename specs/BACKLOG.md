@@ -15,7 +15,7 @@ Spec: `specs/EVALS.md` (levels L0 to L5, case format, judge, statistics, CI, bui
 The judge exists (`tests/judge.py`, built in P6) and is reused by milestone 3, not rewritten. Six
 milestones in the spec's "Build order". Seed cases come from observed failures and
 `FEEDBACK.md`, tagged `source: seed`, and are replaced by `review` and `prod` cases as they exist.
-Milestones 1 and 2 are built (`STATUS.md`, "Evals"): the existing `tests/` checks are not yet moved onto cases and L1a has no extractor or ranking rows. `ci.yml` is not yet seen green on GitHub, and the PR-gate is not branch-protected. Next: the labelled set and L1b live for milestone 3.
+Milestones 1 and 2 are built (`STATUS.md`, "Evals"): the existing `tests/` checks are not yet moved onto cases and L1a has no extractor or ranking rows. `ci.yml` is not yet seen green on GitHub, and the PR-gate is not branch-protected. Milestone 3 is partly built: the 32-output label set exists and awaits the owner's labels; next is the real TPR and TNR, then L1b live for router and synthesizer.
 Closes the "OpenRouter fallback never triggered live" item under Verify (L4 fault injection).
 
 ### N1. Promotion cascade for the shared cache
@@ -43,10 +43,10 @@ Until that is decided, `CLAUDE.md`'s "Never auto-publish" stands and nothing her
 
 ## Verify
 
-- **Run the live memory layer.** `LIVE_LLM_TESTS=1 OPENROUTER_API_KEY=... uv run python -m unittest
-  tests.test_memory_e2e_live tests.test_judge_live` (`LIVE_TRIALS`, default 3). Record in `notes/04`
-  which cases the live model fails and how often, the model versions served, and the judge's
-  agreement with the six hand labels. Closes gap 5 once recorded.
+- **Live memory layer, rerun after the provider-name fix.** First measurement is in `notes/04`
+  (1 trial: 7 of 12 fail, 5 from `<PERSON>` redaction). Then run with `LIVE_TRIALS=3` (about an hour),
+  log the model id OpenRouter served, give `case_13` a live expectation, and judge `case_04`'s
+  extra math note. Closes gap 5 once recorded.
 - **OpenRouter fallback was never triggered live,** only asserted in the outgoing payload.
   Either exercise it (force a primary failure) or keep the article's "not exercised" wording.
   OpenRouter data-retention and ZDR controls are also unverified. Feeds §8.2.

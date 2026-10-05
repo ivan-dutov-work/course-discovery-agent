@@ -138,6 +138,13 @@ a smaller reproducing case should be added.
 - **Rubric:** the five from `FEEDBACK.md` (captured, polarity, scope, no invention, no loss)
   plus `grounded` for digests (each claim is supported by that course's evidence). Each is a
   separate call or a separate field, scored pass or fail. Majority of three calls.
+- **Labelling convention:** list every criterion a careful reader would fail, so a note with
+  the wrong sign fails `polarity`, `captured` and `no_invention`. Without this the judge's
+  correct extra failures count as false positives. The labelling file is
+  `evals/labels/judge_notes.yaml` (blind: no intended failures in it); the generator's intent is
+  kept apart in `judge_notes.intended.yaml` and disagreements with the owner's labels point at
+  unclear rubric wording. `python -m evals.calibrate_judge` scores TPR (failures caught) and TNR
+  per criterion, failure being the positive class and `unknown` a miss on both sides.
 - **Calibration:** the owner labels 30 judged outputs first, then about 100 across the
   failure modes, split train, dev and test. Gate on TPR and TNR on the test split; the numbers
   to beat are set after the first measurement, not before. With one labeller there is no

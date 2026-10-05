@@ -140,6 +140,9 @@ def install_fake_profiles(test) -> FakeProfiles:
 class MemoryCaseScenario(CourseLengthScenario):
     scripted = True
 
+    def same_digest(self, first, second):
+        self.assertEqual(first, second)
+
     def _install_case(self, case: MemoryCase) -> tuple[ScriptedModel | None, list[str]]:
         names: list[str] = []
         script = case.steps
@@ -207,7 +210,7 @@ class MemoryCaseScenario(CourseLengthScenario):
         second_providers = providers_of(second)
         self.assertTrue(second_urls)
         if case.unchanged:
-            self.assertEqual(second_urls, baseline_urls)
+            self.same_digest(second_urls, baseline_urls)
         for provider in case.drops_providers:
             self.assertIn(provider, providers_of(baseline))
             self.assertNotIn(provider, second_providers)

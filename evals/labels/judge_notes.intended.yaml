@@ -1,0 +1,103 @@
+- id: judge-01
+  fails:
+  - no_invention
+  - captured
+  - scope
+- id: judge-02
+  fails:
+  - no_loss
+- id: judge-03
+  fails: []
+- id: judge-04
+  fails: []
+- id: judge-05
+  fails:
+  - no_loss
+- id: judge-06
+  fails: []
+- id: judge-07
+  fails:
+  - polarity
+  - captured
+  - no_invention
+- id: judge-08
+  fails:
+  - no_loss
+- id: judge-09
+  fails: []
+- id: judge-10
+  fails: []
+- id: judge-11
+  fails:
+  - no_invention
+- id: judge-12
+  fails:
+  - no_invention
+  - captured
+- id: judge-13
+  fails:
+  - captured
+- id: judge-14
+  fails:
+  - captured
+- id: judge-15
+  fails:
+  - no_invention
+- id: judge-16
+  fails:
+  - scope
+  - no_invention
+  - captured
+- id: judge-17
+  fails:
+  - captured
+- id: judge-18
+  fails: []
+- id: judge-19
+  fails:
+  - scope
+  - captured
+  - no_invention
+- id: judge-20
+  fails: []
+- id: judge-21
+  fails:
+  - captured
+  - no_invention
+- id: judge-22
+  fails:
+  - no_invention
+- id: judge-23
+  fails:
+  - scope
+  - no_invention
+  - captured
+- id: judge-24
+  fails:
+  - captured
+- id: judge-25
+  fails:
+  - polarity
+  - captured
+  - no_invention
+- id: judge-26
+  fails:
+  - polarity
+  - captured
+  - no_invention
+- id: judge-27
+  fails:
+  - scope
+- id: judge-28
+  fails: []
+- id: judge-29
+  fails: []
+- id: judge-30
+  fails:
+  - scope
+  - captured
+  - no_invention
+- id: judge-31
+  fails: []
+- id: judge-32
+  fails: []

@@ -103,3 +103,4 @@ Each of these is covered in the article as prose only, and the reason is in `DEC
 `CachePolicy`, node-level `timeout=`, `Command` routing,
 dynamic `interrupt()`, `durability=` set explicitly, circuit
 breaker, cross-worker coordination.
+- E1 milestone 3, partly: `evals/labels/judge_notes.yaml` (32 generated outputs awaiting the owner's labels), `python -m evals.calibrate_judge` (TPR and TNR per criterion, failure positive), and the first live memory run. Three harness bugs in `tests/test_memory_e2e_live.py` fixed; 7 of 12 cases fail live at one trial, 5 from provider names redacted as `<PERSON>`. Judge numbers are against generator labels, not yet the owner's; L1b live for router and synthesizer not built: `evals/calibrate_judge.py`, `evals/labels/`, `notes/04`.
