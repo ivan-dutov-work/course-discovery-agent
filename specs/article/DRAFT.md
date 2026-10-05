@@ -460,8 +460,6 @@ Worth naming as a design choice: a framework cache for same-input reruns and a d
 
 ## 8. Provider-Level Resilience and Spend Control
 
-[NOT DRAFTED] — §8.5 (guardrails) is pending; see outline §8. It starts from the limit §8.4 leaves open: schema validation catches malformed output, not well-formed output that an attacker shaped.
-
 ### 8.1 Where call-level resilience lives
 
 The graph decides which node runs next. What happens when the model behind a node is down is not a graph concern: the node calls a Runnable, and resilience is a property of that Runnable. `Runnable.with_fallbacks()` (`langchain_core`, not LangGraph-specific) tries a list of runnables in order, and `ModelFallbackMiddleware` is the newer multi-model version. Either way it is "wrap the chain, call it like any other Runnable", with no LangGraph glue. A third option moves the fallback out of the process to a gateway (§8.2), so the LangChain side still sees one chat model.
@@ -577,6 +575,38 @@ custom layer decides *whether* to fall back and to *what kind* of path; the
 gateway still handles the provider-level retry underneath. Two layers, two
 different failure classes, the same distinction as retry versus replanning
 (§7.1).
+
+### 8.5 Guardrails: the same wrap, aimed at the input
+
+Schema validation, which §8.4 leans on, catches malformed output. It does not
+catch well-formed output that an attacker shaped. Any node that builds a prompt
+from text it did not write (search snippets, scraped descriptions, cached rows
+that came from them) has that exposure, and neither LangChain nor LangGraph core
+ships a guard for it. The shape is the same as fallback: a check around the
+call, owned by the node. In a graph the placement is the decision. The screen
+runs inside the node that assembles the prompt, once per untrusted item, so one
+poisoned listing cannot steer the verdict on its neighbours.
+
+The useful property of a typed-decision model here is that it returns a
+probability, not prose. Control flow stays in code: the node maps the score to
+three actions (pass, send the model structured fields only, skip the model for
+that item) and the thresholds live in the node, not in a prompt. The digest line
+says when free text was withheld, which makes the substitution visible at the
+interrupt, the same rule as §8.4.
+
+Worth being precise about what this is not. The screen reads the same hostile
+text it judges, and its vendor says as much: content that argues for its own
+classification can move the answer. Observed here: a small live set (28
+author-written samples, one run) separated cleanly, including seven injections
+aimed at the screen itself, but that set is easy next to an adaptive attacker,
+and the thresholds are borrowed from an independent benchmark, not fitted. So it
+is one layer, to sit beside deterministic checks, not a boundary.
+
+Two costs follow from the placement. A screen error is treated as the middle
+band, so an outage withholds free text instead of passing it or failing the
+run, which is the opposite trade from PII redaction (§10.1), where a miss cannot
+be undone. And the screen runs again on every execution of the node, so a replay
+(§5.3) can land a borderline item in a different band; not tested here.
 
 ---
 
@@ -709,7 +739,14 @@ Drift at the model boundary, a provider returning a different shape, is a separa
 
 ### 10.3 Security/guardrail primitives
 
-[NOT DRAFTED] — see outline §10.3 (cross-references §8.5 once drafted).
+LangGraph ships no security primitives, so what the graph decides is placement.
+Two controls share the wrap-and-own-it shape and differ in where they must sit.
+PII redaction belongs at the boundary that builds initial state, before the
+first checkpoint, because the checkpointer persists whatever state holds (§10.1).
+The injection screen belongs in the node that builds a prompt from web text,
+before the model call, and its verdict does not need to persist (§8.5). Neither
+covers the other, and neither stops a caller from resuming someone else's thread,
+which is the third control (§10.4).
 
 ### 10.4 Access control on `thread_id`
 

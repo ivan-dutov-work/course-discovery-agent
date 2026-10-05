@@ -406,8 +406,9 @@ PII-guardrail primitive in LangChain/LangGraph core. Concrete instantiation: an
 in-process library (Presidio or `llm-guard`), no network hop. Two insertion
 points: nodes that consume untrusted external content as LLM input (injection
 surface) and nodes that produce user-facing output (leak surface). Include an
-integration test asserting the guardrail fires on a known case. PII half implemented
-(`guardrails/pii.py`, `tests/test_guardrails.py`); prompt-injection half not implemented.
+integration test asserting the guardrail fires on a known case. Both halves implemented: PII
+(`guardrails/pii.py`, `tests/test_guardrails.py`) and a typed-decision injection screen on the synthesis
+prompt (`guardrails/injection.py`, `guardrails/jev.py`, `tests/test_injection_guard.py`).
 
 ---
 

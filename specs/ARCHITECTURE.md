@@ -133,6 +133,25 @@ parent and the shared reducer channel `feedback_history` is not echoed back and 
 ## Cache lookup
 
 `find_known_courses` embeds `filters.topic` and ranks cached courses by cosine similarity to
+## Injection screen
+
+Course titles, descriptions and evidence quotes come from search snippets and cached rows, so they
+are untrusted text on its way into the synthesizer prompt. Before each course's model call,
+`guardrails/injection.py:screen_untrusted` scores that text through an `InjectionScreen` (the
+adapter calls `typesafe/jev-1.13` on OpenRouter's Decisions API):
+
+| Score | Action |
+|---|---|
+| below 0.35 | model call as before |
+| 0.35 to 0.70 | model call with structured fields only; the digest line says free text was withheld |
+| 0.70 and above | no model call; title and provider only, with the same note |
+| screen error | treated as the middle band |
+
+The rules, not the model, own the decision. The screen is skipped without `OPENROUTER_API_KEY`
+(no prompt to protect) and with `INJECTION_GUARD=off`. Thresholds are the benchmark's, not fitted.
+It covers only this prompt: `parse_user_request` and the curator read no web text, and the
+tagger does not pass through it.
+
 `courses.course_embedding`. The structural filters (price, certificate, level, language,
 completed, rejected, avoided provider) are unchanged.
 

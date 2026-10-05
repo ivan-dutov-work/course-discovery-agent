@@ -80,6 +80,8 @@ Integration tests need `docker compose up -d` and
 - `run_threads` registry, per-user erasure, checkpoint pruning: `privacy/`,
   `tests/test_erasure.py` (§10.1).
 - Thread ownership check before resume: `privacy/registry.py`, `tests/test_thread_access.py` (§10.4).
+- Prompt-injection screen on the synthesis prompt: `InjectionScreen` port, `typesafe/jev-1.13` adapter over OpenRouter's Decisions API, three bands (pass, structured fields only, model skipped), screen errors withhold free text, `INJECTION_GUARD` switch: `guardrails/injection.py`, `guardrails/jev.py`, `tests/test_injection_guard.py`; live suite `tests/test_injection_guard_live.py` (samples in `tests/injection_samples.py`, score table via `scripts/injection_score_table.py`) needs `LIVE_LLM_TESTS=1`. Thresholds are the independent benchmark's, not fitted (§8.5, §10.3).
+- User-text injection probes (live, `LIVE_LLM_TESTS=1`): five payloads through the gateway, router and curator tool loop; outputs stay in schema, no system-prompt leak, proposals stay inside `WRITABLE_FIELDS`: `tests/test_user_text_injection_live.py`. Passed once (2026-10-05).
 - Declared PII data-flow check: `domain/pii.py`, `privacy/flow.py`, `privacy/flow_specs.py`,
   `tests/test_flow_rules.py` (§10.1).
 
@@ -87,5 +89,5 @@ Integration tests need `docker compose up -d` and
 
 Each of these is covered in the article as prose only, and the reason is in `DECISIONS.md`:
 `CachePolicy`, node-level `timeout=`, `Command` routing,
-dynamic `interrupt()`, `durability=` set explicitly, prompt-injection check, circuit
+dynamic `interrupt()`, `durability=` set explicitly, circuit
 breaker, cross-worker coordination.

@@ -5,6 +5,7 @@ from course_discovery.privacy.flow import NodeFlow, SUBJECT, external, flow, sto
 LLM = external("llm:openrouter", accepts=frozenset({SUBJECT}))
 SEARCH = external("search:tavily", accepts=frozenset({SUBJECT}))
 EMBED = external("embeddings:openrouter", accepts=frozenset({SUBJECT}))
+INJECTION_SCREEN = external("injection_screen:openrouter")
 
 OUTER: dict[str, NodeFlow] = {
     "parse_user_request": flow(
@@ -132,6 +133,7 @@ RESEARCH: dict[str, NodeFlow] = {
 CURATOR: dict[str, NodeFlow] = {
     "load_context": flow(
         reads={"user_id", "feedback_history"},
+    "step:screen_course_text": flow(reads={"valid_courses"}, sinks=(INJECTION_SCREEN,)),
         writes={"memory_update"},
         redacts={"feedback_history"},
         declassifies={"memory_update": "status string only"},
@@ -149,5 +151,5 @@ CURATOR: dict[str, NodeFlow] = {
     ),
 }
 
-EDGES = {"edge:dispatch_search_queries"}
+EDGES = {"edge:dispatch_search_queries", "step:screen_course_text"}
 FLOWS = {**OUTER, **RESEARCH, **CURATOR}

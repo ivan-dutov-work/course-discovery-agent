@@ -192,6 +192,27 @@ leave it and append a new one that says which it replaces and what changed.
   user-to-thread index (`run_threads`); the model-provider boundary (ZDR, DPAs, region) is
   invisible to the graph.
 - **Not built, on purpose:** per-user keys (crypto-shredding), reducer-based redaction,
+- **The injection screen is a port with JEV as one adapter, and it is not a chat model.**
+  `typesafe/jev-1.13` is reached on OpenRouter's Decisions API (`/api/alpha/decisions`, `noul`
+  question), a different endpoint from chat completions, so it lives in `guardrails/` beside the PII
+  port and not behind `build_llm()`. The article's LLM-provider rule (code and article change
+  together) is unchanged. JEV is itself steerable by the text it screens (TypeSafe's limitations
+  page), so it is one layer, not the defense. (notes: 04-observability-and-compliance.md)
+- **A screen failure withholds free text instead of passing it or failing the run.** An error,
+  timeout or malformed reply is treated as the review band: the model still gets structured fields,
+  never description or evidence. Failing the run would let one provider outage stop every
+  digest; passing would turn the outage into a bypass. Counted as a degradation
+  (`injection_guard`, `screen_failed`). Differs from PII redaction, which raises, because a missed
+  redaction is a leak that cannot be undone and a withheld description is not.
+- **Screen thresholds are the independent benchmark's (0.35 review, 0.70 block), not ours.** Our
+  28 hand-written samples separate cleanly and fit nothing. Refit on labelled data before
+  trusting them. (notes: 04-observability-and-compliance.md)
+- **Screen the text per course, not per run.** One call per course keeps a poisoned listing from
+  steering the verdict on its neighbours, since questions in one call share one state. Cost is one
+  small request per course (about 300 ms median, $0.042 per million input tokens, vendor price).
+- **The screen's flow is declared as its own step (`step:screen_course_text`).** The synthesizer
+  reads channels that carry subject data, so a sink declared on the node is flagged; the screen
+  receives catalog text only, and the check cannot see which read feeds which sink.
   selective sealing (seal-everything fails closed), AST-derived reads and writes for the
   data-flow check, boundary-observed sinks.
 - **OpenRouter "PII filtering"** is not cited as a feature: it is unconfirmed and would be a

@@ -100,14 +100,26 @@ Until that is decided, `CLAUDE.md`'s "Never auto-publish" stands and nothing her
 - **Course topic tagging.** Fill `courses.topics` from the course's own title, description and
   evidence, never from the user's query (`DECISIONS.md`). Probably a fifth LLM node through
   `build_llm()` with a rule fallback (keyword extraction), run before `save_verified_courses`.
-  The input is untrusted search text, so do it with the prompt-injection item below. Then
+  The input is untrusted search text, so route it through `screen_untrusted` (see the injection
+  follow-ups below). Then
   re-embed with `python -m course_discovery.research_agent.embeddings backfill` (extend it to
   `--all`), rerun `scripts/calibrate_topic_floor.py` and refit the floor. Expected gain on the
   mock catalog: recall 0.75 to 0.81 on the hashing embedder.
-- **Prompt-injection check for untrusted search content.** The old plan named
-  `extract_courses_from_results` and `verify_course_claims` as the insertion points, but both
-  are rules, not LLM nodes. Re-derive the real surface (search snippets reaching the
-  `rank_and_summarize_courses` prompt) before building. Feeds §8.5 and §10.3.
+- **`Command` in the replan node (§3.4).** `verify_course_claims` returns
+  `Command(update=..., goto="plan_gap_search" | "save_verified_courses")` in place of its
+  conditional edge. Leave the gateway failure on `discard_reason` (`DECISIONS.md`). Update
+  `test_graph_topology.py`, `ARCHITECTURE.md` and `STATUS.md` ("Not in the code"), then draft §3.4.
+- **Injection screen follow-ups.** The JEV screen on the synthesis prompt is built (`STATUS.md`).
+  Left:
+  1. A deterministic layer beside it (control-pattern stripping, fencing the untrusted text as data
+     in `SYNTHESIZER_SYSTEM_PROMPT`), because JEV is steerable by the text it screens.
+  2. Label real data and fit the 0.35 and 0.70 thresholds; add adaptive attacks that iterate
+     against the screen. The first live run was 28 author-written samples.
+  3. Screen the tagger's input (and anything else that sends web text to a model), and decide
+     whether cached rows are screened at write time instead of at every read.
+  4. Find the cause of the one unexplained live-test error (log the response on failure) and
+     confirm the 12,000-character chunk boundary against the live endpoint.
+  5. The Decisions API path is `alpha`; recheck the contract before relying on it.
 
 ## Article drafting
 
@@ -115,9 +127,7 @@ Placeholders marked `[NOT DRAFTED]` in `specs/article/DRAFT.md`:
 
 - §0 TL;DR, §1 Agents vs. workflows, §2.1 state as the single channel, §3.1 conditional
   edges, §13 What's next, and the demo appendix.
-- §2.3 `input_schema`/`output_schema` now has an honest use (the curator subgraph, `memory_curator/graph.py`); §3.4 `Command` is not used by the code, so either
-  add a small honest use or label it doc-only.
-- §8.5 guardrails and §10.3 security primitives: depend on the prompt-injection item above.
+- §2.3 `input_schema`/`output_schema` now has an honest use (the curator subgraph, `memory_curator/graph.py`); §3.4 `Command` waits for the replan-node item under Code.
 - §13, prose only, no code: the many-user reframing (self-serve runs, human review at
   shared-cache promotion, N1) and implicit feedback (weighted counters with decay, an embedding
   moving average, batched LLM personas; collaborative filtering only at a scale this domain
