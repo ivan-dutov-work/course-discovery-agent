@@ -17,6 +17,7 @@ from course_discovery.resilience import LLM_TIMEOUT_MS
 PRIMARY_MODEL = "deepseek/deepseek-v4.1-flash"
 FALLBACK_MODELS = ["google/gemini-2.5-flash-lite"]
 TAGGER_MODEL = "openai/gpt-6-luna"
+JUDGE_MODEL = "google/gemini-3.1-flash-lite"
 
 logger = get_logger(__name__)
 

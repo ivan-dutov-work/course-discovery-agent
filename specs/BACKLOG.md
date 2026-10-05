@@ -4,29 +4,19 @@ Delete an item when it's done. On completion: add a line to `STATUS.md`, put the
 the matching file under `specs/article/notes/`, and record any decision in `DECISIONS.md`.
 Definition of done is in `CLAUDE.md`.
 
-Items are in priority order within each section and across the first two: do them top to
-bottom. Gap numbers refer to "Known gaps" in `ARCHITECTURE.md`. Gaps 3 and 4 are not being
-fixed in this pass.
+Items are in priority order within each section: do them top to bottom. Gap numbers refer to
+"Known gaps" in `ARCHITECTURE.md`. Gaps 3 and 4 are not being fixed in this pass.
 
-## This pass: gap 5
+## Next
 
-Every item ends with tests (success and failure modes) and the doc updates named in `CLAUDE.md`.
-Before starting P6 read `specs/FEEDBACK.md`; it holds the case list the tests come from.
+### E1. Eval harness and CI
 
-### P6. End-to-end feedback tests with a judge
-
-Spec: `specs/FEEDBACK.md`, "Test layers".
-
-- `tests/test_memory_e2e.py` already holds the run-one/run-two scenario (feedback to curator to
-  profile to run two, in-memory and Postgres) with a scripted curator model. Extend it to the
-  cases as parametrized fixtures; case 6 waits for its consumer. Layer 2 (stubbed model, CI)
-  asserts run two's results exactly. Layer 3 (live model plus judge) skips without
-  `OPENROUTER_API_KEY`.
-- `tests/judge.py`: Pydantic verdict, the five-point rubric, three calls and majority, through
-  `build_llm("judge")`. Free-text fields only; structured fields stay exact assertions.
-- Record in notes/04 which cases the live model fails and how often, with the model versions.
-
-## Next, not this pass
+Spec: `specs/EVALS.md` (levels L0 to L5, case format, judge, statistics, CI, build order).
+The judge exists (`tests/judge.py`, built in P6) and is reused by milestone 3, not rewritten. Six
+milestones in the spec's "Build order". Seed cases come from observed failures and
+`FEEDBACK.md`, tagged `source: seed`, and are replaced by `review` and `prod` cases as they exist.
+Milestones 1 and 2 are built (`STATUS.md`, "Evals"): the existing `tests/` checks are not yet moved onto cases and L1a has no extractor or ranking rows. `ci.yml` is not yet seen green on GitHub, and the PR-gate is not branch-protected. Next: the labelled set and L1b live for milestone 3.
+Closes the "OpenRouter fallback never triggered live" item under Verify (L4 fault injection).
 
 ### N1. Promotion cascade for the shared cache
 
@@ -53,12 +43,22 @@ Until that is decided, `CLAUDE.md`'s "Never auto-publish" stands and nothing her
 
 ## Verify
 
+- **Run the live memory layer.** `LIVE_LLM_TESTS=1 OPENROUTER_API_KEY=... uv run python -m unittest
+  tests.test_memory_e2e_live tests.test_judge_live` (`LIVE_TRIALS`, default 3). Record in `notes/04`
+  which cases the live model fails and how often, the model versions served, and the judge's
+  agreement with the six hand labels. Closes gap 5 once recorded.
 - **OpenRouter fallback was never triggered live,** only asserted in the outgoing payload.
   Either exercise it (force a primary failure) or keep the article's "not exercised" wording.
   OpenRouter data-retention and ZDR controls are also unverified. Feeds §8.2.
 
 ## Code
 
+- **Provider names are redacted as `<PERSON>`.** `redact_pii` rewrites capitalised `Udemy` and
+  `Coursera` in review feedback, so the curator cannot see which provider the user named (`notes/04`).
+  Options: an allowlist of provider names ahead of Presidio, or a recogniser score threshold for
+  `PERSON`. Either changes the redaction decision in `DECISIONS.md` ("instructor names are redacted as a
+  known trade-off"), so decide it first. When fixed, drop `history` from the four cases in
+  `tests/memory_cases.py`.
 - **Course topic tagging.** Fill `courses.topics` from the course's own title, description and
   evidence, never from the user's query (`DECISIONS.md`). Probably a fifth LLM node through
   `build_llm()` with a rule fallback (keyword extraction), run before `save_verified_courses`.
@@ -100,9 +100,14 @@ New sections proposed, not yet in the outline:
 - **Deployment shape:** self-hosting the library versus LangGraph Server, `langgraph.json`
   and Studio; who owns the queue, workers and checkpointer. One short section; label
   platform semantics unverified until checked against current docs.
-- **Evals and regression for the LLM nodes:** "did the parse, route or summary get worse after
-  a model swap or fallback." Ties to §8.2 and to counting validation failures (§8.4). P6 is the
-  first working example. The old metrics and testing proposals are in `archive/`.
+- **Evals for a LangGraph agent in production** (a section; decided to add, drafted after E1):
+  the level split (contract, component, subgraph, graph scenarios, reliability), trace grading
+  over `get_state_history` with first-failing-node attribution, trials and pass^k, a judge from
+  another model family, cassette replay as the PR gate and live runs nightly. Ties to §8.2
+  (fallback) and §8.4 (validation counts). Say plainly that the cases are seeds on a 14-course
+  mock catalog and measure plumbing, not generalization, and that no production traffic backs
+  it. Needs an outline entry with a word budget first. P6 is the first working example. The old
+  metrics and testing proposals are in `archive/`.
 
 ## Freshness
 

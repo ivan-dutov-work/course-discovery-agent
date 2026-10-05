@@ -1,0 +1,93 @@
+- id: dedup-utm-parameters-ignored
+  source: seed
+  origin: dedup rules (ARCHITECTURE.md, gap 3)
+  input:
+    node: dedup
+    courses:
+    - &id001
+      title: Python Basics
+      url: https://example.com/python
+    - title: Python Basics
+      url: https://example.com/python?utm_source=x
+  expect:
+    kept: 1
+  graders:
+  - exact
+  tags:
+  - dedup
+- id: dedup-trailing-slash-ignored
+  source: seed
+  origin: dedup rules (ARCHITECTURE.md, gap 3)
+  input:
+    node: dedup
+    courses:
+    - *id001
+    - title: Python Basics
+      url: https://example.com/python/
+  expect:
+    kept: 1
+  graders:
+  - exact
+  tags:
+  - dedup
+- id: dedup-same-title-and-host-merges
+  source: seed
+  origin: dedup rules (ARCHITECTURE.md, gap 3)
+  input:
+    node: dedup
+    courses:
+    - *id001
+    - title: Python Basics
+      url: https://example.com/other
+  expect:
+    kept: 1
+  graders:
+  - exact
+  tags:
+  - dedup
+- id: dedup-same-title-on-another-host-merges-by-fuzzy-title
+  source: seed
+  origin: dedup rules (ARCHITECTURE.md, gap 3)
+  input:
+    node: dedup
+    courses:
+    - *id001
+    - title: Python Basics
+      url: https://other.org/python
+  expect:
+    kept: 1
+  graders:
+  - exact
+  tags:
+  - dedup
+- id: dedup-different-titles-kept-apart
+  source: seed
+  origin: dedup rules (ARCHITECTURE.md, gap 3)
+  input:
+    node: dedup
+    courses:
+    - *id001
+    - title: Rust Basics
+      url: https://example.com/rust
+  expect:
+    kept: 2
+  graders:
+  - exact
+  tags:
+  - dedup
+- id: dedup-first-seen-wins
+  source: seed
+  origin: dedup rules (ARCHITECTURE.md, gap 3)
+  input:
+    node: dedup
+    courses:
+    - *id001
+    - title: Python Basics
+      url: https://example.com/python/
+  expect:
+    kept_urls:
+    - https://example.com/python
+  graders:
+  - exact
+  tags:
+  - dedup

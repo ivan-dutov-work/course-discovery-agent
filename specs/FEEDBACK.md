@@ -1,7 +1,7 @@
 # Feedback and user memory: cases, schema, tests
 
 Design reference for turning review feedback into stored user preferences. `BACKLOG.md`
-items P5 and P6 implement it (P4, the writable profile and its consumers, is done). `ARCHITECTURE.md` describes the graph as built; this file
+no longer lists P4 to P6, which implement it; the live layer is written and not yet run. `ARCHITECTURE.md` describes the graph as built; this file
 describes what the memory update must handle and how each case is pinned by a test.
 
 ## Current state (verified in code)

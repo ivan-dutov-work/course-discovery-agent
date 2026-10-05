@@ -1,0 +1,320 @@
+- id: validator-all-constraints-met
+  source: seed
+  origin: evidence rule (ARCHITECTURE.md)
+  input:
+    node: validator
+  expect:
+    status: valid
+    missing_evidence: []
+  graders:
+  - exact
+  - evidence_rule
+  tags:
+  - evidence
+- id: validator-certificate-unknown-is-uncertain
+  source: seed
+  origin: evidence rule (ARCHITECTURE.md)
+  input:
+    node: validator
+    candidate:
+      has_certificate: null
+  expect:
+    status: uncertain
+    missing_evidence:
+    - certificate
+  graders:
+  - exact
+  - evidence_rule
+  tags:
+  - evidence
+- id: validator-certificate-unknown-with-evidence-is-valid
+  source: seed
+  origin: evidence rule (ARCHITECTURE.md)
+  input:
+    node: validator
+    candidate:
+      has_certificate: null
+      evidence:
+      - source_url: https://example.com/python
+        quote_or_summary: Certificate included.
+        supports:
+        - certificate
+  expect:
+    status: valid
+    missing_evidence: []
+  graders:
+  - exact
+  - evidence_rule
+  tags:
+  - evidence
+- id: validator-free-unknown-is-uncertain
+  source: seed
+  origin: evidence rule (ARCHITECTURE.md)
+  input:
+    node: validator
+    candidate:
+      is_free: null
+  expect:
+    status: uncertain
+    missing_evidence:
+    - free
+  graders:
+  - exact
+  - evidence_rule
+  tags:
+  - evidence
+- id: validator-paid-is-uncertain-without-evidence
+  source: seed
+  origin: evidence rule (ARCHITECTURE.md)
+  input:
+    node: validator
+    candidate:
+      is_free: false
+  expect:
+    status: uncertain
+    missing_evidence:
+    - free
+  graders:
+  - exact
+  - evidence_rule
+  tags:
+  - evidence
+- id: validator-both-unknown-lists-both
+  source: seed
+  origin: evidence rule (ARCHITECTURE.md)
+  input:
+    node: validator
+    candidate:
+      is_free: null
+      has_certificate: null
+  expect:
+    status: uncertain
+    missing_evidence:
+    - free
+    - certificate
+  graders:
+  - exact
+  - evidence_rule
+  tags:
+  - evidence
+- id: validator-unrelated-evidence-does-not-help
+  source: seed
+  origin: evidence rule (ARCHITECTURE.md)
+  input:
+    node: validator
+    candidate:
+      has_certificate: null
+      evidence:
+      - source_url: https://example.com/python
+        quote_or_summary: Beginner Python.
+        supports:
+        - python
+        - beginner
+  expect:
+    status: uncertain
+    missing_evidence:
+    - certificate
+  graders:
+  - exact
+  - evidence_rule
+  tags:
+  - evidence
+- id: validator-level-mismatch-rejects
+  source: seed
+  origin: evidence rule (ARCHITECTURE.md)
+  input:
+    node: validator
+    candidate:
+      level: advanced
+  expect:
+    status: rejected
+    missing_evidence: []
+  graders:
+  - exact
+  - evidence_rule
+  tags:
+  - evidence
+- id: validator-level-unknown-passes
+  source: seed
+  origin: evidence rule (ARCHITECTURE.md)
+  input:
+    node: validator
+    candidate:
+      level: null
+  expect:
+    status: valid
+  graders:
+  - exact
+  - evidence_rule
+  tags:
+  - evidence
+- id: validator-level-any-accepts-advanced
+  source: seed
+  origin: evidence rule (ARCHITECTURE.md)
+  input:
+    node: validator
+    candidate:
+      level: advanced
+    filters:
+      level: any
+  expect:
+    status: valid
+  graders:
+  - exact
+  - evidence_rule
+  tags:
+  - evidence
+- id: validator-language-mismatch-rejects
+  source: seed
+  origin: evidence rule (ARCHITECTURE.md)
+  input:
+    node: validator
+    candidate:
+      language: de
+  expect:
+    status: rejected
+  graders:
+  - exact
+  - evidence_rule
+  tags:
+  - evidence
+- id: validator-language-unknown-passes
+  source: seed
+  origin: evidence rule (ARCHITECTURE.md)
+  input:
+    node: validator
+    candidate:
+      language: null
+  expect:
+    status: valid
+  graders:
+  - exact
+  - evidence_rule
+  tags:
+  - evidence
+- id: validator-low-rating-rejects
+  source: seed
+  origin: evidence rule (ARCHITECTURE.md)
+  input:
+    node: validator
+    candidate:
+      rating: 3.2
+    filters:
+      min_rating: 4
+  expect:
+    status: rejected
+  graders:
+  - exact
+  - evidence_rule
+  tags:
+  - evidence
+- id: validator-rating-unknown-passes
+  source: seed
+  origin: evidence rule (ARCHITECTURE.md)
+  input:
+    node: validator
+    candidate:
+      rating: null
+    filters:
+      min_rating: 4
+  expect:
+    status: valid
+  graders:
+  - exact
+  - evidence_rule
+  tags:
+  - evidence
+- id: validator-completed-course-rejects
+  source: seed
+  origin: user memory
+  input:
+    node: validator
+    memory:
+      completed_course_urls:
+      - https://example.com/python
+  expect:
+    status: rejected
+  graders:
+  - exact
+  - evidence_rule
+  tags:
+  - evidence
+- id: validator-previously-rejected-course-rejects
+  source: seed
+  origin: user memory
+  input:
+    node: validator
+    memory:
+      rejected_course_urls:
+      - https://example.com/python
+  expect:
+    status: rejected
+  graders:
+  - exact
+  - evidence_rule
+  tags:
+  - evidence
+- id: validator-avoided-provider-rejects
+  source: seed
+  origin: user memory
+  input:
+    node: validator
+    memory:
+      avoided_providers:
+      - example
+  expect:
+    status: rejected
+  graders:
+  - exact
+  - evidence_rule
+  tags:
+  - evidence
+- id: validator-paid-allowed-when-budget-set
+  source: seed
+  origin: evidence rule (ARCHITECTURE.md)
+  input:
+    node: validator
+    candidate:
+      is_free: null
+    filters:
+      max_price: 20
+  expect:
+    status: valid
+  graders:
+  - exact
+  - evidence_rule
+  tags:
+  - evidence
+- id: validator-certificate-optional-when-not-requested
+  source: seed
+  origin: evidence rule (ARCHITECTURE.md)
+  input:
+    node: validator
+    candidate:
+      has_certificate: null
+    filters:
+      include_certificate: false
+  expect:
+    status: valid
+  graders:
+  - exact
+  - evidence_rule
+  tags:
+  - evidence
+- id: validator-rejection-outranks-uncertainty
+  source: seed
+  origin: evidence rule (ARCHITECTURE.md)
+  input:
+    node: validator
+    candidate:
+      level: advanced
+      has_certificate: null
+  expect:
+    status: rejected
+    missing_evidence:
+    - certificate
+  graders:
+  - exact
+  - evidence_rule
+  tags:
+  - evidence

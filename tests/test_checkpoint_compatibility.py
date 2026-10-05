@@ -94,8 +94,8 @@ class CheckpointCompatibilityTests(unittest.IsolatedAsyncioTestCase):
     async def _check(self, entry: dict) -> None:
         thread_id = f"fixture-{entry['version']}-{uuid.uuid4()}"
         config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 60}
-        self._load(entry, thread_id)
         async with open_checkpointer(self.url) as saver:
+            self._load(entry, thread_id)
             graph = build_graph(checkpointer=saver)
             try:
                 before = self._rows(thread_id)

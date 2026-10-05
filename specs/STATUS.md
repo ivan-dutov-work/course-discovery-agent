@@ -67,7 +67,8 @@ Integration tests need `docker compose up -d` and
 - Course duration: `CourseCandidate.duration_hours` from listing metadata or snippet text (`extraction/nodes.py`), stored in `courses.duration_hours` (migration 009). `preferred_course_length` is `short` (up to 10 h), `medium` (up to 40 h) or `long`, validated in `MemoryPatch`, writable by the curator, and counted as one match in `_preference_score`: `tests/test_profile_and_duration.py`, `tests/test_memory_e2e.py` (case 5).
 
 - Memory curator subgraph `curate_user_memory` after `record_review_outcome`: bounded tool loop (`read_profile`, `read_run_events`, `propose_patch`, `finish`), 4-step cap, fail-closed commit, idempotent per `run_id` through `memory_updates` (migration 008, erasable); uses `input_schema`/`output_schema`: `memory_curator/`, `tests/test_memory_curator.py` (cases 1, 2, 3, 7, 10 to 18 with a scripted model, plus Postgres), `tests/test_curator_checkpoint.py` (private channels through the encrypted Postgres checkpointer). `tests/test_memory_e2e.py` now runs the real curator between run one and run two.
-- Not built yet: case 6 of `FEEDBACK.md` (no consumer for career goals), cases 4 and 8 need a live model and the judge (P6).
+- End-to-end feedback tests (P6): eleven cases of `FEEDBACK.md` (1, 2, 3, 7, 8, 9, 10, 11, 12, 13, 14) as a table through the whole outer graph with a scripted curator and a stubbed router, on the fake store and Postgres, asserting the profile, the tool trace, the route and run two; case 4 and the live layer (real models, repeated trials, judge for free text) are written and skip without `OPENROUTER_API_KEY` and `LIVE_LLM_TESTS=1`, never run live: `tests/memory_cases.py`, `tests/test_memory_e2e.py`, `tests/test_memory_e2e_live.py`. Judge (`google/gemini-3.1-flash-lite`, five criteria, three calls, majority) with stubbed tests and a labelled live check: `tests/judge.py`, `tests/test_judge.py`, `tests/test_judge_live.py`.
+- Not built yet: case 6 of `FEEDBACK.md` (no consumer for career goals).
 
 ## Observability
 
@@ -90,6 +91,11 @@ Integration tests need `docker compose up -d` and
 - Research subgraph behind `input_schema`/`output_schema` (five keys in; `valid_courses`, `digest`, `metrics`, `discard_reason`, `research_pass` out), stateful via `checkpointer=True`; outer `AgentState` is 15 channels (13 plus `research_pass` and `research_retries`); the subgraph schema has 23, nine shared with the outer state and fourteen private; `start_research_pass` stamps a pass counter, and a stale result goes through `retry_research_pass` once, then raises `StaleResearchResultError` (schema v3); `begin_pass` resets private state on a fresh pass; planning failures route to `discard_run`: `domain/state.py`, `workflows/`, `tests/test_top_level_state.py`, `tests/test_graph_topology.py`, `tests/test_nested_checkpoints_postgres.py` (§2.3).
 - Declared PII data-flow check: `domain/pii.py`, `privacy/flow.py`, `privacy/flow_specs.py`,
   `tests/test_flow_rules.py` (§10.1).
+
+## Evals
+
+- Eval harness skeleton (E1 milestone 1): YAML cases per level, grader registry, `run.py`, pytest parametrization. 33 L1a rows (validator evidence rule, dedup, planner, replan route) and 7 L3 scenarios (approve, discard, rewrite, augment, reset, multi-round, parked at gate) on `MemorySaver`, no key, no network. Mutating the evidence rule fails 10 rows: `evals/`, `uv run python -m evals.run`, `uv run pytest evals -n 4`.
+- E1 milestone 2: two Postgres-backed L3 scenarios (`requires: [postgres]`, skipped without `TEST_DATABASE_URL`): a wrong owner and a thread stored under another schema version are refused and leave the parked thread untouched; skipping either check in `privacy/registry.py` fails its case. `.github/workflows/ci.yml` runs the unittest suite and the evals on every push and pull request against a pgvector service container, migrations applied by `scripts/apply_migrations.py`. Rehearsed locally on a fresh pgvector container with a fresh venv (`uv sync --locked`, 481 tests, 42 evals); the workflow has not run on GitHub: `evals/runners.py`, `evals/graders/l3.py`, `evals/cases/l3/scenarios.yaml`, `.github/workflows/ci.yml`.
 
 ## Not in the code
 

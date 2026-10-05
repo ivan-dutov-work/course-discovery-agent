@@ -128,3 +128,48 @@ unless marked as documentation.
 - **What it does not cover.** Only the synthesis prompt. `parse_user_request` and the memory curator
   read no web text. The tagger (uncommitted) does and is not screened. Reviewer feedback and
   reader notes are user text, not web text, and are out of scope.
+
+## Feedback to memory, end to end (P6)
+
+- **Provider names are redacted as people (observed 2026-10-05).** `redact_pii` through Presidio
+  (`presidio-analyzer` 2.2.364, spaCy `en_core_web_sm` 3.8.0) turns capitalised `Udemy` and
+  `Coursera` into `<PERSON>`: `"I'm done with Udemy"` becomes `"I'm done with <PERSON>"`, and `"I prefer
+  Coursera courses"` becomes `"I prefer <PERSON> courses"`. `udemy` in lower case, `edX`, `Udacity`,
+  `Pluralsight` and `freeCodeCamp` pass through. Checked by calling `redact_pii` on twelve feedback
+  strings, one run. The curator reads the redacted `feedback_history`, so a live model cannot
+  see which provider the user named in cases 1, 2, 7 and 8 of `FEEDBACK.md` when it is capitalised.
+  The stubbed layer does not see this, because the scripted curator ignores the text; the case
+  table pins the redacted history instead (`tests/memory_cases.py`, field `history`). Consistent with
+  the instructor-name trade-off in `DECISIONS.md`, but that entry did not expect provider names.
+- **Layer 2 is exact and passes on both stores.** Eleven cases (1, 2, 3, 7, 8, 9, 10, 11, 12, 13,
+  14) through the whole outer graph, with a scripted curator and, for the cases that need a route,
+  a stubbed router, on the fake store and on Postgres: 26 tests, 6 s on Postgres, 2 s without.
+  Each asserts the stored profile, the tool trace, the route, and run two against a baseline run
+  by a user with no profile.
+- **The judge is built and its stubbed tests pass; it has never been called against the real model.**
+  `tests/judge.py`: `google/gemini-3.1-flash-lite` through `build_llm("judge")` with an empty
+  fallback list, three calls, majority per criterion, a tie is `unknown` and does not pass. The
+  live suites (`tests/test_memory_e2e_live.py`, `tests/test_judge_live.py`) need
+  `LIVE_LLM_TESTS=1` and a key; the session that wrote them had none. **Which cases the live
+  model fails, and how often, is therefore not measured**, and so are the judge's agreement with
+  six hand-labelled outputs and the model versions served. The redaction finding predicts that
+  cases 1, 2, 7 and 8 fail live until provider names stop being redacted; that is a prediction.
+
+## CI rehearsal (E1 milestone 2)
+
+- **Method (2026-10-05).** A fresh `pgvector/pgvector:pg17` container with no mounted migrations, a fresh
+  virtual environment from `uv sync --locked`, `scripts/apply_migrations.py`, then
+  `python -m unittest discover tests` and `pytest evals -n 4`, as `ci.yml` does. Not run on GitHub Actions:
+  action versions (`actions/checkout@v4`, `astral-sh/setup-uv@v6`) and the service-container health options
+  are unverified until the first run.
+- **The spaCy model installs from its URL.** `en_core_web_sm-3.8.0` is a URL dependency in
+  `pyproject.toml`, hashed in `uv.lock`; the release URL answered 200 and `uv sync --locked` installed it.
+- **A fresh database found a test-order bug.** `tests/test_checkpoint_compatibility.py` inserted fixture rows
+  before anything created LangGraph's checkpoint tables; they existed locally only because a later test calls
+  `setup()` and the local volume is long-lived. Three subtests failed with `relation "checkpoints" does not
+  exist` on the first run against an empty database. Fixed by loading the fixture after `open_checkpointer`.
+  Result afterwards: 481 tests, 24 skipped, about 21 s; 42 evals, about 1.4 s.
+- **The two guards are covered by their scenarios.** Replacing the owner check in `authorize_thread` with
+  `False` fails `graph-wrong-owner-cannot-resume` on three graders; the same for the version check and
+  `graph-stale-thread-refused`. Both reverted.
+

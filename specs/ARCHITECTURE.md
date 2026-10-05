@@ -289,8 +289,10 @@ design.
 5. **Learned preferences are narrow and not yet checked against a live model.** The curator
    writes only fields with a consumer: providers, level, language, budget, certificate,
    rejected and completed URLs, and scoped notes. `career_goals` and `learning_style_notes` have
-   no consumer beyond the profile vector, so feedback about them is dropped, not stored. The stubbed-model tests pin the loop; how a real model behaves on the
-   case list is unmeasured (P6). Cases: `FEEDBACK.md`.
+   no consumer beyond the profile vector, so feedback about them is dropped, not stored. The stubbed-model tests pin the loop and the next run's behavior for eleven cases; how a real model
+   behaves on the case list is unmeasured (the live layer exists and has not been run). Capitalised provider names (`Udemy`, `Coursera`) are redacted as
+   `<PERSON>` before the curator reads the feedback, so a live model cannot tell which provider
+   was named (`notes/04`, `BACKLOG.md`). Cases: `FEEDBACK.md`.
 7. **The injection screen is one layer, on one prompt.** JEV can be steered by text that argues
    for its own classification, no deterministic rule or prompt fencing sits beside it, the
    thresholds are unfitted, and the tagging step is not screened (`BACKLOG.md`).

@@ -270,6 +270,32 @@ leave it and append a new one that says which it replaces and what changed.
   assumption about LangGraph no longer holds, and that should stop the run visibly.
   (notes: 02-durability-replay-effects.md)
 
+- **Evals are layered, and cases start as labelled seeds.** Six levels (contract, deterministic
+  component, model-node component, subgraph, graph scenarios, reliability), each owning one
+  failure class, with the online level as prose only. Without traffic the first cases are
+  representative seeds taken from observed failures and `FEEDBACK.md`, tagged `source: seed`,
+  and are swapped for `review` and `prod` cases as they appear; the swap is a data change.
+  Ruled out: inventing a large synthetic set up front, and waiting for production data.
+  (`EVALS.md`)
+- **Path is graded where the topology is code, outcome where the model chooses.** Asserting the
+  node sequence of the outer and research graphs is a correctness check, since control flow is
+  fixed at compile time; the curator tool loop is graded on outcome and invariants, because
+  checking its steps would punish valid alternatives. (`EVALS.md`)
+- **Trace grading is not LLM-as-judge.** The trace is the checkpoint history of a trial; graders
+  are mostly code over it, and the judge sees free text only. Every failing trial is attributed
+  to its first failing node. (`EVALS.md`)
+- **The judge is `google/gemini-3.1-flash-lite`, with no fallback list.** A different family from
+  the generator (`deepseek-v4.1-flash`) against self-preference; $0.25 per million input tokens
+  and $1.50 output, input-dominated because the verdict is a line. Under the one-dollar budget
+  on input, not on output; the only model under it on both is `google/gemini-2.5-flash-lite`,
+  which is the generator's own fallback, so it would share a family exactly when the fallback
+  fires. Trials where the generator fell back to Gemini are tagged and reported apart.
+  Recalibrate (TPR and TNR on labelled outputs) after any judge change. (`EVALS.md`)
+- **PR gates are deterministic or replayed; live-model evals run nightly.** A live model on every
+  PR makes the gate flaky and costs money. Replay from cassettes keyed by a hash of model,
+  parameters and prompt; a missing cassette fails the job. LangSmith is not adopted for the
+  harness (see the OpenTelemetry entry above).
+
 ## Compliance
 
 - **The privacy controls are justified by many users' stored data,** not by a single
