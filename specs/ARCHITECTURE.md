@@ -30,12 +30,12 @@ would keep the same bounds (`max_research_iterations`, validation before synthes
 ## Outer graph
 
 ```
-parse_user_request ──ok──▶ course_research ──▶ [interrupt] await_human_review ──▶ interpret_review_feedback
+parse_user_request ──ok──▶ start_research_pass ──▶ course_research ──▶ [interrupt] await_human_review ──▶ interpret_review_feedback
         │                                                                                   │
         └─error─▶ discard_run ─▶ drop_pending_courses ─▶ record_review_outcome ─▶ curate_user_memory ─▶ END
                                                                                             ├─ PUBLISH ─▶ send_approved_courses ─▶ promote_approved_courses ─▶ record_review_outcome ─▶ curate_user_memory ─▶ END
-                                                                                            ├─ REWRITE ─▶ course_research
-                                                                                            ├─ AUGMENT ─▶ course_research
+                                                                                            ├─ REWRITE ─▶ start_research_pass ─▶ course_research
+                                                                                            ├─ AUGMENT ─▶ start_research_pass ─▶ course_research
                                                                                             ├─ RESET   ─▶ parse_user_request
                                                                                             └─ DISCARD ─▶ discard_run ─▶ drop_pending_courses ─▶ record_review_outcome ─▶ curate_user_memory ─▶ END
 ```
@@ -72,7 +72,8 @@ One responsibility each. "Rules" means deterministic code with no model call.
 | Node | Responsibility | Kind |
 |---|---|---|
 | `parse_user_request` | Redact PII from the query and parse it into `SearchFilters`; fill the stored budget and certificate defaults where the query is silent (reads the profile from the repository, not from state); on RESET, re-parse with the latest `feedback_history` entry and merge the new constraints into the old ones; on failure set `discard_reason`, which routes to `discard_run` | LLM, rule fallback |
-| `course_research` | Run the research subgraph | subgraph |
+| `start_research_pass` | Does nothing; sits in front of `course_research` so that the stateful subgraph is never the first task of a resumed step, where it would ignore its new input (`article/notes/01`) | anchor |
+| `course_research` | Run the research subgraph; sees four input keys, returns `valid_courses`, `digest` and `metrics` | subgraph |
 | `await_human_review` | The pause point where the interrupt fires; does nothing itself | anchor |
 | `interpret_review_feedback` | Map reviewer feedback to one routing action, append the redacted feedback to `feedback_history` and clear the `manager_feedback` inbox; rounds already completed are `len(feedback_history)` | LLM, rule fallback |
 | `send_approved_courses` | Submit the publish effect through `EffectGateway` with a key derived from `run_id` | side effect |
@@ -213,9 +214,9 @@ Three stores, three lifetimes.
   writes feedback events after publish or discard. `save_user_memory` is the one writer of
   `user_preferences` (one transaction, row lock, merge); only the curator's `commit` calls it.
 - **Fan-in reducers live on the subgraph's schema only.** `tavily_results`, `completed_queries` and
-  `research_notes` are plain lists in `AgentState` and `operator.add` channels in `ResearchState`
-  (`domain/state.py`), so the `Send` branches merge inside the subgraph and the parent overwrites
-  with the result instead of adding it to itself.
+  `research_notes` are `operator.add` channels of `ResearchState` and are not in `AgentState`
+  (`domain/state.py`), so the `Send` branches merge inside the subgraph and the parent never adds
+  the subgraph's value to its own.
 - **`feedback_history`** is the one channel that keeps every review round (`manager_feedback`
   is only the inbox the reviewer's text arrives in, cleared once interpreted). It is outer-graph only: the research subgraph runs on
   `ResearchState`, which omits it, because a reducer channel that a subgraph shares is added to
@@ -232,9 +233,12 @@ next run's profile, not the pass in progress.
 
 ### Top-level state and run configuration
 
-The outer graph owns twelve channels; the research subgraph's channels sit behind
-`course_research` and are not yet slimmed (`BACKLOG.md` S1). A channel is only held if it
-cannot be derived.
+The outer graph owns thirteen channels. The research subgraph runs on `ResearchState` with
+`input_schema=ResearchInput` and `output_schema=ResearchOutput`, so its other fifteen channels
+(plan, queries, candidate lists, validation results, notes, iteration, profile) are private and
+persist across passes only because it is compiled with `checkpointer=True`; they are checkpointed
+under the namespace `course_research` and are not in the outer state. A channel is only held at
+the top level if it cannot be derived.
 
 | Channel | Role | Written by |
 |---|---|---|
@@ -245,6 +249,7 @@ cannot be derived.
 | `routing_decision` | One-shot control signal, consumed by `parse_user_request` on RESET | `interpret_review_feedback` |
 | `rewrite_instructions` | Router to research hand-off | `interpret_review_feedback` |
 | `valid_courses`, `digest` | Research output | `course_research` |
+| `metrics` | Research counters (`ResearchRunMetrics`); the CLI and the run span read cache hits, search calls and the valid, rejected and uncertain counts from here | `course_research` |
 | `publish_status` | Delivery state | `send_approved_courses` |
 | `discard_reason` | Why the run ended discarded; also the gateway-failure signal | `parse_user_request`, `interpret_review_feedback` |
 | `memory_update` | Curator status, read by nothing at the outer level | `curate_user_memory` |
@@ -285,6 +290,17 @@ design.
 7. **The injection screen is one layer, on one prompt.** JEV can be steered by text that argues
    for its own classification, no deterministic rule or prompt fencing sits beside it, the
    thresholds are unfitted, and the tagging step is not screened (`BACKLOG.md`).
+
+## Known gaps, research boundary
+
+- **A research failure is invisible to the outer graph.** `error` is not an output key (an output
+  key must be an outer channel), so a planning failure ends the subgraph without a digest and the
+  outer state shows only the empty result; the reason is in the subgraph's own state and the logs.
+- **Subgraph state is not reset between passes.** `research_iteration`, `completed_queries` and the
+  candidate lists persist across REWRITE, AUGMENT and RESET (as the flat channels did before), so a
+  RESET to a new topic starts with the old queries on the ledger (`BACKLOG.md`, Verify).
+- **Threads paused before this change do not resume.** The outer checkpoints lose fifteen
+  channels (`BACKLOG.md` S1 item 4).
 
 ## Known gaps, cache staging
 

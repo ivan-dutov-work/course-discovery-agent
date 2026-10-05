@@ -68,7 +68,26 @@ ones shared across branches.
 
 ### 2.3 `input_schema`/`output_schema` separation
 
-[NOT DRAFTED] — see outline §2.3.
+A graph that is also a node needs a public contract narrower than its working state. By
+default a compiled subgraph takes its whole schema as input and hands the whole of it back, so
+every internal channel becomes the parent's business, and every reducer channel a second write.
+`input_schema` and `output_schema` split the two: the subgraph reads only the keys the parent
+passes in and returns only the keys declared as output.
+
+```python
+StateGraph(ResearchState, input_schema=ResearchInput, output_schema=ResearchOutput)
+```
+
+Four keys go in, three come out, and the other fifteen channels (plans, ledgers, candidate
+lists) stay behind the boundary. The parent's state shrinks to what the rest of the graph
+reads, and the caller of `invoke()` sees the output schema, not the internals.
+
+Private does not mean persistent. A subgraph's channels start empty on every call unless it is
+compiled with `checkpointer=True`, and a loop that re-enters it with the previous pass's plan
+needs exactly that. The stateful form has a sharp edge: when the subgraph is the first task of
+a resumed step, after a crash or an `update_state(as_node=...)`, LangGraph resumes it instead of
+starting it with the new input, and the round silently does not run. A no-op node in front of
+the subgraph keeps it off the first position.
 
 ---
 
@@ -121,11 +140,11 @@ completely different reliability guarantees.
 ### 3.3 Subgraphs for encapsulation
 
 A subgraph is the unit of encapsulation. Compile a multi-step pipeline into its
-own `StateGraph`, bare, without a checkpointer or interrupt config, because
-those are the parent's concerns, and mount it as one node:
+own `StateGraph` without interrupt config, because that is the parent's concern,
+and mount it as one node:
 
 ```python
-builder.add_node("research_agent", build_research_graph())
+builder.add_node("research_agent", build_research_graph(checkpointer=True))
 ```
 
 From the parent's perspective the pipeline is just another node, one that
@@ -203,7 +222,7 @@ graph = builder.compile(
 result = await graph.ainvoke(input, {"configurable": {"thread_id": "..."}})
 ```
 
-A subgraph without its own checkpointer inherits the parent's, so its internal steps are persisted too, under a runtime namespace you must discover, not construct from the thread ID.
+A subgraph without its own checkpointer inherits the parent's, so its internal steps are persisted too, under a runtime namespace you must discover, not construct from the thread ID. Compiled with `checkpointer=True`, it keeps its state across calls and uses a fixed namespace, the node's name.
 
 ### 5.2 Durability modes
 

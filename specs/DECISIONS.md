@@ -128,10 +128,24 @@ leave it and append a new one that says which it replaces and what changed.
   the article's subject: per-stage candidate lists are checkpoint history, and reducers and `Pii`
   markers are per channel, so nesting channels hides both from `flow_specs.py`. Fix the real
   redundancy (duplicate counters, budgets held as state) and try private schemas on new code
-  first (the P5 curator). Backlog S1.
+  first (the P5 curator). Backlog S1. Done for the research subgraph: see the next entries.
+- **The research subgraph has a four-key input and a three-key output, and keeps its state with
+  `checkpointer=True`.** AUGMENT re-enters mid-pipeline and needs the previous pass's plan, ledger
+  and validation results, which a private channel only keeps when the subgraph is stateful
+  (`article/notes/01`). Ruled out: keeping those channels in the outer state (the outer state would
+  stay at 28 channels and the boundary would be decoration), and re-running AUGMENT from
+  `load_user_profile` (changes what AUGMENT means). The intermediate candidate lists stay channels
+  of the subgraph and so stay in its checkpoint history. The counters and the valid, rejected and
+  uncertain counts leave through `metrics`, which already held them, so there is no separate
+  summary channel.
+- **A no-op `start_research_pass` precedes `course_research`.** A stateful subgraph that is the
+  first task of a resumed step ignores its new input, so a crash between the router and the
+  subgraph, or `update_state(as_node=...)`, would silently skip a REWRITE or AUGMENT round. The
+  anchor is the one added node; the three anchors removed earlier did no such work.
+  (notes: 01-state-and-control-flow.md, 02-durability-replay-effects.md)
 - **A fan-in reducer is declared on the schema where the branches meet, not on the parent's.**
   `tavily_results`, `completed_queries` and `research_notes` are `operator.add` in `ResearchState`
-  and plain in `AgentState`. The alternative, a reducer on the parent that is idempotent over the
+  and not in `AgentState`. The alternative, a reducer on the parent that is idempotent over the
   echo (prefix test or dedup), was ruled out: it cannot tell an echo from a repeated query, and
   `metrics.tavily_calls` is a count of calls. A REWRITE round therefore adds no queries, because
   the planner skips every `completed_queries` entry. (notes: 02-durability-replay-effects.md)

@@ -170,12 +170,12 @@ def annotate_run(span: trace.Span, values: Mapping[str, Any]) -> None:
         "course.routing_decision": _plain(values.get("routing_decision")),
         "course.publish_status": _plain(values.get("publish_status")),
         "course.review_iteration": len(values.get("feedback_history") or []),
-        "course.research_iteration": values.get("research_iteration"),
+        "course.research_iteration": getattr(metrics, "replan_count", None),
         "course.cache_candidates": getattr(metrics, "cache_hits", None),
         "course.tavily_calls": getattr(metrics, "tavily_calls", None),
         "course.valid_count": len(values.get("valid_courses") or []),
-        "course.rejected_count": len(values.get("rejected_courses") or []),
-        "course.uncertain_count": len(values.get("uncertain_courses") or []),
+        "course.rejected_count": getattr(metrics, "rejected_count", None),
+        "course.uncertain_count": getattr(metrics, "uncertain_count", None),
     }
     span.set_attributes({k: v for k, v in attributes.items() if v is not None})
 

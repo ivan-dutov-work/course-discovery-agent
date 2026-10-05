@@ -4,7 +4,7 @@ from langchain_core.runnables import RunnableConfig
 
 from course_discovery.domain.models import ResearchRunMetrics, UserMemory
 from course_discovery.domain.run_config import current_run_id, run_id_of
-from course_discovery.domain.state import AgentState
+from course_discovery.domain.state import AgentState, ResearchState
 from course_discovery.observability.logging import get_logger
 from course_discovery.observability.metrics import record_cache_lookup
 from course_discovery.research_agent.cache.repository import (
@@ -18,7 +18,7 @@ from course_discovery.research_agent.cache.repository import (
 logger = get_logger(__name__)
 
 
-def course_cache_lookup_node(state: AgentState) -> dict:
+def course_cache_lookup_node(state: ResearchState) -> dict:
     filters = state.get("search_filters")
     if filters is None:
         return {
@@ -47,7 +47,7 @@ def course_cache_lookup_node(state: AgentState) -> dict:
     }
 
 
-def course_cache_upsert_node(state: AgentState) -> dict:
+def course_cache_upsert_node(state: ResearchState) -> dict:
     staged = [course for course in state.get("valid_courses", []) if course.source != "cache"]
     stage_courses(current_run_id(), staged, state.get("validation_results", []))
     logger.info(

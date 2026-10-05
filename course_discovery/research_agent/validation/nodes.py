@@ -6,7 +6,7 @@ from course_discovery.domain.models import (
     ResearchRunMetrics,
 )
 from course_discovery.domain.run_config import current_run_id, max_research_iterations
-from course_discovery.domain.state import AgentState
+from course_discovery.domain.state import ResearchState
 from course_discovery.observability.logging import get_logger
 from course_discovery.observability.metrics import record_degradation, record_validation
 
@@ -14,7 +14,7 @@ from course_discovery.observability.metrics import record_degradation, record_va
 logger = get_logger(__name__)
 
 
-def aggregate_node(state: AgentState) -> dict:
+def aggregate_node(state: ResearchState) -> dict:
     merged = state.get("cache_candidates", []) + state.get("extracted_candidates", [])
     logger.info(
         "aggregate_complete",
@@ -29,7 +29,7 @@ def aggregate_node(state: AgentState) -> dict:
     return {"scraped_courses": merged[:200]}
 
 
-def _validate_candidate(state: AgentState, candidate: CourseCandidate) -> CandidateValidation:
+def _validate_candidate(state: ResearchState, candidate: CourseCandidate) -> CandidateValidation:
     filters = state.get("search_filters")
     memory = state.get("user_memory")
     reasons: list[str] = []
@@ -75,7 +75,7 @@ def _validate_candidate(state: AgentState, candidate: CourseCandidate) -> Candid
     )
 
 
-def evidence_validator_node(state: AgentState) -> dict:
+def evidence_validator_node(state: ResearchState) -> dict:
     validations = [_validate_candidate(state, item) for item in state.get("deduplicated_courses", [])]
     by_url = {item.url: item for item in validations}
     valid = [
@@ -123,7 +123,7 @@ def evidence_validator_node(state: AgentState) -> dict:
     }
 
 
-def enough_valid(state: AgentState):
+def enough_valid(state: ResearchState):
     plan = state.get("research_plan")
     min_valid = plan.min_valid_candidates if plan else 3
     if len(state.get("valid_courses", [])) >= min_valid:

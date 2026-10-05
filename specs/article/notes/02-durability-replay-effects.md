@@ -204,6 +204,10 @@ no repair, only a refusal, since the intent (the review step) is gone.
   that thread (not re-checked). Removing a node that did run leaves its `branch:to:` channel stale
   and the thread stuck at the gate.
 
+- **Resume into a stateful subgraph (found in review of S1, langgraph 1.1.2).** See
+  `01-state-and-control-flow.md`, "The research subgraph": with `checkpointer=True`, a crash or
+  `update_state(as_node=...)` that leaves the subgraph node as the first task of the resume makes
+  the subgraph skip its new input. `start_research_pass` is the guard.
 - **Private subgraph channels through the encrypted Postgres checkpointer (verified, langgraph
   1.1.2).** The curator's `messages` channel holds `SystemMessage`, `HumanMessage`, `AIMessage`
   with `tool_calls` and `ToolMessage`. A full outer run with `AsyncPostgresSaver`, the msgpack

@@ -17,7 +17,7 @@ from course_discovery.domain.models import (
     length_bucket,
 )
 from course_discovery.domain.run_config import current_run_id
-from course_discovery.domain.state import AgentState
+from course_discovery.domain.state import ResearchState
 from course_discovery.guardrails import InjectionAction, redact_pii, screen_untrusted
 from course_discovery.observability.logging import get_logger, preview, sanitize_error
 from course_discovery.observability.metrics import (
@@ -209,7 +209,7 @@ def _highlight_with_retry(
             )
 
 
-def synthesizer_node(state: AgentState) -> dict:
+def synthesizer_node(state: ResearchState) -> dict:
     start_ts = time.perf_counter()
     run_id = current_run_id()
     memory = state.get("user_memory")
@@ -293,11 +293,4 @@ def synthesizer_node(state: AgentState) -> dict:
         },
     )
 
-    return {
-        "digest": digest,
-        "rewrite_instructions": (
-            None
-            if state.get("routing_decision") != RoutingAction.REWRITE
-            else rewrite_instructions
-        ),
-    }
+    return {"digest": digest}

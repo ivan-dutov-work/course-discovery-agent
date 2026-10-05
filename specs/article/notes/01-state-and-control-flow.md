@@ -53,8 +53,7 @@ Evidence for drafting. Load when working on these sections. Observations are fro
   output_schema=OutputState)`. `invoke()` returns only the output schema's fields, not the
   full internal state. The point to pair with the state-contract section: public API versus
   internal contract.
-- Only the outer graph would benefit; the research subgraph has no narrower public contract.
-- Needs a working example or a doc-only label. Now in code: `memory_curator/graph.py` compiles
+- Two working examples now: the curator and the research subgraph (below). The curator in code: `memory_curator/graph.py` compiles
   `StateGraph(CuratorState, input_schema=CuratorInput, output_schema=CuratorOutput)` and mounts it
   as a node of the outer graph.
 - Verified with langgraph 1.1.2, langchain-core 1.6.5 (`tests/test_memory_e2e.py`,
@@ -62,10 +61,42 @@ Evidence for drafting. Load when working on these sections. Observations are fro
   channels (`messages`, `steps`, `proposals`, `finished`, `failure`) never appear in the parent's
   state, and the parent receives only `memory_update`. `feedback_history`, a shared
   `operator.add` channel, comes back unchanged (`[round_one, round_two]`, not doubled), because
-  it is an input key and not an output key. This is the fix the research subgraph needs for the
-  reducer echo in note 02 (backlog S1).
+  it is an input key and not an output key.
 - A subgraph node's parent-level update appears in `astream(..., subgraphs=True)` at namespace
   `()` under the node's name, so `tests/test_flow_rules.py` skips it like `course_research`.
+
+### The research subgraph: private channels need `checkpointer=True`
+
+langgraph 1.1.2, memory saver and Postgres. `build_research_graph` compiles with
+`input_schema=ResearchInput` (four keys: `user_id`, `search_filters`, `routing_decision`,
+`rewrite_instructions`) and `output_schema=ResearchOutput` (`valid_courses`, `digest`, `metrics`);
+the other 15 channels are private and the outer `AgentState` has 13.
+
+- **Private is not persistent.** A toy graph (parent loop, subgraph with a private `operator.add`
+  channel, parent paused between passes) showed the private channel empty on every re-entry with
+  the default checkpointer and carried over only with `compile(checkpointer=True)`. AUGMENT
+  re-enters at `plan_gap_search` and reads `completed_queries`, `research_plan` and
+  `validation_results` from the previous pass, so the research subgraph needs it. With it the
+  subgraph's checkpoints live in the fixed namespace `course_research` (no task id), readable
+  with `checkpointer.aget_tuple({... "checkpoint_ns": "course_research"})`
+  (`tests/research_view.py`). `get_subgraphs()` and `aget_state` on the compiled node did not find
+  it ("Subgraph course_research not found").
+- **A stateful subgraph that is the first task of a resumed step ignores its new input.** After
+  `update_state(..., as_node="interpret_review_feedback")` with `routing_decision=AUGMENT`,
+  `astream(None)` ran `course_research` for zero steps and returned the previous pass's
+  `valid_courses`. The same happens after a crash between the router and the start of the
+  subgraph. Mechanism inferred, not confirmed in source: the resume flag reaches the first task of
+  the step, and a subgraph resumed from a completed checkpoint has nothing left to run. The normal
+  path (`update_state` with `manager_feedback`, then `astream(None)`) does not hit it because
+  `await_human_review` is the first task. Fix: a no-op node `start_research_pass` in front of
+  `course_research`; with it the as-node case runs `plan_gap_search`
+  (`tests/test_graph_topology.py`, fails without the node).
+- A candidate-list view of the subgraph's history is still in the checkpoints (`checkpoint_ns`
+  `course_research`); `tests/test_nested_checkpoints_postgres.py` shows those rows are sealed under
+  `CHECKPOINT_ENCRYPTION_KEYS` (a canary in the query appears in 4 plaintext rows without keys, 0
+  with) and that `adelete_thread` removes them.
+- **Output keys must be parent channels.** The subgraph's `error` cannot be an output without
+  adding it to `AgentState`, so a planning error is visible only in the subgraph's own state.
 
 ## `Command` (§3.4, not in code)
 

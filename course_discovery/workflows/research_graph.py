@@ -5,7 +5,11 @@ from langgraph.types import Send
 
 from course_discovery.domain.models import RoutingAction
 from course_discovery.domain.run_config import current_run_id
-from course_discovery.domain.state import AgentState, ResearchState
+from course_discovery.domain.state import (
+    ResearchInput,
+    ResearchOutput,
+    ResearchState,
+)
 from course_discovery.observability.logging import get_logger
 from course_discovery.research_agent.cache.dedup import dedup_node
 from course_discovery.research_agent.cache.nodes import (
@@ -31,13 +35,13 @@ from course_discovery.research_agent.validation.nodes import (
 logger = get_logger(__name__)
 
 
-def _route_from_entry(state: AgentState):
+def _route_from_entry(state: ResearchState):
     if state.get("routing_decision") == RoutingAction.AUGMENT:
         return "plan_gap_search"
     return "load_user_profile"
 
 
-def _dispatch_search_queries(state: AgentState):
+def _dispatch_search_queries(state: ResearchState):
     if state.get("error"):
         return "error"
     plan = state.get("research_plan")
@@ -59,7 +63,7 @@ def _dispatch_search_queries(state: AgentState):
 
 
 def build_research_graph(**compile_kwargs):
-    builder = StateGraph(ResearchState)
+    builder = StateGraph(ResearchState, input_schema=ResearchInput, output_schema=ResearchOutput)
 
     retry = transient_retry()
     builder.add_node("load_user_profile", user_memory_lookup_node, retry_policy=retry)

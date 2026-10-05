@@ -14,6 +14,7 @@ OUTER: dict[str, NodeFlow] = {
         sinks=(LLM,),
         redacts={"user_query", "feedback_history"},
     ),
+    "start_research_pass": flow(),
     "course_research": flow(),
     "curate_user_memory": flow(),
     "await_human_review": flow(),

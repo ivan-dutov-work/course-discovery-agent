@@ -4,7 +4,7 @@ from langchain_core.runnables import RunnableConfig
 
 from course_discovery.domain.models import DeliveryStatus
 from course_discovery.domain.run_config import current_run_id, run_id_of
-from course_discovery.domain.state import AgentState
+from course_discovery.domain.state import AgentState, ResearchState
 from course_discovery.observability.logging import get_logger
 from course_discovery.research_agent.memory.repository import (
     load_user_memory,
@@ -15,7 +15,7 @@ from course_discovery.research_agent.memory.repository import (
 logger = get_logger(__name__)
 
 
-def user_memory_lookup_node(state: AgentState) -> dict:
+def user_memory_lookup_node(state: ResearchState) -> dict:
     memory = load_user_memory(state.get("user_id"))
     logger.info(
         "user_memory_lookup_complete",

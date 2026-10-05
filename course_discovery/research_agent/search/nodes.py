@@ -6,7 +6,7 @@ import time
 from langgraph.config import get_stream_writer
 
 from course_discovery.domain.run_config import current_run_id
-from course_discovery.domain.state import AgentState
+from course_discovery.domain.state import ResearchState
 from course_discovery.observability.logging import get_logger, sanitize_error
 from course_discovery.observability.metrics import record_degradation, record_search
 from course_discovery.research_agent.search.tavily_client import TavilyClient
@@ -23,7 +23,7 @@ def _emit_progress(message: str) -> None:
         pass
 
 
-async def tavily_search_worker_node(state: AgentState) -> dict:
+async def tavily_search_worker_node(state: ResearchState) -> dict:
     start_ts = time.perf_counter()
     query = state.get("active_search_query")
     run_id = current_run_id()

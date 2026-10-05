@@ -84,6 +84,7 @@ Integration tests need `docker compose up -d` and
 - Shared-cache writes wait for approval: `save_verified_courses` stages valid web courses in `pending_courses` (migration 010), `promote_approved_courses` upserts the approved ones into `courses`, `drop_pending_courses` clears a discarded run; uncertain courses are not persisted, existing rows untouched: `research_agent/cache/`, `tests/test_pending_courses.py`, `tests/test_integration_postgres.py`.
 - User-text injection probes (live, `LIVE_LLM_TESTS=1`): five payloads through the gateway, router and curator tool loop; outputs stay in schema, no system-prompt leak, proposals stay inside `WRITABLE_FIELDS`: `tests/test_user_text_injection_live.py`. Passed once (2026-10-05).
 - Reducer echo fixed: fan-in reducers only on `ResearchState`, parent channels plain; REWRITE and AUGMENT rounds no longer re-add `completed_queries`, `research_notes` or `tavily_results`: `domain/state.py`, `tests/test_state_hygiene.py`.
+- Research subgraph behind `input_schema`/`output_schema` (four keys in; `valid_courses`, `digest`, `metrics` out), stateful via `checkpointer=True`; outer `AgentState` is 13 channels; `start_research_pass` guards resume: `domain/state.py`, `workflows/`, `tests/test_top_level_state.py`, `tests/test_graph_topology.py`, `tests/test_nested_checkpoints_postgres.py` (§2.3).
 - Declared PII data-flow check: `domain/pii.py`, `privacy/flow.py`, `privacy/flow_specs.py`,
   `tests/test_flow_rules.py` (§10.1).
 

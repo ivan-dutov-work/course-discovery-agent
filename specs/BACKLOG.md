@@ -28,29 +28,12 @@ Spec: `specs/FEEDBACK.md`, "Test layers".
 
 ### S1. State hygiene
 
-The top-level pass is done: the outer graph owns 12 of what were 34 flat channels (table in
-`ARCHITECTURE.md`, "Top-level state and run configuration"; decision in `DECISIONS.md`). What is
-left is the research subgraph's channels. The P5 curator subgraph was the pilot for private
-schemas: `input_schema`/`output_schema` kept its channels private and returned only a status
-string, so the reducer echo did not occur. Apply that to the research subgraph here.
+Done except for the old-checkpoint check (the curator and research subgraphs sit behind
+`input_schema`/`output_schema`; `STATUS.md`, `DECISIONS.md`).
 
-1. Verify whether the search-loop channels (`research_plan`, `active_search_query`,
-   `tavily_results`, `completed_queries`) can be private to `course_research` with an
-   `output_schema`. AUGMENT re-enters at `plan_gap_search` and reads `completed_queries`,
-   `research_plan` and `validation_results` from the previous pass, so this only works if they
-   persist across invocations; test that on LangGraph 1.1.2 before changing anything. The
-   boundary to aim for: in `search_filters`, `user_id`, `routing_decision`,
-   `rewrite_instructions`; out `valid_courses`, `digest` and a small summary for the CLI and
-   tracing (today they read `metrics`, `rejected_courses` and `uncertain_courses`).
-2. Keep the intermediate candidate lists (`extracted_candidates`, `scraped_courses`,
-   `deduplicated_courses`) as they are: they are the checkpoint history the article shows.
-3. Check that `flow_specs.py` and `Pii` markers still see every channel after any regrouping;
-   nested fields are invisible to a channel-level check.
-4. Checkpoints written before the top-level pass do not resume (verified on the memory saver,
-   not on Postgres; see "Naming" in `ARCHITECTURE.md`).
-
-Closes the state-size item under Optional and gives the article's §2.3 (`input_schema`,
-`output_schema`) an honest use.
+- Checkpoints written before the top-level pass and before the research boundary do not resume
+   (verified on the memory saver for the top-level pass, not on Postgres, not for the research
+   boundary; see "Naming" in `ARCHITECTURE.md`). Verify on Postgres, or record it as a non-goal.
 
 ## Next, not this pass
 
@@ -122,7 +105,7 @@ Placeholders marked `[NOT DRAFTED]` in `specs/article/DRAFT.md`:
 
 - §0 TL;DR, §1 Agents vs. workflows, §2.1 state as the single channel, §3.1 conditional
   edges, §13 What's next, and the demo appendix.
-- §2.3 `input_schema`/`output_schema` now has an honest use (the curator subgraph, `memory_curator/graph.py`); §3.4 `Command` waits for the replan-node item under Code.
+- §3.4 `Command` waits for the replan-node item under Code.
 - §13, prose only, no code: the many-user reframing (self-serve runs, human review at
   shared-cache promotion, N1) and implicit feedback (weighted counters with decay, an embedding
   moving average, batched LLM personas; collaborative filtering only at a scale this domain

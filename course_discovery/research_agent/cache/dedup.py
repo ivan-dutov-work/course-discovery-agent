@@ -8,7 +8,7 @@ from rapidfuzz import fuzz
 
 from course_discovery.domain.models import CourseCandidate
 from course_discovery.domain.run_config import current_run_id
-from course_discovery.domain.state import AgentState
+from course_discovery.domain.state import ResearchState
 from course_discovery.observability.logging import get_logger
 
 
@@ -31,7 +31,7 @@ def _fingerprint(title: str, url: str) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def dedup_node(state: AgentState) -> dict:
+def dedup_node(state: ResearchState) -> dict:
     start_ts = time.perf_counter()
     run_id = current_run_id()
     deduplicated: list[CourseCandidate] = []

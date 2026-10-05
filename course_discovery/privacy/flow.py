@@ -59,12 +59,13 @@ class Violation:
         return f"[{self.rule}] {self.node}: {self.detail}"
 
 
-def pii_seeds(schema: type) -> dict[str, frozenset[str]]:
+def pii_seeds(*schemas: type) -> dict[str, frozenset[str]]:
     seeds: dict[str, frozenset[str]] = {}
-    for name, hint in get_type_hints(schema, include_extras=True).items():
-        for meta in _annotations(hint):
-            if isinstance(meta, Pii):
-                seeds[name] = frozenset({SUBJECT} if meta.redacted else {SUBJECT, RAW})
+    for schema in schemas:
+        for name, hint in get_type_hints(schema, include_extras=True).items():
+            for meta in _annotations(hint):
+                if isinstance(meta, Pii):
+                    seeds[name] = frozenset({SUBJECT} if meta.redacted else {SUBJECT, RAW})
     return seeds
 
 
