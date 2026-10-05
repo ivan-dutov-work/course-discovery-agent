@@ -16,13 +16,15 @@ from course_discovery.resilience import LLM_TIMEOUT_MS
 
 PRIMARY_MODEL = "deepseek/deepseek-v4.1-flash"
 FALLBACK_MODELS = ["google/gemini-2.5-flash-lite"]
+TAGGER_MODEL = "openai/gpt-6-luna"
 
 logger = get_logger(__name__)
 
 
 class ServedModelLogger(BaseCallbackHandler):
-    def __init__(self, node: str) -> None:
+    def __init__(self, node: str, requested_model: str = PRIMARY_MODEL) -> None:
         self.node = node
+        self.requested_model = requested_model
         self._starts: dict[UUID, float] = {}
 
     def on_chat_model_start(self, serialized: Any, messages: Any, *, run_id: UUID, **kwargs: Any) -> None:
@@ -40,7 +42,7 @@ class ServedModelLogger(BaseCallbackHandler):
     ) -> None:
         record_llm_error(
             self.node,
-            requested_model=PRIMARY_MODEL,
+            requested_model=self.requested_model,
             error_type=type(error).__name__,
             seconds=self._elapsed(run_id),
         )
@@ -49,7 +51,7 @@ class ServedModelLogger(BaseCallbackHandler):
             extra={
                 "event": "llm.failed",
                 "node": self.node,
-                "requested_model": PRIMARY_MODEL,
+                "requested_model": self.requested_model,
                 **sanitize_error(error),
             },
         )
@@ -60,10 +62,10 @@ class ServedModelLogger(BaseCallbackHandler):
         message = getattr(response.generations[0][0], "message", None)
         served = (getattr(message, "response_metadata", None) or {}).get("model_name")
         usage = getattr(message, "usage_metadata", None) or {}
-        fell_back = bool(served) and not served.startswith(PRIMARY_MODEL)
+        fell_back = bool(served) and not served.startswith(self.requested_model)
         record_llm_call(
             self.node,
-            requested_model=PRIMARY_MODEL,
+            requested_model=self.requested_model,
             served_model=served,
             fell_back=fell_back,
             seconds=self._elapsed(run_id),
@@ -76,11 +78,12 @@ class ServedModelLogger(BaseCallbackHandler):
             extra={
                 "event": "llm.served",
                 "node": self.node,
-                "requested_model": PRIMARY_MODEL,
+                "requested_model": self.requested_model,
                 "served_model": served,
                 "fell_back": fell_back,
                 "input_tokens": usage.get("input_tokens"),
                 "output_tokens": usage.get("output_tokens"),
+                "cached_tokens": (usage.get("input_token_details") or {}).get("cache_read"),
             },
         )
 
@@ -92,17 +95,20 @@ def llm_enabled() -> bool:
 def build_llm(
     node: str,
     *,
+    model: str = PRIMARY_MODEL,
+    fallback_models: list[str] | None = None,
     rate_limiter: BaseRateLimiter | None = None,
     max_retries: int = 0,
 ) -> ChatOpenRouter:
     if not llm_enabled():
         raise RuntimeError(f"OPENROUTER_API_KEY is required for {node} node")
+    fallbacks = FALLBACK_MODELS if fallback_models is None else fallback_models
     return ChatOpenRouter(
-        model=PRIMARY_MODEL,
+        model=model,
         temperature=0,
-        model_kwargs={"models": [PRIMARY_MODEL, *FALLBACK_MODELS]},
+        model_kwargs={"models": [model, *fallbacks]},
         rate_limiter=rate_limiter,
         request_timeout=LLM_TIMEOUT_MS,
         max_retries=max_retries,
-        callbacks=[ServedModelLogger(node)],
+        callbacks=[ServedModelLogger(node, model)],
     )
