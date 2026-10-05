@@ -31,7 +31,7 @@ would keep the same bounds (`max_research_iterations`, validation before synthes
 
 ```
 parse_user_request ──ok──▶ start_research_pass ──▶ course_research ──▶ [interrupt] await_human_review ──▶ interpret_review_feedback
-        │                          ▲                  │ stale result: back to start_research_pass
+        │                          │                  │ stale result: retry_research_pass ─▶ course_research (once, then error)
         │                          └──────────────────┤ planning failure: discard_run
         └─error─▶ discard_run ─▶ drop_pending_courses ─▶ record_review_outcome ─▶ curate_user_memory ─▶ END
                                                                                             ├─ PUBLISH ─▶ send_approved_courses ─▶ promote_approved_courses ─▶ record_review_outcome ─▶ curate_user_memory ─▶ END
@@ -73,7 +73,8 @@ One responsibility each. "Rules" means deterministic code with no model call.
 | Node | Responsibility | Kind |
 |---|---|---|
 | `parse_user_request` | Redact PII from the query and parse it into `SearchFilters`; fill the stored budget and certificate defaults where the query is silent (reads the profile from the repository, not from state); on RESET, re-parse with the latest `feedback_history` entry and merge the new constraints into the old ones; on failure set `discard_reason`, which routes to `discard_run` | LLM, rule fallback |
-| `start_research_pass` | Stamp `research_pass = len(feedback_history)`; the subgraph echoes it back, and a mismatch after `course_research` means the stateful subgraph ignored its input on a resumed tick, so the edge returns here (`article/notes/01`) | rules |
+| `start_research_pass` | Stamp `research_pass = len(feedback_history)`; the subgraph echoes it back, and a mismatch after `course_research` means the stateful subgraph ignored its input on a resumed tick; resets `research_retries` (`article/notes/01`) | rules |
+| `retry_research_pass` | Re-stamp `research_pass` and count the retry; raises `StaleResearchResultError` once `MAX_STALE_RETRIES` (1) is spent, so a result that stays stale fails with a named error instead of looping to the recursion limit | rules |
 | `course_research` | Run the research subgraph; sees five input keys, returns `valid_courses`, `digest`, `metrics`, `discard_reason` and the echoed `research_pass` | subgraph |
 | `await_human_review` | The pause point where the interrupt fires; does nothing itself | anchor |
 | `interpret_review_feedback` | Map reviewer feedback to one routing action, append the redacted feedback to `feedback_history` and clear the `manager_feedback` inbox; rounds already completed are `len(feedback_history)` | LLM, rule fallback |
@@ -235,7 +236,7 @@ next run's profile, not the pass in progress.
 
 ### Top-level state and run configuration
 
-The outer graph owns fourteen channels. The research subgraph runs on `ResearchState` with
+The outer graph owns fifteen channels. The research subgraph runs on `ResearchState` with
 `input_schema=ResearchInput` and `output_schema=ResearchOutput`, so its other fourteen channels
 (plan, queries, candidate lists, validation results, notes, iteration, profile) are private and
 persist across passes only because it is compiled with `checkpointer=True`; they are checkpointed
@@ -250,6 +251,7 @@ the top level if it cannot be derived.
 | `feedback_history` | Review ledger (reducer); its length is the number of completed review rounds | `interpret_review_feedback` |
 | `routing_decision` | One-shot control signal, consumed by `parse_user_request` on RESET | `interpret_review_feedback` |
 | `rewrite_instructions` | Router to research hand-off | `interpret_review_feedback` |
+| `research_pass`, `research_retries` | Round stamp the subgraph echoes back, and the count of stale-result retries in this round | `start_research_pass`, `retry_research_pass` |
 | `valid_courses`, `digest` | Research output | `course_research` |
 | `metrics` | Research counters (`ResearchRunMetrics`); the CLI and the run span read cache hits, search calls and the valid, rejected and uncertain counts from here | `course_research` |
 | `publish_status` | Delivery state | `send_approved_courses` |

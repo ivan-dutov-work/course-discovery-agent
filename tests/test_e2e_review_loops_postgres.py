@@ -114,6 +114,8 @@ class ReviewLoopTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result["next"], ("await_human_review",), feedback)
             self.assertEqual(len(values["feedback_history"]), index, feedback)
             self.assertEqual(values["research_pass"], index, feedback)
+            self.assertEqual(values["research_retries"], 0, feedback)
+            self.assertNotIn("retry_research_pass", result["visited"], feedback)
             self.assertEqual(values["research_pass"], result["research"]["research_pass"])
             self.assertIsNone(values.get("manager_feedback"))
             self.assertFalse(values.get("discard_reason"), feedback)

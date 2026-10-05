@@ -17,6 +17,7 @@ QUERY = "Find free Python courses with certificate for beginners"
 OUTER_NODES = {
     "parse_user_request",
     "start_research_pass",
+    "retry_research_pass",
     "course_research",
     "await_human_review",
     "interpret_review_feedback",

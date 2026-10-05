@@ -6,15 +6,17 @@ import typing
 import unittest
 from unittest.mock import patch
 
+from langgraph.graph import END, START, StateGraph
+
 from course_discovery.app.cli import _initial_state
-from course_discovery.domain.models import RoutingAction
-from course_discovery.domain.state import AgentState, ResearchState
+from course_discovery.domain.models import ResearchRunMetrics, RoutingAction
+from course_discovery.domain.state import AgentState, ResearchInput, ResearchOutput, ResearchState
 from course_discovery.effects.factory import set_gateway
 from course_discovery.effects.gateway import InlineGateway
 from course_discovery.effects.memory_store import InMemoryOutboxStore
 from course_discovery.effects.worker import OutboxWorker
 from course_discovery.research_agent.search.tavily_client import TavilyClient
-from course_discovery.workflows.outer_graph import build_graph
+from course_discovery.workflows.outer_graph import MAX_STALE_RETRIES, StaleResearchResultError, build_graph
 from tests.research_view import research_values
 
 QUERY = "Find free Python courses with certificate for beginners"
@@ -128,6 +130,8 @@ class ReducerEchoTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("plan_gap_search", visited)
         self.assertEqual((await self.graph.aget_state(config)).values["research_pass"], 1)
+        self.assertEqual(visited.count("retry_research_pass"), 1)
+        self.assertEqual((await self.graph.aget_state(config)).values["research_retries"], 1)
         self.assertEqual((await self.graph.aget_state(config)).next, ("await_human_review",))
 
     async def test_planning_failure_reaches_the_outer_graph_and_discards(self):
@@ -144,6 +148,41 @@ class ReducerEchoTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("await_human_review", visited)
         self.assertIn("search filters missing", state.values["discard_reason"])
         self.assertEqual(state.next, ())
+
+
+class StaleResultBoundTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        env = patch.dict(os.environ, {}, clear=False)
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop("OPENROUTER_API_KEY", None)
+        os.environ.pop("DATABASE_URL", None)
+        self.runs = 0
+
+        def always_stale(state):
+            self.runs += 1
+            return {
+                "research_pass": -1,
+                "valid_courses": [],
+                "digest": "stale",
+                "metrics": ResearchRunMetrics(),
+                "discard_reason": None,
+            }
+
+        stub = StateGraph(ResearchState, input_schema=ResearchInput, output_schema=ResearchOutput)
+        stub.add_node("only", always_stale)
+        stub.add_edge(START, "only")
+        stub.add_edge("only", END)
+        patcher = patch("course_discovery.workflows.outer_graph.build_research_graph", lambda **_: stub.compile())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    async def test_a_result_that_stays_stale_fails_after_the_bounded_retries(self):
+        graph = build_graph()
+        with self.assertRaises(StaleResearchResultError):
+            async for _ in graph.astream(_initial_state(QUERY), _config("stale-bound")):
+                pass
+        self.assertEqual(self.runs, 1 + MAX_STALE_RETRIES)
 
 
 def _reduced(schema) -> set[str]:

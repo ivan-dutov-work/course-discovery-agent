@@ -262,9 +262,13 @@ leave it and append a new one that says which it replaces and what changed.
   to `tests/fixtures/checkpoints/manifest.json`, flipping the previous one to `refused` unless a
   migration exists; (5) drain or discard in-flight runs before deploy. A change that does not touch
   channels or nodes (a reducer, a type, a function body) needs none of this; the snapshot does not
-  see it, and `notes/02` lists which of those changes still break a resume. Not built: a bounded
-  retry counter on `_after_research`, because it would be a new channel, i.e. another contract
-  change, to guard a loop `recursion_limit` already bounds. (notes: 02-durability-replay-effects.md)
+  see it, and `notes/02` lists which of those changes still break a resume. Applied once already:
+  the stale-result retry got its own counter (`research_retries`) and node (`retry_research_pass`),
+  which bumped the version to 3, so that a result that stays stale raises
+  `StaleResearchResultError` after one retry instead of looping until `GraphRecursionError`.
+  Raising, not discarding, because a stale echo after a spent resume flag means the guard's
+  assumption about LangGraph no longer holds, and that should stop the run visibly.
+  (notes: 02-durability-replay-effects.md)
 
 ## Compliance
 

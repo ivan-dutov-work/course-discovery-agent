@@ -57,6 +57,7 @@ TOP_LEVEL_CHANNELS = {
     "discard_reason",
     "memory_update",
     "research_pass",
+    "research_retries",
 }
 
 

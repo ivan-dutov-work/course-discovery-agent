@@ -9,6 +9,7 @@
       "metrics",
       "publish_status",
       "research_pass",
+      "research_retries",
       "rewrite_instructions",
       "routing_decision",
       "search_filters",
@@ -26,6 +27,7 @@
       "parse_user_request",
       "promote_approved_courses",
       "record_review_outcome",
+      "retry_research_pass",
       "send_approved_courses",
       "start_research_pass"
     ]
@@ -71,5 +73,5 @@
       "verify_course_claims"
     ]
   },
-  "version": 2
+  "version": 3
 }

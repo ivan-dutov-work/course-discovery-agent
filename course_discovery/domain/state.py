@@ -32,6 +32,7 @@ class AgentState(TypedDict):
     discard_reason: str | None
     memory_update: str | None
     research_pass: int
+    research_retries: int
 
 
 class ResearchInput(TypedDict):

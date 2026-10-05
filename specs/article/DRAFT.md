@@ -87,7 +87,7 @@ compiled with `checkpointer=True`, and a loop that re-enters it with the previou
 needs exactly that. The stateful form has a sharp edge: when the subgraph is the first task of
 a resumed step, after a crash or an `update_state(as_node=...)`, LangGraph resumes it instead of
 starting it with the new input, and the round silently does not run. A no-op node in front of
-the subgraph looks like the fix and is not: a crash after the node commits reaches the same window. What works is a counter the parent stamps and the subgraph echoes back; if the echo is stale, the parent sends the work through again, and the resume flag is spent by then. State that outlives a pass needs the opposite care: the subgraph clears its own ledger on a fresh pass, with `Overwrite`, because a reducer can add but not subtract.
+the subgraph looks like the fix and is not: a crash after the node commits reaches the same window. What works is a counter the parent stamps and the subgraph echoes back; if the echo is stale, the parent sends the work through again, and the resume flag is spent by then. The retry needs its own bound, or a result that stays stale loops until the recursion limit and fails with an error that says nothing about why. State that outlives a pass needs the opposite care: the subgraph clears its own ledger on a fresh pass, with `Overwrite`, because a reducer can add but not subtract.
 
 ---
 

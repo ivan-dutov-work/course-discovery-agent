@@ -28,15 +28,32 @@ from course_discovery.workflows.research_graph import build_research_graph
 logger = get_logger(__name__)
 
 
+MAX_STALE_RETRIES = 1
+
+
+class StaleResearchResultError(RuntimeError):
+    pass
+
+
 def start_research_pass(state: AgentState) -> dict:
-    return {"research_pass": len(state.get("feedback_history", []))}
+    return {"research_pass": len(state.get("feedback_history", [])), "research_retries": 0}
+
+
+def retry_research_pass(state: AgentState) -> dict:
+    retries = state.get("research_retries", 0)
+    expected = len(state.get("feedback_history", []))
+    if retries >= MAX_STALE_RETRIES:
+        raise StaleResearchResultError(
+            f"research pass {expected} still returned a stale result after {retries} retries"
+        )
+    return {"research_pass": expected, "research_retries": retries + 1}
 
 
 def _after_research(state: AgentState):
     if state.get("discard_reason"):
         return "discard_run"
     if state.get("research_pass") != len(state.get("feedback_history", [])):
-        return "start_research_pass"
+        return "retry_research_pass"
     return "await_human_review"
 
 
@@ -57,6 +74,7 @@ def build_graph(checkpointer=None, research_compile_kwargs=None):
     retry = transient_retry()
     builder.add_node("parse_user_request", gateway_node, retry_policy=retry)
     builder.add_node("start_research_pass", start_research_pass)
+    builder.add_node("retry_research_pass", retry_research_pass)
     builder.add_node(
         "course_research",
         build_research_graph(**{"checkpointer": True, **(research_compile_kwargs or {})}),
@@ -85,10 +103,11 @@ def build_graph(checkpointer=None, research_compile_kwargs=None):
         _after_research,
         {
             "discard_run": "discard_run",
-            "start_research_pass": "start_research_pass",
+            "retry_research_pass": "retry_research_pass",
             "await_human_review": "await_human_review",
         },
     )
+    builder.add_edge("retry_research_pass", "course_research")
     builder.add_edge("await_human_review", "interpret_review_feedback")
     builder.add_conditional_edges(
         "interpret_review_feedback",

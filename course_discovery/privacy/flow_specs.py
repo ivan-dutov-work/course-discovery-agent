@@ -16,8 +16,13 @@ OUTER: dict[str, NodeFlow] = {
     ),
     "start_research_pass": flow(
         reads={"feedback_history"},
-        writes={"research_pass"},
-        declassifies={"research_pass": "round counter"},
+        writes={"research_pass", "research_retries"},
+        declassifies={"research_pass": "round counter", "research_retries": "retry counter"},
+    ),
+    "retry_research_pass": flow(
+        reads={"feedback_history", "research_retries"},
+        writes={"research_pass", "research_retries"},
+        declassifies={"research_pass": "round counter", "research_retries": "retry counter"},
     ),
     "course_research": flow(),
     "curate_user_memory": flow(),

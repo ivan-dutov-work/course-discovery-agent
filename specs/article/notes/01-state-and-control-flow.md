@@ -71,7 +71,7 @@ langgraph 1.1.2, memory saver and Postgres. `build_research_graph` compiles with
 `input_schema=ResearchInput` (five keys: `user_id`, `search_filters`, `routing_decision`,
 `rewrite_instructions`, `research_pass`) and `output_schema=ResearchOutput` (`valid_courses`, `digest`,
 `metrics`, `discard_reason`, `research_pass`); the other 14 channels are private and the outer
-`AgentState` has 14.
+`AgentState` has 15, the extra one being `research_retries`, which bounds the stale-result retry.
 
 - **Private is not persistent.** A toy graph (parent loop, subgraph with a private `operator.add`
   channel, parent paused between passes) showed the private channel empty on every re-entry with
