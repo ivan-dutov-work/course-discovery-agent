@@ -51,7 +51,7 @@ def research_planner_node(state: ResearchState) -> dict:
     if filters is None:
         return {
             "research_plan": None,
-            "error": "Research planning failed: search filters missing",
+            "discard_reason": "Research planning failed: search filters missing",
         }
 
     cache_candidates = state.get("cache_candidates", [])
@@ -99,7 +99,7 @@ def research_planner_node(state: ResearchState) -> dict:
 
 def need_web_search(state: ResearchState):
     plan = state.get("research_plan")
-    if state.get("error"):
+    if state.get("discard_reason"):
         return "discard_run"
     if plan and plan.search_queries:
         return "search_web_for_courses"
@@ -110,7 +110,7 @@ def replanner_node(state: ResearchState) -> dict:
     iteration = state.get("research_iteration", 0) + 1
     filters = state.get("search_filters")
     if filters is None:
-        return {"error": "Replanning failed: search filters missing"}
+        return {"discard_reason": "Replanning failed: search filters missing"}
 
     missing = sorted(
         {

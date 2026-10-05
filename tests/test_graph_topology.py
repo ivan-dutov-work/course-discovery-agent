@@ -28,6 +28,7 @@ OUTER_NODES = {
     "curate_user_memory",
 }
 RESEARCH_NODES = {
+    "begin_pass",
     "load_user_profile",
     "find_known_courses",
     "plan_web_search",
@@ -94,8 +95,9 @@ class TopologyTests(unittest.TestCase):
 
     def test_research_entry_is_conditional(self):
         edges = _edges(build_research_graph())
-        self.assertIn(("__start__", "load_user_profile"), edges)
-        self.assertIn(("__start__", "plan_gap_search"), edges)
+        self.assertIn(("__start__", "begin_pass"), edges)
+        self.assertIn(("begin_pass", "load_user_profile"), edges)
+        self.assertIn(("begin_pass", "plan_gap_search"), edges)
 
 
 class TopologyRunTests(unittest.IsolatedAsyncioTestCase):
@@ -124,7 +126,7 @@ class TopologyRunTests(unittest.IsolatedAsyncioTestCase):
         )
         visited = await self._visited(graph, None, config)
 
-        self.assertEqual(visited[:2], ["start_research_pass", "plan_gap_search"])
+        self.assertEqual(visited[:3], ["start_research_pass", "begin_pass", "plan_gap_search"])
         self.assertNotIn("load_user_profile", visited)
         self.assertNotIn("find_known_courses", visited)
         self.assertEqual((await graph.aget_state(config)).next, ("await_human_review",))
@@ -151,8 +153,8 @@ class TopologyRunTests(unittest.IsolatedAsyncioTestCase):
         visited = await self._visited(graph, state, config)
         result = await graph.aget_state(config)
 
-        self.assertEqual(visited, ["load_user_profile", "find_known_courses", "plan_web_search"])
-        self.assertIn("search filters missing", result.values["error"])
+        self.assertEqual(visited, ["begin_pass", "load_user_profile", "find_known_courses", "plan_web_search"])
+        self.assertIn("search filters missing", result.values["discard_reason"])
         self.assertFalse(result.values.get("digest"))
 
     async def test_search_failure_leaves_a_limitation_note_and_finishes(self):
@@ -168,7 +170,7 @@ class TopologyRunTests(unittest.IsolatedAsyncioTestCase):
         values = await research_values(graph, "topo-search-error")
         self.assertIn("rank_and_summarize_courses", visited)
         self.assertTrue(any("search failed" in note for note in values["research_notes"]))
-        self.assertFalse(values.get("error"))
+        self.assertFalse(values.get("discard_reason"))
         self.assertEqual((await graph.aget_state(config)).next, ("await_human_review",))
 
 

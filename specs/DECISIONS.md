@@ -124,12 +124,12 @@ leave it and append a new one that says which it replaces and what changed.
   user-derived text; storing it in the shared cache reaches a table erasure cannot cover (the
   flow-rule check flags it) and lets loosely matched courses pollute later lookups. Topics come
   from the course's own content, by a tagging step that is not built. (notes: 05-scale-and-scope.md)
-- **Do not restructure `AgentState` wholesale.** It is wide (34 channels, 28 after the top-level pass below) but the width is mostly
+- **Do not restructure `AgentState` wholesale** (superseded for the research subgraph by the entries below; applies to the rest). It was wide (34 channels, 28 after the top-level pass below) but the width is mostly
   the article's subject: per-stage candidate lists are checkpoint history, and reducers and `Pii`
   markers are per channel, so nesting channels hides both from `flow_specs.py`. Fix the real
   redundancy (duplicate counters, budgets held as state) and try private schemas on new code
   first (the P5 curator). Backlog S1. Done for the research subgraph: see the next entries.
-- **The research subgraph has a four-key input and a three-key output, and keeps its state with
+- **The research subgraph has a five-key input and a five-key output, and keeps its state with
   `checkpointer=True`.** AUGMENT re-enters mid-pipeline and needs the previous pass's plan, ledger
   and validation results, which a private channel only keeps when the subgraph is stateful
   (`article/notes/01`). Ruled out: keeping those channels in the outer state (the outer state would
@@ -138,11 +138,23 @@ leave it and append a new one that says which it replaces and what changed.
   of the subgraph and so stay in its checkpoint history. The counters and the valid, rejected and
   uncertain counts leave through `metrics`, which already held them, so there is no separate
   summary channel.
-- **A no-op `start_research_pass` precedes `course_research`.** A stateful subgraph that is the
-  first task of a resumed step ignores its new input, so a crash between the router and the
-  subgraph, or `update_state(as_node=...)`, would silently skip a REWRITE or AUGMENT round. The
-  anchor is the one added node; the three anchors removed earlier did no such work.
-  (notes: 01-state-and-control-flow.md, 02-durability-replay-effects.md)
+- **A pass counter, not a no-op anchor, guards the stateful subgraph.** A subgraph with
+  `checkpointer=True` resumes from its saved checkpoint, ignoring new input, whenever it is the
+  first task of a resumed tick (`langgraph/pregel/_loop.py`, `CONFIG_KEY_RESUMING`). The earlier
+  no-op node `start_research_pass` only moved that tick and left a window after it committed.
+  Now `start_research_pass` stamps `research_pass = len(feedback_history)` and the subgraph echoes
+  it; if the echo differs, `course_research` has returned a previous pass's result and the edge
+  re-enters `start_research_pass`, where the flag is spent. Ruled out: making the subgraph
+  stateless (AUGMENT needs the plan, ledger and validation results) and putting those channels in
+  the outer state. (notes: 01-state-and-control-flow.md, 02-durability-replay-effects.md)
+- **`begin_pass` resets the subgraph's private state on a fresh pass.** `routing_decision` is empty
+  on a first run and after RESET (the gateway clears it); REWRITE and AUGMENT keep the ledger and
+  results on purpose. The reducer channels are cleared with `Overwrite`, since `operator.add`
+  cannot subtract. Without it a RESET to a new topic planned no new queries and re-extracted the
+  old topic's results, and the replan budget was spent for the rest of the thread.
+- **A planning failure leaves the subgraph through `discard_reason`,** an outer channel, so the
+  outer graph routes to `discard_run` instead of offering an empty digest for review. The private
+  `error` channel is gone.
 - **A fan-in reducer is declared on the schema where the branches meet, not on the parent's.**
   `tavily_results`, `completed_queries` and `research_notes` are `operator.add` in `ResearchState`
   and not in `AgentState`. The alternative, a reducer on the parent that is idempotent over the
@@ -234,6 +246,26 @@ leave it and append a new one that says which it replaces and what changed.
   reads channels that carry subject data, so a sink declared on the node is flagged; the screen
   receives catalog text only, and the check cannot see which read feeds which sink.
 
+- **State contract changes are versioned, and an old thread is refused, not migrated.** The
+  checkpoint schema is a contract with every paused thread. Any change to the outer or research
+  channels, or to a node name that can hold a pause, bumps `STATE_SCHEMA_VERSION`
+  (`domain/contract.py`). Resuming a thread written under another version raises
+  `IncompatibleThreadError` in `authorize_thread` (version stored in `run_threads.schema_version`,
+  never upgraded in place; NULL is v1). Why refuse: without the guard, an old thread re-runs the
+  research pass with real searches, staging writes and a model call, then parks again with a
+  different digest (`notes/02`); and the pre-change shape cannot be rebuilt safely, since the
+  dropped channels are exactly the ones whose values would have to be reconstructed. A migration is
+  worth building only when drain-before-deploy is not possible, and then as an `aupdate_state`
+  backfill that has its own fixture. Runbook for a contract change: (1) change the channels or
+  nodes; (2) bump the version; (3) `uv run python -m tests.contract_snapshot`; (4) capture a fixture
+  for the new version with `scripts/dump_checkpoint_fixture.py` (thread id `fixture-*`) and add it
+  to `tests/fixtures/checkpoints/manifest.json`, flipping the previous one to `refused` unless a
+  migration exists; (5) drain or discard in-flight runs before deploy. A change that does not touch
+  channels or nodes (a reducer, a type, a function body) needs none of this; the snapshot does not
+  see it, and `notes/02` lists which of those changes still break a resume. Not built: a bounded
+  retry counter on `_after_research`, because it would be a new channel, i.e. another contract
+  change, to guard a loop `recursion_limit` already bounds. (notes: 02-durability-replay-effects.md)
+
 ## Compliance
 
 - **The privacy controls are justified by many users' stored data,** not by a single
@@ -246,5 +278,7 @@ leave it and append a new one that says which it replaces and what changed.
 - **Not built, on purpose:** per-user keys (crypto-shredding), reducer-based redaction,
   selective sealing (seal-everything fails closed), AST-derived reads and writes for the
   data-flow check, boundary-observed sinks.
+- **Checkpoints from an older state schema are refused, not migrated.** See "State contract
+  changes are versioned" under Design.
 - **OpenRouter "PII filtering"** is not cited as a feature: it is unconfirmed and would be a
   different guarantee from data-retention controls. Don't conflate them.

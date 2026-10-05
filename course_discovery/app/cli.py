@@ -30,7 +30,7 @@ from course_discovery.observability.tracing import (
 )
 from course_discovery.guardrails import redact_pii
 from course_discovery.persistence.checkpointer import open_checkpointer
-from course_discovery.privacy import authorize_thread, register_thread
+from course_discovery.privacy import IncompatibleThreadError, authorize_thread, register_thread
 from course_discovery.resilience import RECURSION_LIMIT
 from course_discovery.workflows.outer_graph import build_graph
 
@@ -186,7 +186,11 @@ async def _run(graph) -> None:
             },
         )
 
-        authorize_thread(initial_state["user_id"], run_id)
+        try:
+            authorize_thread(initial_state["user_id"], run_id)
+        except IncompatibleThreadError as exc:
+            print(f"{exc}. Start a new run; this thread cannot be resumed.")
+            raise SystemExit(1) from exc
         await graph.aupdate_state(
             config, {"manager_feedback": redact_pii(pm_feedback)}
         )

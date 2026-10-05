@@ -29,7 +29,15 @@ logger = get_logger(__name__)
 
 
 def start_research_pass(state: AgentState) -> dict:
-    return {}
+    return {"research_pass": len(state.get("feedback_history", []))}
+
+
+def _after_research(state: AgentState):
+    if state.get("discard_reason"):
+        return "discard_run"
+    if state.get("research_pass") != len(state.get("feedback_history", [])):
+        return "start_research_pass"
+    return "await_human_review"
 
 
 def _after_gateway(state: AgentState):
@@ -72,7 +80,15 @@ def build_graph(checkpointer=None, research_compile_kwargs=None):
         },
     )
     builder.add_edge("start_research_pass", "course_research")
-    builder.add_edge("course_research", "await_human_review")
+    builder.add_conditional_edges(
+        "course_research",
+        _after_research,
+        {
+            "discard_run": "discard_run",
+            "start_research_pass": "start_research_pass",
+            "await_human_review": "await_human_review",
+        },
+    )
     builder.add_edge("await_human_review", "interpret_review_feedback")
     builder.add_conditional_edges(
         "interpret_review_feedback",

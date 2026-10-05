@@ -31,6 +31,7 @@ class AgentState(TypedDict):
     publish_status: DeliveryStatus | None
     discard_reason: str | None
     memory_update: str | None
+    research_pass: int
 
 
 class ResearchInput(TypedDict):
@@ -38,9 +39,12 @@ class ResearchInput(TypedDict):
     search_filters: SearchFilters | None
     routing_decision: RoutingAction | None
     rewrite_instructions: str | None
+    research_pass: int
 
 
 class ResearchOutput(TypedDict):
+    research_pass: int
+    discard_reason: str | None
     valid_courses: list[CourseCandidate]
     digest: str | None
     metrics: ResearchRunMetrics
@@ -61,4 +65,3 @@ class ResearchState(ResearchInput, ResearchOutput):
     completed_queries: Annotated[list[str], operator.add]
     research_notes: Annotated[list[str], operator.add]
     active_search_query: str | None
-    error: str | None

@@ -16,6 +16,9 @@ Integration tests need `docker compose up -d` and
   budgets are `configurable` keys, the review round is `len(feedback_history)`, counters live in
   `metrics` only, the gateway failure signals through `discard_reason`: `domain/run_config.py`,
   `tests/test_top_level_state.py` (§2.1).
+- State contract is versioned: `STATE_SCHEMA_VERSION` stamped in `run_threads` (migration 011), `authorize_thread` refuses a thread from another version with `IncompatibleThreadError`, the CLI exits non-zero; channel and node names snapshotted, one stored checkpoint per version marked `resumes` or `refused`: `domain/contract.py`, `privacy/registry.py`, `tests/test_state_contract.py`, `tests/test_checkpoint_compatibility.py`, `tests/fixtures/checkpoints/`, `scripts/dump_checkpoint_fixture.py` (§10.2).
+- Multi-round review loop against Postgres, local only (skips without `TEST_DATABASE_URL`): augment, rewrite, reset, approve with a fresh saver and graph per segment, encryption on, registry guard on; plus the discard and wrong-owner and wrong-version paths: `tests/test_e2e_review_loops_postgres.py` (§2.3, §4).
+- Router classification failure writes the exception type into `discard_reason`, not its text: `review/router.py`, `tests/test_user_profile.py`. `langgraph` is pinned to the tested `>=1.1.2,<1.2`.
 - Plan-driven `Send` fan-out: `workflows/research_graph.py` (§3.2).
 - Only `await_human_review` remains as a no-op anchor; the research entry is a conditional
   entry point: `workflows/`, `tests/test_graph_topology.py` (§3.1, §4.1).
@@ -84,7 +87,7 @@ Integration tests need `docker compose up -d` and
 - Shared-cache writes wait for approval: `save_verified_courses` stages valid web courses in `pending_courses` (migration 010), `promote_approved_courses` upserts the approved ones into `courses`, `drop_pending_courses` clears a discarded run; uncertain courses are not persisted, existing rows untouched: `research_agent/cache/`, `tests/test_pending_courses.py`, `tests/test_integration_postgres.py`.
 - User-text injection probes (live, `LIVE_LLM_TESTS=1`): five payloads through the gateway, router and curator tool loop; outputs stay in schema, no system-prompt leak, proposals stay inside `WRITABLE_FIELDS`: `tests/test_user_text_injection_live.py`. Passed once (2026-10-05).
 - Reducer echo fixed: fan-in reducers only on `ResearchState`, parent channels plain; REWRITE and AUGMENT rounds no longer re-add `completed_queries`, `research_notes` or `tavily_results`: `domain/state.py`, `tests/test_state_hygiene.py`.
-- Research subgraph behind `input_schema`/`output_schema` (four keys in; `valid_courses`, `digest`, `metrics` out), stateful via `checkpointer=True`; outer `AgentState` is 13 channels; `start_research_pass` guards resume: `domain/state.py`, `workflows/`, `tests/test_top_level_state.py`, `tests/test_graph_topology.py`, `tests/test_nested_checkpoints_postgres.py` (§2.3).
+- Research subgraph behind `input_schema`/`output_schema` (five keys in; `valid_courses`, `digest`, `metrics`, `discard_reason`, `research_pass` out), stateful via `checkpointer=True`; outer `AgentState` is 14 channels (13 plus `research_pass`); the subgraph schema has 23, nine shared with the outer state and fourteen private; `start_research_pass` stamps a pass counter and a stale result retries; `begin_pass` resets private state on a fresh pass; planning failures route to `discard_run`: `domain/state.py`, `workflows/`, `tests/test_top_level_state.py`, `tests/test_graph_topology.py`, `tests/test_nested_checkpoints_postgres.py` (§2.3).
 - Declared PII data-flow check: `domain/pii.py`, `privacy/flow.py`, `privacy/flow_specs.py`,
   `tests/test_flow_rules.py` (§10.1).
 

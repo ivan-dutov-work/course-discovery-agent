@@ -78,8 +78,8 @@ passes in and returns only the keys declared as output.
 StateGraph(ResearchState, input_schema=ResearchInput, output_schema=ResearchOutput)
 ```
 
-Four keys go in, three come out, and the other fifteen channels (plans, ledgers, candidate
-lists) stay behind the boundary. The parent's state shrinks to what the rest of the graph
+Five keys go in, five come out (two of them bookkeeping), and the other channels (plans, ledgers, candidate
+lists) stay behind the boundary. The boundary limits what the subgraph reads and returns, not what its checkpoint stores: the full parent state is still in its start channel, which is one more reason to encrypt checkpoints (§10.1). The parent's state shrinks to what the rest of the graph
 reads, and the caller of `invoke()` sees the output schema, not the internals.
 
 Private does not mean persistent. A subgraph's channels start empty on every call unless it is
@@ -87,7 +87,7 @@ compiled with `checkpointer=True`, and a loop that re-enters it with the previou
 needs exactly that. The stateful form has a sharp edge: when the subgraph is the first task of
 a resumed step, after a crash or an `update_state(as_node=...)`, LangGraph resumes it instead of
 starting it with the new input, and the round silently does not run. A no-op node in front of
-the subgraph keeps it off the first position.
+the subgraph looks like the fix and is not: a crash after the node commits reaches the same window. What works is a counter the parent stamps and the subgraph echoes back; if the echo is stale, the parent sends the work through again, and the resume flag is spent by then. State that outlives a pass needs the opposite care: the subgraph clears its own ledger on a fresh pass, with `Overwrite`, because a reducer can add but not subtract.
 
 ---
 
@@ -144,13 +144,13 @@ own `StateGraph` without interrupt config, because that is the parent's concern,
 and mount it as one node:
 
 ```python
-builder.add_node("research_agent", build_research_graph(checkpointer=True))
+builder.add_node("course_research", build_research_graph(checkpointer=True))
 ```
 
 From the parent's perspective the pipeline is just another node, one that
 happens to run many steps internally. This pays off wherever the parent routes:
 every outcome that means "do the work again" (a rewrite, an augmentation, a
-reset) points at one edge target, and the parent never needs to know which
+reset) points at one entry node, `start_research_pass`, and the parent never needs to know which
 internal step should resume. Adding a validation pass or an extraction step
 inside the pipeline never touches the parent's wiring. The encapsulation
 boundary is real, not a naming convention.
@@ -508,6 +508,8 @@ ChatOpenRouter(
 
 Two behaviours are easy to get wrong. An invalid model ID is not a fallback trigger: the gateway rejects the request with a 400 before any routing, so the list protects against provider failures, not configuration mistakes. And because the fallback is invisible to the caller, you have to ask which model answered: log the response's `model_name` on every call and flag it when it differs from the primary. Otherwise a week of silent fallbacks looks identical to a week of healthy calls.
 
+The factory also takes a per-node model. The course tagger asks for `openai/gpt-6-luna` and carries no fallback list, so it is a second provider behind the same gateway, and `ServedModelLogger` compares the served model against the one that node requested, not against the global primary. Not yet wired into the graph.
+
 The argument for a gateway isn't fallback, which `.with_fallbacks()` gives you in-process. It is one bill, one rate-limit surface, and per-key spend caps across providers. The cost is a hop through a third party: every prompt now transits it, which matters for §10.1.
 
 LiteLLM is the self-hosted version of the same idea, and it comes in two shapes that are easy to conflate. The SDK (`langchain-litellm`: `ChatLiteLLM`, `ChatLiteLLMRouter`) is a library inside your process: routing and fallback with no new service, and no shared state between workers. The Proxy is a standalone service that speaks the OpenAI protocol; LangChain reaches it through a plain `ChatOpenAI` pointed at its URL, so the graph again sees one chat model and never learns that a gateway exists. Keys, spend tracking and rate limits live in the Proxy, which is what makes it the usual production choice.
@@ -761,7 +763,9 @@ Two failure modes, named separately.
 
 **State schema versioning.** If `AgentState` changes shape (a field renamed, a type changed), checkpoints persisted under the old shape may not deserialize under the new one. This is LangGraph-specific risk, because the checkpointer serializes the state object directly rather than through a migration-aware layer. It shows up first as a serializer complaint, not a crash: `langgraph-checkpoint` 4.2.0 logs a "Deserializing unregistered type" warning per Pydantic model in state, and enum-typed fields log a separate "Blocked deserialization" message when the allowlist is built from model classes alone. The fix is an explicit allowlist covering models and enums, plus a round-trip test that asserts type and value on read-back. It is also a deserialization-safety control: without one, anyone who can write to the checkpoint database can cause arbitrary type construction on read.
 
-**Graph structural versioning.** Adding, removing or renaming a node between deploys can break an in-flight thread even when `AgentState` didn't change, because the checkpoint records *where* execution was parked and that position may no longer exist. This half is described, not observed.
+**Graph structural versioning.** Adding, removing or renaming a node between deploys can break an in-flight thread even when `AgentState` didn't change, because the checkpoint records *where* execution was parked and that position may no longer exist. A structural change is observable, though: a thread paused at the review gate under an earlier graph still reads back on Postgres, but approval after `update_state` does not publish. The resumed thread re-enters the research pass, repeating its searches, staging writes and model call, and parks at the gate again with a different digest. Nothing raises, which is what makes it expensive.
+
+The place to catch it is before the resume. Stamp a schema version beside the thread's owner record when the run starts, compare it when the thread is resumed, and refuse a mismatch with an error that names both versions. Two tests keep the stamp honest: a snapshot of channel and node names that fails until the version is bumped, and one stored checkpoint per released version, each marked as resumable or refused. The cost is that a refused thread is lost work. The practical decision rule: drain in-flight runs before a deploy that bumps the version, and build a migration only when draining is not possible.
 
 Drift at the model boundary, a provider returning a different shape, is a separate failure with a separate answer: a failure rate rather than a migration (§8.4).
 

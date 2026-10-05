@@ -41,7 +41,6 @@ RESEARCH_PRIVATE_CHANNELS = {
     "completed_queries",
     "research_notes",
     "active_search_query",
-    "error",
 }
 TOP_LEVEL_CHANNELS = {
     "user_id",
@@ -57,6 +56,7 @@ TOP_LEVEL_CHANNELS = {
     "publish_status",
     "discard_reason",
     "memory_update",
+    "research_pass",
 }
 
 
@@ -183,8 +183,8 @@ class TopLevelStateTests(unittest.IsolatedAsyncioTestCase):
         values = await self._values(config)
 
         self.assertEqual(
-            visited[:4],
-            ["await_human_review", "interpret_review_feedback", "start_research_pass", "plan_gap_search"],
+            visited[:5],
+            ["await_human_review", "interpret_review_feedback", "start_research_pass", "begin_pass", "plan_gap_search"],
         )
         self.assertEqual(values["routing_decision"], RoutingAction.AUGMENT)
         self.assertIsNone(values["manager_feedback"])

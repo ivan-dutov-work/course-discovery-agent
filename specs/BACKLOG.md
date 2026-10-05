@@ -26,15 +26,6 @@ Spec: `specs/FEEDBACK.md`, "Test layers".
   `build_llm("judge")`. Free-text fields only; structured fields stay exact assertions.
 - Record in notes/04 which cases the live model fails and how often, with the model versions.
 
-### S1. State hygiene
-
-Done except for the old-checkpoint check (the curator and research subgraphs sit behind
-`input_schema`/`output_schema`; `STATUS.md`, `DECISIONS.md`).
-
-- Checkpoints written before the top-level pass and before the research boundary do not resume
-   (verified on the memory saver for the top-level pass, not on Postgres, not for the research
-   boundary; see "Naming" in `ARCHITECTURE.md`). Verify on Postgres, or record it as a non-goal.
-
 ## Next, not this pass
 
 ### N1. Promotion cascade for the shared cache
@@ -62,13 +53,6 @@ Until that is decided, `CLAUDE.md`'s "Never auto-publish" stands and nothing her
 
 ## Verify
 
-- **`research_iteration` is never reset between review rounds** (only `plan_gap_search`
-  increments it), so a REWRITE or AUGMENT round after a pass that spent the replan budget may get
-  no replans. Run two rounds on an all-rejected query to confirm; if it is a bug, reset it where
-  `course_research` is re-entered.
-- **`extracted_candidates` has no reducer** but is written by every parallel `Send` branch.
-  Add a regression test with a plan of two or more queries. If it raises `InvalidUpdateError`,
-  add the reducer and make it the §2.2 example; if it doesn't, record why in the notes.
 - **OpenRouter fallback was never triggered live,** only asserted in the outgoing payload.
   Either exercise it (force a primary failure) or keep the article's "not exercised" wording.
   OpenRouter data-retention and ZDR controls are also unverified. Feeds §8.2.

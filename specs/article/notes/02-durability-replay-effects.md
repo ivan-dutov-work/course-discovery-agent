@@ -204,6 +204,24 @@ no repair, only a refusal, since the intent (the review step) is gone.
   that thread (not re-checked). Removing a node that did run leaves its `branch:to:` channel stale
   and the thread stuck at the gate.
 
+- **A checkpoint from the pre-boundary graph does not resume (verified, langgraph 1.1.2, Postgres).**
+  Paused at `await_human_review` under 98d61f9 (28 outer channels, flat research channels), then
+  opened by the current graph on the same database: `aget_state` returns the thread with
+  `next == ("await_human_review",)`, but after `aupdate_state(manager_feedback="approve")` and
+  `ainvoke(None)` it returns without `publish_status` and stays at the gate. A control thread
+  created and approved entirely under the current graph publishes.
+- **Resuming that thread re-runs the research pass (verified 2026-10-05, langgraph 1.1.2,
+  Postgres, with the `research_pass` change).** Streaming the resume with `subgraphs=True` shows
+  `start_research_pass`, then every node of `course_research` from `begin_pass` through
+  `rank_and_summarize_courses`, then `__interrupt__`. The search calls, the `pending_courses`
+  staging and the synthesis call all run again, and the digest is new. So the earlier "stays at
+  the gate" understates it: the failure is a silent re-execution with side effects. Cause: not
+  isolated beyond the observed node order; the checkpoint predates the channel that triggers
+  `start_research_pass`. The fix is to refuse before the resume (`DECISIONS.md`, "State contract
+  changes are versioned"). Pinned by `tests/test_checkpoint_compatibility.py` (a stored v1
+  fixture must raise `IncompatibleThreadError` and leave the checkpoint rows unchanged) and
+  `tests/test_state_contract.py`. Both fail if the guard or the version bump is removed (checked by
+  mutation).
 - **Resume into a stateful subgraph (found in review of S1, langgraph 1.1.2).** See
   `01-state-and-control-flow.md`, "The research subgraph": with `checkpointer=True`, a crash or
   `update_state(as_node=...)` that leaves the subgraph node as the first task of the resume makes

@@ -68,9 +68,10 @@ Evidence for drafting. Load when working on these sections. Observations are fro
 ### The research subgraph: private channels need `checkpointer=True`
 
 langgraph 1.1.2, memory saver and Postgres. `build_research_graph` compiles with
-`input_schema=ResearchInput` (four keys: `user_id`, `search_filters`, `routing_decision`,
-`rewrite_instructions`) and `output_schema=ResearchOutput` (`valid_courses`, `digest`, `metrics`);
-the other 15 channels are private and the outer `AgentState` has 13.
+`input_schema=ResearchInput` (five keys: `user_id`, `search_filters`, `routing_decision`,
+`rewrite_instructions`, `research_pass`) and `output_schema=ResearchOutput` (`valid_courses`, `digest`,
+`metrics`, `discard_reason`, `research_pass`); the other 14 channels are private and the outer
+`AgentState` has 14.
 
 - **Private is not persistent.** A toy graph (parent loop, subgraph with a private `operator.add`
   channel, parent paused between passes) showed the private channel empty on every re-entry with
@@ -85,18 +86,15 @@ the other 15 channels are private and the outer `AgentState` has 13.
   `update_state(..., as_node="interpret_review_feedback")` with `routing_decision=AUGMENT`,
   `astream(None)` ran `course_research` for zero steps and returned the previous pass's
   `valid_courses`. The same happens after a crash between the router and the start of the
-  subgraph. Mechanism inferred, not confirmed in source: the resume flag reaches the first task of
-  the step, and a subgraph resumed from a completed checkpoint has nothing left to run. The normal
+  subgraph. Mechanism confirmed in langgraph 1.1.2 `pregel/_loop.py`: `_first` sets `CONFIG_KEY_RESUMING` for the whole first tick when the input is `None`, a stateful subgraph with a saved checkpoint takes its resuming branch and never applies the new input, and the flag is popped only at the end of the tick (line 573). The normal
   path (`update_state` with `manager_feedback`, then `astream(None)`) does not hit it because
-  `await_human_review` is the first task. Fix: a no-op node `start_research_pass` in front of
-  `course_research`; with it the as-node case runs `plan_gap_search`
-  (`tests/test_graph_topology.py`, fails without the node).
+  `await_human_review` is the first task. A no-op node in front of the subgraph only moved the problem: with `update_state(as_node="start_research_pass")` the round was still skipped (found in review). Fix: `start_research_pass` stamps `research_pass`, the subgraph echoes it, and a mismatch after `course_research` returns to `start_research_pass`, where the flag is spent. `tests/test_state_hygiene.py` covers both `as_node` windows and fails when the retry edge is removed.
 - A candidate-list view of the subgraph's history is still in the checkpoints (`checkpoint_ns`
   `course_research`); `tests/test_nested_checkpoints_postgres.py` shows those rows are sealed under
   `CHECKPOINT_ENCRYPTION_KEYS` (a canary in the query appears in 4 plaintext rows without keys, 0
   with) and that `adelete_thread` removes them.
-- **Output keys must be parent channels.** The subgraph's `error` cannot be an output without
-  adding it to `AgentState`, so a planning error is visible only in the subgraph's own state.
+- **Output keys must be parent channels.** A planning failure therefore leaves through `discard_reason`, which the outer graph already routes on (`tests/test_state_hygiene.py`).
+- **`Overwrite` clears an `operator.add` channel** (langgraph 1.1.2): `begin_pass` returns `Overwrite([])` for the ledger, notes and results on a fresh pass; a RESET test fails without it.
 
 ## `Command` (§3.4, not in code)
 

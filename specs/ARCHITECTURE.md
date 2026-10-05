@@ -31,7 +31,8 @@ would keep the same bounds (`max_research_iterations`, validation before synthes
 
 ```
 parse_user_request ──ok──▶ start_research_pass ──▶ course_research ──▶ [interrupt] await_human_review ──▶ interpret_review_feedback
-        │                                                                                   │
+        │                          ▲                  │ stale result: back to start_research_pass
+        │                          └──────────────────┤ planning failure: discard_run
         └─error─▶ discard_run ─▶ drop_pending_courses ─▶ record_review_outcome ─▶ curate_user_memory ─▶ END
                                                                                             ├─ PUBLISH ─▶ send_approved_courses ─▶ promote_approved_courses ─▶ record_review_outcome ─▶ curate_user_memory ─▶ END
                                                                                             ├─ REWRITE ─▶ start_research_pass ─▶ course_research
@@ -46,9 +47,9 @@ without passing it.
 ## Research subgraph
 
 ```
-START ──(AUGMENT)───────────────────────────────────────────────────────▶ plan_gap_search
-  │
-  └─▶ load_user_profile ─▶ find_known_courses ─▶ plan_web_search
+START ─▶ begin_pass ──(AUGMENT)───────────────────────────────────────────▶ plan_gap_search
+             │
+             └─▶ load_user_profile ─▶ find_known_courses ─▶ plan_web_search
                                                       │
                  ┌──── no queries needed ─────────────┤
                  ▼                                    ├─ error ─▶ END
@@ -72,8 +73,8 @@ One responsibility each. "Rules" means deterministic code with no model call.
 | Node | Responsibility | Kind |
 |---|---|---|
 | `parse_user_request` | Redact PII from the query and parse it into `SearchFilters`; fill the stored budget and certificate defaults where the query is silent (reads the profile from the repository, not from state); on RESET, re-parse with the latest `feedback_history` entry and merge the new constraints into the old ones; on failure set `discard_reason`, which routes to `discard_run` | LLM, rule fallback |
-| `start_research_pass` | Does nothing; sits in front of `course_research` so that the stateful subgraph is never the first task of a resumed step, where it would ignore its new input (`article/notes/01`) | anchor |
-| `course_research` | Run the research subgraph; sees four input keys, returns `valid_courses`, `digest` and `metrics` | subgraph |
+| `start_research_pass` | Stamp `research_pass = len(feedback_history)`; the subgraph echoes it back, and a mismatch after `course_research` means the stateful subgraph ignored its input on a resumed tick, so the edge returns here (`article/notes/01`) | rules |
+| `course_research` | Run the research subgraph; sees five input keys, returns `valid_courses`, `digest`, `metrics`, `discard_reason` and the echoed `research_pass` | subgraph |
 | `await_human_review` | The pause point where the interrupt fires; does nothing itself | anchor |
 | `interpret_review_feedback` | Map reviewer feedback to one routing action, append the redacted feedback to `feedback_history` and clear the `manager_feedback` inbox; rounds already completed are `len(feedback_history)` | LLM, rule fallback |
 | `send_approved_courses` | Submit the publish effect through `EffectGateway` with a key derived from `run_id` | side effect |
@@ -87,6 +88,7 @@ One responsibility each. "Rules" means deterministic code with no model call.
 
 | Node | Responsibility | Kind |
 |---|---|---|
+| `begin_pass` | On a fresh pass (`routing_decision` empty: first run or RESET) clear the ledger, notes, accumulated search results and iteration counter; REWRITE and AUGMENT keep them | rules |
 | `load_user_profile` | Load preferences, completed and rejected courses | DB read |
 | `find_known_courses` | Fetch previously validated courses from the cache, ranked by topic similarity | DB read |
 | `plan_web_search` | Decide which queries are needed: none if the cache holds enough candidates | rules |
@@ -233,8 +235,8 @@ next run's profile, not the pass in progress.
 
 ### Top-level state and run configuration
 
-The outer graph owns thirteen channels. The research subgraph runs on `ResearchState` with
-`input_schema=ResearchInput` and `output_schema=ResearchOutput`, so its other fifteen channels
+The outer graph owns fourteen channels. The research subgraph runs on `ResearchState` with
+`input_schema=ResearchInput` and `output_schema=ResearchOutput`, so its other fourteen channels
 (plan, queries, candidate lists, validation results, notes, iteration, profile) are private and
 persist across passes only because it is compiled with `checkpointer=True`; they are checkpointed
 under the namespace `course_research` and are not in the outer state. A channel is only held at
@@ -293,14 +295,24 @@ design.
 
 ## Known gaps, research boundary
 
-- **A research failure is invisible to the outer graph.** `error` is not an output key (an output
-  key must be an outer channel), so a planning failure ends the subgraph without a digest and the
-  outer state shows only the empty result; the reason is in the subgraph's own state and the logs.
-- **Subgraph state is not reset between passes.** `research_iteration`, `completed_queries` and the
-  candidate lists persist across REWRITE, AUGMENT and RESET (as the flat channels did before), so a
-  RESET to a new topic starts with the old queries on the ledger (`BACKLOG.md`, Verify).
-- **Threads paused before this change do not resume.** The outer checkpoints lose fifteen
-  channels (`BACKLOG.md` S1 item 4).
+- **Subgraph storage is wider than its schema.** `input_schema` limits what the subgraph reads, not
+  what its checkpoint holds: the `__start__` channel keeps the full parent state it was started
+  with, and the `Send` payloads in `__pregel_tasks` carry the whole `ResearchState`, `user_memory`
+  included. Encryption covers both (`tests/test_nested_checkpoints_postgres.py`); the PII canary
+  skips these runtime channels.
+- **Candidate lists and plans carry across REWRITE and AUGMENT on purpose,** and are cleared by
+  `begin_pass` only on a first pass or RESET. `metrics` is not reset by `begin_pass`, but it is not a run total either: the validator recomputes `queries_run`, `tavily_calls` and the valid, rejected and uncertain counts from the current ledger and candidate lists, so they describe the digest under review and drop after a RESET. Found by `tests/test_e2e_review_loops_postgres.py`.
+- **Threads paused under an older state schema are refused, not migrated.** `run_threads` stamps
+  `schema_version` (`domain/contract.py:STATE_SCHEMA_VERSION`) when a thread is registered, and
+  `authorize_thread` raises `IncompatibleThreadError` on a mismatch, after the ownership check and
+  before any `update_state`. Without the guard the old thread does not publish: it re-runs the
+  whole research pass (searches, `pending_courses` staging, synthesis call) and parks at the gate
+  again (`notes/02`). Rows from before versioning have a NULL version and count as v1. Changes to
+  channels or nodes are caught by `tests/test_state_contract.py`; each version keeps a stored
+  checkpoint in `tests/fixtures/checkpoints/` marked `resumes` or `refused`
+  (`tests/test_checkpoint_compatibility.py`). Without `DATABASE_URL` there is no registry and no
+  guard, which is fine for the in-memory saver because its threads do not outlive the process.
+  Drain in-flight runs before a deploy that bumps the version.
 
 ## Known gaps, cache staging
 
@@ -315,10 +327,10 @@ Node names are span names, checkpoint interrupt targets and `flow_specs.py` keys
 they appear in traces and in stored checkpoints. Checkpoints written before the
 rename hold the old names, so a run paused at the old `review_gate` should be treated
 as unable to resume against the renamed graph. Not verified for that rename; finish or discard
-in-flight runs before deploying it. The top-level state pass removed six channels from stored
+in-flight runs before deploying it (`STATE_SCHEMA_VERSION` now enforces this at resume). The top-level state pass removed six channels from stored
 checkpoints and is verified to break resume: a run paused under the earlier graph, resumed
 under the new one after `update_state`, only re-yields `__interrupt__` and never publishes
-(memory saver, pickled round trip, found in review; the Postgres path was not run). Finish or
+(memory saver, pickled round trip, found in review; the research-boundary change breaks resume the same way on Postgres, see Known gaps, research boundary). Finish or
 discard in-flight runs before deploying it. Removing the three no-op anchors is different: a run
 paused at `await_human_review` under the earlier graph resumed and published under the
 current one (`notes/02`), because the paused node's name did not change.

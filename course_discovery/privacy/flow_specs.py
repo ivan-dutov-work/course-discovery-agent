@@ -14,7 +14,11 @@ OUTER: dict[str, NodeFlow] = {
         sinks=(LLM,),
         redacts={"user_query", "feedback_history"},
     ),
-    "start_research_pass": flow(),
+    "start_research_pass": flow(
+        reads={"feedback_history"},
+        writes={"research_pass"},
+        declassifies={"research_pass": "round counter"},
+    ),
     "course_research": flow(),
     "curate_user_memory": flow(),
     "await_human_review": flow(),
@@ -55,6 +59,16 @@ OUTER: dict[str, NodeFlow] = {
 }
 
 RESEARCH: dict[str, NodeFlow] = {
+    "begin_pass": flow(
+        reads={"routing_decision"},
+        writes={"tavily_results", "completed_queries", "research_notes", "research_iteration"},
+        declassifies={
+            "tavily_results": "reset",
+            "completed_queries": "reset",
+            "research_notes": "reset",
+            "research_iteration": "reset",
+        },
+    ),
     "load_user_profile": flow(reads={"user_id"}, writes={"user_memory"}),
     "find_known_courses": flow(
         reads={"search_filters", "user_memory", "metrics", "user_id"},
@@ -69,7 +83,7 @@ RESEARCH: dict[str, NodeFlow] = {
     ),
     "plan_web_search": flow(
         reads={"search_filters", "cache_candidates", "research_iteration", "completed_queries"},
-        writes={"research_plan", "error"},
+        writes={"research_plan", "discard_reason"},
     ),
     "search_web_for_courses": flow(
         reads={"active_search_query"},
@@ -110,7 +124,7 @@ RESEARCH: dict[str, NodeFlow] = {
             "research_iteration",
             "metrics",
         },
-        writes={"research_plan", "research_iteration", "metrics", "tavily_results", "extracted_candidates", "error"},
+        writes={"research_plan", "research_iteration", "metrics", "tavily_results", "extracted_candidates", "discard_reason"},
         declassifies={"metrics": "counters", "tavily_results": "reset", "extracted_candidates": "reset"},
     ),
     "save_verified_courses": flow(
@@ -129,7 +143,7 @@ RESEARCH: dict[str, NodeFlow] = {
             "user_memory",
             "search_filters",
         },
-        writes={"digest", "rewrite_instructions"},
+        writes={"digest"},
         sinks=(LLM,),
         redacts={"user_memory"},
     ),

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import operator
 import os
+import typing
 import unittest
 from unittest.mock import patch
 
 from course_discovery.app.cli import _initial_state
+from course_discovery.domain.models import RoutingAction
+from course_discovery.domain.state import AgentState, ResearchState
 from course_discovery.effects.factory import set_gateway
 from course_discovery.effects.gateway import InlineGateway
 from course_discovery.effects.memory_store import InMemoryOutboxStore
@@ -83,3 +87,81 @@ class ReducerEchoTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(ledger), len(self.searched))
             self.assertEqual(values["metrics"].tavily_calls, len(ledger))
             previous = list(ledger)
+
+    async def _visited(self, inputs, config) -> list[str]:
+        visited: list[str] = []
+        async for _, chunk in self.graph.astream(inputs, config, stream_mode="updates", subgraphs=True):
+            visited.extend(name for name in chunk if not name.startswith("__"))
+        return visited
+
+    async def test_reset_starts_the_subgraph_from_empty_private_state(self):
+        config, first = await self._first_pass("echo-reset")
+        self.assertTrue(first["tavily_results"])
+        self.searched.clear()
+
+        await self.graph.aupdate_state(
+            config,
+            {"routing_decision": RoutingAction.RESET, "feedback_history": ["reset: I want free Rust courses"]},
+            as_node="interpret_review_feedback",
+        )
+        await self._drain(None, config)
+        values = await research_values(self.graph, "echo-reset")
+
+        self.assertTrue(self.searched)
+        self.assertEqual(values["completed_queries"], self.searched)
+        self.assertEqual(len(values["tavily_results"]), len(self.searched) * 5)
+        self.assertEqual(values["research_iteration"], 0)
+
+    async def test_crash_after_the_pass_marker_still_runs_the_requested_round(self):
+        config, first = await self._first_pass("echo-stale-window")
+
+        await self.graph.aupdate_state(
+            config,
+            {
+                "routing_decision": RoutingAction.AUGMENT,
+                "feedback_history": ["augment: more courses"],
+                "research_pass": 1,
+            },
+            as_node="start_research_pass",
+        )
+        visited = await self._visited(None, config)
+
+        self.assertIn("plan_gap_search", visited)
+        self.assertEqual((await self.graph.aget_state(config)).values["research_pass"], 1)
+        self.assertEqual((await self.graph.aget_state(config)).next, ("await_human_review",))
+
+    async def test_planning_failure_reaches_the_outer_graph_and_discards(self):
+        with patch("course_discovery.workflows.outer_graph.gateway_node", lambda state: {"search_filters": None}):
+            graph = build_graph()
+        config = _config("echo-plan-error")
+
+        visited = []
+        async for _, chunk in graph.astream(_initial_state(QUERY), config, stream_mode="updates", subgraphs=True):
+            visited.extend(name for name in chunk if not name.startswith("__"))
+        state = await graph.aget_state(config)
+
+        self.assertIn("discard_run", visited)
+        self.assertNotIn("await_human_review", visited)
+        self.assertIn("search filters missing", state.values["discard_reason"])
+        self.assertEqual(state.next, ())
+
+
+def _reduced(schema) -> set[str]:
+    hints = typing.get_type_hints(schema, include_extras=True)
+    return {
+        name
+        for name, hint in hints.items()
+        if operator.add in getattr(hint, "__metadata__", ())
+    }
+
+
+class ReducerPlacementTests(unittest.TestCase):
+    def test_the_outer_state_reduces_only_the_review_history(self):
+        self.assertEqual(_reduced(AgentState), {"feedback_history"})
+
+    def test_every_channel_written_by_a_send_branch_has_a_reducer_on_the_subgraph(self):
+        from course_discovery.privacy.flow_specs import RESEARCH
+
+        fanned_out = RESEARCH["search_web_for_courses"].writes
+        self.assertEqual(fanned_out & set(ResearchState.__annotations__), fanned_out)
+        self.assertLessEqual(fanned_out, _reduced(ResearchState) | {"metrics"})
