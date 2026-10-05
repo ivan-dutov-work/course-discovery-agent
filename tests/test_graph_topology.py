@@ -19,6 +19,8 @@ OUTER_NODES = {
     "interpret_review_feedback",
     "send_approved_courses",
     "discard_run",
+    "promote_approved_courses",
+    "drop_pending_courses",
     "record_review_outcome",
     "curate_user_memory",
 }
@@ -63,8 +65,15 @@ class TopologyTests(unittest.TestCase):
 
     def test_discard_is_recorded_before_the_end(self):
         edges = _edges(build_graph())
-        self.assertIn(("discard_run", "record_review_outcome"), edges)
+        self.assertIn(("discard_run", "drop_pending_courses"), edges)
+        self.assertIn(("drop_pending_courses", "record_review_outcome"), edges)
         self.assertNotIn(("discard_run", "__end__"), edges)
+
+    def test_pending_courses_are_promoted_only_after_the_publish_path(self):
+        edges = _edges(build_graph())
+        self.assertIn(("send_approved_courses", "promote_approved_courses"), edges)
+        self.assertIn(("promote_approved_courses", "record_review_outcome"), edges)
+        self.assertNotIn(("discard_run", "promote_approved_courses"), edges)
 
     def test_curator_runs_after_the_outcome_is_recorded_and_before_the_end(self):
         edges = _edges(build_graph())
@@ -122,7 +131,7 @@ class TopologyRunTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             visited,
-            ["parse_user_request", "discard_run", "record_review_outcome", "load_context", "curate_user_memory"],
+            ["parse_user_request", "discard_run", "drop_pending_courses", "record_review_outcome", "load_context", "curate_user_memory"],
         )
         self.assertEqual((await graph.aget_state(config)).next, ())
 

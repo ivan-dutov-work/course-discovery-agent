@@ -140,6 +140,17 @@ leave it and append a new one that says which it replaces and what changed.
   for the gateway failure stays out (`STATUS.md`, "Not in the code"). In-flight runs must be finished
   or discarded before deploying it: a thread paused under the old channel set does not resume
   (`ARCHITECTURE.md`, "Naming"). (notes: 02-durability-replay-effects.md)
+- **The shared cache is written after approval, through a staging table, not a status column.**
+  `save_verified_courses` writes valid web-sourced courses to `pending_courses` keyed by run;
+  `promote_approved_courses` upserts the ones in the approved digest into `courses` and
+  `drop_pending_courses` deletes the staging on discard. A status column on `courses` would let a
+  re-seen, already-served row be overwritten in place before anyone approved the new text
+  (`upsert_courses` replaces title and description on conflict), and a second run could replace a
+  pending row another run's reviewer was about to approve. Keying staging by run keeps both
+  apart. Only valid courses are promoted; uncertain ones are no longer persisted (the lookup never
+  served them). Rows already in `courses` are left alone, not re-screened. This is the interim
+  human tier for backlog N1 and does not settle N2; N1's `promotion_status` column is replaced by
+  this table, so N1 item 1 is amended.
 - **The curator writes only fields a next-run consumer reads.** `career_goals`,
   `learning_style_notes` and `preferred_course_length` are refused by `propose_patch`; free-text
   preferences go into scoped notes, which the ranking prompt reads. Cases 5 and 6 of
@@ -181,17 +192,6 @@ leave it and append a new one that says which it replaces and what changed.
   (transport, 429, 5xx) propagates unwrapped so `RetryPolicy` fires; anything else becomes
   `EmbeddingError`. Vectors from different embedders are not comparable, so switching needs a
   backfill.
-
-## Compliance
-
-- **The privacy controls are justified by many users' stored data,** not by a single
-  reviewer's admin panel: per-user profiles, checkpoints and events are what erasure,
-  ownership checks and encryption protect. Do not argue them away by narrowing the product to
-  one manager.
-- **A boundary, not a feature.** LangGraph has no compliance tooling. The app owns the
-  user-to-thread index (`run_threads`); the model-provider boundary (ZDR, DPAs, region) is
-  invisible to the graph.
-- **Not built, on purpose:** per-user keys (crypto-shredding), reducer-based redaction,
 - **The injection screen is a port with JEV as one adapter, and it is not a chat model.**
   `typesafe/jev-1.13` is reached on OpenRouter's Decisions API (`/api/alpha/decisions`, `noul`
   question), a different endpoint from chat completions, so it lives in `guardrails/` beside the PII
@@ -213,6 +213,17 @@ leave it and append a new one that says which it replaces and what changed.
 - **The screen's flow is declared as its own step (`step:screen_course_text`).** The synthesizer
   reads channels that carry subject data, so a sink declared on the node is flagged; the screen
   receives catalog text only, and the check cannot see which read feeds which sink.
+
+## Compliance
+
+- **The privacy controls are justified by many users' stored data,** not by a single
+  reviewer's admin panel: per-user profiles, checkpoints and events are what erasure,
+  ownership checks and encryption protect. Do not argue them away by narrowing the product to
+  one manager.
+- **A boundary, not a feature.** LangGraph has no compliance tooling. The app owns the
+  user-to-thread index (`run_threads`); the model-provider boundary (ZDR, DPAs, region) is
+  invisible to the graph.
+- **Not built, on purpose:** per-user keys (crypto-shredding), reducer-based redaction,
   selective sealing (seal-everything fails closed), AST-derived reads and writes for the
   data-flow check, boundary-observed sinks.
 - **OpenRouter "PII filtering"** is not cited as a feature: it is unconfirmed and would be a

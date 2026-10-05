@@ -108,7 +108,7 @@ class PublishThroughPostgresOutboxTests(unittest.IsolatedAsyncioTestCase):
             conn.execute(MIGRATION.read_text())
             conn.execute("TRUNCATE outbox")
             conn.execute(
-                "TRUNCATE recommendation_events, course_evidence, courses, users CASCADE"
+                "TRUNCATE recommendation_events, course_evidence, courses, pending_courses, users CASCADE"
             )
             conn.execute("INSERT INTO users (id) VALUES ('cli-user')")
         env = patch.dict(os.environ, {"DATABASE_URL": TEST_DATABASE_URL})

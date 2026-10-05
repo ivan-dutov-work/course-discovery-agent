@@ -176,7 +176,7 @@ class PostgresCacheTopicTests(unittest.TestCase):
         self.addCleanup(set_embedder, None)
         self.conn = psycopg.connect(TEST_DATABASE_URL, autocommit=True)
         self.addCleanup(self.conn.close)
-        self.conn.execute("TRUNCATE recommendation_events, course_evidence, courses, users CASCADE")
+        self.conn.execute("TRUNCATE recommendation_events, course_evidence, courses, pending_courses, users CASCADE")
 
     def _store(self, keys, status="valid"):
         courses = [_candidate(k) for k in keys]

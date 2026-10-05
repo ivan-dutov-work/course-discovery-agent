@@ -10,6 +10,10 @@ from course_discovery.domain.state import AgentState
 from course_discovery.memory_curator import build_curator_graph
 from course_discovery.observability.logging import get_logger
 from course_discovery.persistence.checkpointer import memory_saver
+from course_discovery.research_agent.cache.nodes import (
+    drop_pending_courses_node,
+    promote_approved_courses_node,
+)
 from course_discovery.research_agent.memory.nodes import user_memory_update_node
 from course_discovery.review.nodes import review_gate_node
 from course_discovery.review.router import (
@@ -45,6 +49,8 @@ def build_graph(checkpointer=None, research_compile_kwargs=None):
     builder.add_node("interpret_review_feedback", router_node)
     builder.add_node("send_approved_courses", publish_node, retry_policy=retry)
     builder.add_node("discard_run", discard_node)
+    builder.add_node("promote_approved_courses", promote_approved_courses_node, retry_policy=retry)
+    builder.add_node("drop_pending_courses", drop_pending_courses_node, retry_policy=retry)
     builder.add_node("record_review_outcome", user_memory_update_node, retry_policy=retry)
     builder.add_node("curate_user_memory", build_curator_graph())
 
@@ -70,10 +76,12 @@ def build_graph(checkpointer=None, research_compile_kwargs=None):
             RoutingAction.DISCARD: "discard_run",
         },
     )
-    builder.add_edge("send_approved_courses", "record_review_outcome")
+    builder.add_edge("send_approved_courses", "promote_approved_courses")
+    builder.add_edge("promote_approved_courses", "record_review_outcome")
     builder.add_edge("record_review_outcome", "curate_user_memory")
     builder.add_edge("curate_user_memory", END)
-    builder.add_edge("discard_run", "record_review_outcome")
+    builder.add_edge("discard_run", "drop_pending_courses")
+    builder.add_edge("drop_pending_courses", "record_review_outcome")
 
     graph = builder.compile(
         checkpointer=checkpointer or memory_saver(),
@@ -84,7 +92,7 @@ def build_graph(checkpointer=None, research_compile_kwargs=None):
         "graph_compiled",
         extra={
             "event": "outer_graph.compiled",
-            "node_count": 8,
+            "node_count": 10,
             "duration_ms": int((time.perf_counter() - start_ts) * 1000),
             "interrupt_before": ["await_human_review"],
         },

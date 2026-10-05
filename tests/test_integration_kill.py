@@ -46,7 +46,7 @@ class ProcessKillTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(set_gateway, None)
         with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as conn:
             conn.execute(
-                "TRUNCATE recommendation_events, course_evidence, courses, users CASCADE"
+                "TRUNCATE recommendation_events, course_evidence, courses, pending_courses, users CASCADE"
             )
 
     def _count_validator_calls(self):

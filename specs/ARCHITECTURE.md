@@ -32,11 +32,12 @@ would keep the same bounds (`max_research_iterations`, validation before synthes
 ```
 parse_user_request ──ok──▶ course_research ──▶ [interrupt] await_human_review ──▶ interpret_review_feedback
         │                                                                                   │
-        └─error─▶ discard_run ─▶ record_review_outcome ─▶ curate_user_memory ─▶ END          ├─ PUBLISH ─▶ send_approved_courses ─▶ record_review_outcome ─▶ curate_user_memory ─▶ END
+        └─error─▶ discard_run ─▶ drop_pending_courses ─▶ record_review_outcome ─▶ curate_user_memory ─▶ END
+                                                                                            ├─ PUBLISH ─▶ send_approved_courses ─▶ promote_approved_courses ─▶ record_review_outcome ─▶ curate_user_memory ─▶ END
                                                                                             ├─ REWRITE ─▶ course_research
                                                                                             ├─ AUGMENT ─▶ course_research
                                                                                             ├─ RESET   ─▶ parse_user_request
-                                                                                            └─ DISCARD ─▶ discard_run ─▶ record_review_outcome ─▶ curate_user_memory ─▶ END
+                                                                                            └─ DISCARD ─▶ discard_run ─▶ drop_pending_courses ─▶ record_review_outcome ─▶ curate_user_memory ─▶ END
 ```
 
 `interrupt_before=["await_human_review"]` is always compiled in. Nothing publishes
@@ -75,6 +76,8 @@ One responsibility each. "Rules" means deterministic code with no model call.
 | `await_human_review` | The pause point where the interrupt fires; does nothing itself | anchor |
 | `interpret_review_feedback` | Map reviewer feedback to one routing action, append the redacted feedback to `feedback_history` and clear the `manager_feedback` inbox; rounds already completed are `len(feedback_history)` | LLM, rule fallback |
 | `send_approved_courses` | Submit the publish effect through `EffectGateway` with a key derived from `run_id` | side effect |
+| `promote_approved_courses` | Move this run's staged courses that appear in the approved `valid_courses` into the shared cache (embedding computed here), then clear the run's staging rows; idempotent | DB write |
+| `drop_pending_courses` | Delete this run's staged courses without promoting; runs on every discard path | DB write |
 | `record_review_outcome` | Record accept or reject events for the user, with the whole `feedback_history` as the text; runs after publish and after discard | DB write |
 | `curate_user_memory` | Turn the review feedback into a validated patch to the stored profile (subgraph, below); writes only the `memory_update` status channel | subgraph, LLM |
 | `discard_run` | End the run as discarded, with a reason | terminal |
@@ -92,8 +95,8 @@ One responsibility each. "Rules" means deterministic code with no model call.
 | `remove_duplicate_courses` | Drop duplicates by normalized URL, title+host fingerprint and fuzzy title | pure |
 | `verify_course_claims` | Mark each candidate valid, uncertain or rejected against the filters and the user profile | rules |
 | `plan_gap_search` | Build new queries from missing evidence and increment the iteration counter | rules |
-| `save_verified_courses` | Persist valid and uncertain courses to the cache with the run topic and an embedding | DB write |
-| `rank_and_summarize_courses` | Rank valid courses (preferred provider, level and language first) and write the digest, with the profile's durable and topic-matching notes in the prompt | LLM, template fallback |
+| `save_verified_courses` | Stage valid web-sourced courses in `pending_courses`, keyed by run; the shared cache is not touched until approval | DB write |
+| `rank_and_summarize_courses` | Rank valid courses (preferred provider, level and language first) and write the digest, with the profile's durable and topic-matching notes in the prompt; each course's web text is screened for injection first (below) | LLM, template fallback |
 
 Evidence rule: a missing piece of evidence yields `uncertain`, never `valid`.
 
@@ -130,9 +133,6 @@ parent and the shared reducer channel `feedback_history` is not echoed back and 
   fail the run; a database failure in `commit` raises, and `RetryPolicy` retries it safely
   because of the claim row.
 
-## Cache lookup
-
-`find_known_courses` embeds `filters.topic` and ranks cached courses by cosine similarity to
 ## Injection screen
 
 Course titles, descriptions and evidence quotes come from search snippets and cached rows, so they
@@ -152,6 +152,9 @@ The rules, not the model, own the decision. The screen is skipped without `OPENR
 It covers only this prompt: `parse_user_request` and the curator read no web text, and the
 tagger does not pass through it.
 
+## Cache lookup
+
+`find_known_courses` embeds `filters.topic` and ranks cached courses by cosine similarity to
 `courses.course_embedding`. The structural filters (price, certificate, level, language,
 completed, rejected, avoided provider) are unchanged.
 
@@ -180,11 +183,11 @@ completed, rejected, avoided provider) are unchanged.
 - Score: `0.7 * similarity + 0.2 * validation_confidence + 0.1 * min(use_count, 10) / 10`,
   descending, ties by `id`. The weights were checked, not fitted: ordering quality is flat across
   the range tried on both embedders, with 0.7 / 0.2 / 0.1 at or tied for the best (`DECISIONS.md`).
-- Write side: `upsert_courses` stores the embedding of title, description and the row's stored
+- Write side: `promote_staged_courses` calls `upsert_courses` after approval, which stores the embedding of title, description and the row's stored
   `topics` in the same transaction as the row. `topics` describes the course and is never
   derived from the user's query, so nothing writes it yet and it is left untouched on conflict.
-  An embedder error or a wrong dimension aborts the write; `save_verified_courses` keeps its
-  `RetryPolicy`.
+  An embedder error or a wrong dimension aborts the write; `promote_approved_courses` carries the
+  `RetryPolicy`. `save_verified_courses` only writes JSON into `pending_courses`.
 - Without `DATABASE_URL`, `seed_cache` ranks with the same embedder, floor and score.
 - The planner's threshold on cache hit count (`min_valid = 3`) now counts topical hits.
 - The HNSW index (`migrations/007`) exists for a later nearest-neighbour pre-filter; the
@@ -214,7 +217,10 @@ Three stores, three lifetimes.
   `ResearchState`, which omits it, because a reducer channel that a subgraph shares is added to
   a second time when the subgraph returns (`article/notes/02`).
 - **Course cache** (`courses`, `course_evidence`) is shared across users and holds
-  only validated courses.
+  only validated, human-approved courses. A run's candidates wait in `pending_courses`
+  (`run_id`, URL, candidate and validation JSON) until `promote_approved_courses`; a discard
+  deletes them. Uncertain courses are no longer persisted: nothing served them. Rows written
+  before migration 010 stay as they are.
 
 The cost of this split: the profile is read at the start of each research pass, and
 feedback is written only after publish, so feedback given during a run reaches the
@@ -276,6 +282,16 @@ design.
    `research_notes` (and `metrics.tavily_calls`, which is derived from `completed_queries`)
    are added to again each time `course_research` returns, so a REWRITE or
    AUGMENT round doubles them (measured 1, 2, 4; `article/notes/02`). Fix: backlog S1.
+7. **The injection screen is one layer, on one prompt.** JEV can be steered by text that argues
+   for its own classification, no deterministic rule or prompt fencing sits beside it, the
+   thresholds are unfitted, and the tagging step is not screened (`BACKLOG.md`).
+
+## Known gaps, cache staging
+
+- **Abandoned runs leave staging rows.** A run that is never resumed or discarded keeps its
+  `pending_courses` rows; nothing prunes them yet (`BACKLOG.md`).
+- **Approval is per digest.** The reviewer approves the digest, and every valid web-sourced
+  course in it is promoted; there is no per-course approval.
 
 ## Naming
 
@@ -308,7 +324,7 @@ current one (`notes/02`), because the paused node's name did not change.
 | `dedup` | `remove_duplicate_courses` |
 | `evidence_validator` | `verify_course_claims` |
 | `replanner` | `plan_gap_search` |
-| `course_cache_upsert` | `save_verified_courses` |
+| `course_cache_upsert` | `save_verified_courses` (stages; promotion is `promote_approved_courses`) |
 | `synthesizer` | `rank_and_summarize_courses` |
 | `research_done` | removed (edge to `END`) |
 | `review_gate` | `await_human_review` |

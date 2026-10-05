@@ -57,16 +57,16 @@ async def _subgraph_snapshot(graph, saver, thread_id: str, next_node: str):
     raise AssertionError(f"no subgraph checkpoint before {next_node}")
 
 
-class _UpsertCalls:
+class _StageCalls:
     def __init__(self):
         self.count = 0
-        real = cache_nodes.upsert_courses
+        real = cache_nodes.stage_courses
 
         def counting(*args, **kwargs):
             self.count += 1
             return real(*args, **kwargs)
 
-        self.patcher = patch.object(cache_nodes, "upsert_courses", counting)
+        self.patcher = patch.object(cache_nodes, "stage_courses", counting)
 
     def __enter__(self):
         self.patcher.start()
@@ -89,7 +89,7 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.conn = psycopg.connect(TEST_DATABASE_URL, autocommit=True)
         self.addCleanup(self.conn.close)
         self.conn.execute(
-            "TRUNCATE recommendation_events, course_evidence, courses, users CASCADE"
+            "TRUNCATE recommendation_events, course_evidence, courses, pending_courses, users CASCADE"
         )
         self.conn.execute("INSERT INTO users (id) VALUES (%s)", (USER_ID,))
 
@@ -109,10 +109,37 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(len(result["valid_courses"]), 0)
         self.assertGreater(_count(self.conn, "SELECT count(*) FROM courses"), 0)
         self.assertGreater(_count(self.conn, "SELECT count(*) FROM course_evidence"), 0)
+        self.assertEqual(_count(self.conn, "SELECT count(*) FROM pending_courses"), 0)
         self.assertEqual(
             _count(self.conn, "SELECT count(*) FROM recommendation_events"),
             len(result["valid_courses"]),
         )
+
+    async def test_courses_reach_the_cache_only_after_approval(self):
+        graph = build_graph()
+        config: RunnableConfig = {"configurable": {"thread_id": "run-pending"}}
+        await graph.ainvoke(_initial_state(QUERY), config)
+
+        self.assertGreater(_count(self.conn, "SELECT count(*) FROM pending_courses"), 0)
+        self.assertEqual(_count(self.conn, "SELECT count(*) FROM courses"), 0)
+
+        graph.update_state(config, {"manager_feedback": "approve"})
+        await graph.ainvoke(None, config)
+
+        self.assertGreater(_count(self.conn, "SELECT count(*) FROM courses"), 0)
+        self.assertEqual(_count(self.conn, "SELECT count(*) FROM pending_courses"), 0)
+
+    async def test_discard_leaves_the_cache_empty_and_clears_the_staging(self):
+        graph = build_graph()
+        config: RunnableConfig = {"configurable": {"thread_id": "run-discard-pending"}}
+        await graph.ainvoke(_initial_state(QUERY), config)
+        self.assertGreater(_count(self.conn, "SELECT count(*) FROM pending_courses"), 0)
+
+        graph.update_state(config, {"manager_feedback": "discard"})
+        await graph.ainvoke(None, config)
+
+        self.assertEqual(_count(self.conn, "SELECT count(*) FROM courses"), 0)
+        self.assertEqual(_count(self.conn, "SELECT count(*) FROM pending_courses"), 0)
 
     async def test_feedback_for_unknown_user_creates_user_and_records_events(self):
         self.conn.execute("TRUNCATE users CASCADE")
@@ -160,9 +187,7 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             _count(self.conn, "SELECT count(*) FROM recommendation_events"), events
         )
-        self.assertEqual(
-            _count(self.conn, "SELECT count(*) FROM course_evidence"), evidence
-        )
+        self.assertEqual(_count(self.conn, "SELECT count(*) FROM course_evidence"), evidence)
 
     async def test_replay_from_subgraph_checkpoint_reruns_only_that_node(self):
         saver = memory_saver()
@@ -170,17 +195,17 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
         config = _thread("run-sub")
         await graph.ainvoke(_initial_state(QUERY), config)
         before = _view(graph.get_state(config).values)
-        events_before = _count(self.conn, "SELECT count(*) FROM course_evidence")
+        staged_before = _count(self.conn, "SELECT count(*) FROM pending_courses")
 
         snapshot = await _subgraph_snapshot(graph, saver, "run-sub", "save_verified_courses")
-        with _UpsertCalls() as calls:
+        with _StageCalls() as calls:
             await graph.ainvoke(None, snapshot.config)
 
         self.assertEqual(calls.count, 1)
         self.assertEqual(graph.get_state(config).next, ("await_human_review",))
         self.assertEqual(_view(graph.get_state(config).values), before)
         self.assertEqual(
-            _count(self.conn, "SELECT count(*) FROM course_evidence"), events_before
+            _count(self.conn, "SELECT count(*) FROM pending_courses"), staged_before
         )
 
     async def test_durable_checkpointer_replay_from_fresh_graph_then_publish(self):
@@ -200,7 +225,7 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
         async with _durable_saver() as saver:
             second = build_graph(checkpointer=saver)
             snapshot = await _subgraph_snapshot(second, saver, thread_id, "save_verified_courses")
-            with _UpsertCalls() as calls:
+            with _StageCalls() as calls:
                 await second.ainvoke(None, snapshot.config)
 
             self.assertEqual(calls.count, 1)
@@ -234,20 +259,20 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
         config = _thread(thread_id)
         validator_calls = []
         real_validator = research_module.evidence_validator_node
-        real_upsert = cache_nodes.upsert_courses
+        real_stage = cache_nodes.stage_courses
         outage = {"active": True}
 
         def validator(state):
             validator_calls.append(1)
             return real_validator(state)
 
-        def upsert(*args, **kwargs):
+        def stage(*args, **kwargs):
             if outage["active"]:
                 raise ConnectionError("db unavailable")
-            return real_upsert(*args, **kwargs)
+            return real_stage(*args, **kwargs)
 
         with patch.object(research_module, "evidence_validator_node", validator), patch.object(
-            cache_nodes, "upsert_courses", upsert
+            cache_nodes, "stage_courses", stage
         ):
             async with _durable_saver() as saver:
                 await saver.setup()
@@ -275,18 +300,17 @@ class PostgresIntegrationTests(unittest.IsolatedAsyncioTestCase):
         paused = graph.get_state(config, subgraphs=True)
         self.assertEqual(paused.next, ("course_research",))
         self.assertEqual(paused.tasks[0].state.next, ("save_verified_courses",))
-        self.assertEqual(_count(self.conn, "SELECT count(*) FROM courses"), 0)
+        self.assertEqual(_count(self.conn, "SELECT count(*) FROM pending_courses"), 0)
 
         await graph.ainvoke(None, config)
         self.assertEqual(graph.get_state(config).next, ("await_human_review",))
-        self.assertGreater(_count(self.conn, "SELECT count(*) FROM courses"), 0)
-        evidence = _count(self.conn, "SELECT count(*) FROM course_evidence")
+        self.assertGreater(_count(self.conn, "SELECT count(*) FROM pending_courses"), 0)
+        self.assertEqual(_count(self.conn, "SELECT count(*) FROM courses"), 0)
+        staged = _count(self.conn, "SELECT count(*) FROM pending_courses")
 
         snapshot = await _subgraph_snapshot(graph, saver, "run-mid", "save_verified_courses")
         await graph.ainvoke(None, snapshot.config)
-        self.assertEqual(
-            _count(self.conn, "SELECT count(*) FROM course_evidence"), evidence
-        )
+        self.assertEqual(_count(self.conn, "SELECT count(*) FROM pending_courses"), staged)
 
 
 if __name__ == "__main__":

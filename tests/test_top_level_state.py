@@ -109,6 +109,7 @@ class TopLevelStateTests(unittest.IsolatedAsyncioTestCase):
                 "await_human_review",
                 "interpret_review_feedback",
                 "send_approved_courses",
+                "promote_approved_courses",
                 "record_review_outcome",
                 "curate_user_memory",
             ],
@@ -204,6 +205,7 @@ class TopLevelStateTests(unittest.IsolatedAsyncioTestCase):
                 "await_human_review",
                 "interpret_review_feedback",
                 "discard_run",
+                "drop_pending_courses",
                 "record_review_outcome",
                 "curate_user_memory",
             ],
@@ -223,7 +225,7 @@ class TopLevelStateTests(unittest.IsolatedAsyncioTestCase):
         final = await self._values(config)
 
         self.assertEqual(
-            visited, ["parse_user_request", "discard_run", "record_review_outcome", "curate_user_memory"]
+            visited, ["parse_user_request", "discard_run", "drop_pending_courses", "record_review_outcome", "curate_user_memory"]
         )
         self.assertIn("Gateway failed (KeyError)", final["discard_reason"])
         self.assertIsNone(final["routing_decision"])
@@ -271,6 +273,7 @@ class TopLevelStateTests(unittest.IsolatedAsyncioTestCase):
                 "interpret_review_feedback",
                 "parse_user_request",
                 "discard_run",
+                "drop_pending_courses",
                 "record_review_outcome",
                 "curate_user_memory",
             ],

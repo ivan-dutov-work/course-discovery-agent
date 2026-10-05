@@ -36,6 +36,11 @@ OUTER: dict[str, NodeFlow] = {
         declassifies={"publish_status": "delivery state only"},
     ),
     "discard_run": flow(reads={"discard_reason"}),
+    "promote_approved_courses": flow(
+        reads={"valid_courses"},
+        sinks=(store("courses", frozenset()), store("course_evidence", frozenset()), EMBED),
+    ),
+    "drop_pending_courses": flow(),
     "record_review_outcome": flow(
         reads={
             "user_id",
@@ -108,8 +113,8 @@ RESEARCH: dict[str, NodeFlow] = {
         declassifies={"metrics": "counters", "tavily_results": "reset", "extracted_candidates": "reset"},
     ),
     "save_verified_courses": flow(
-        reads={"valid_courses", "uncertain_courses", "validation_results"},
-        sinks=(store("courses", frozenset()), store("course_evidence", frozenset()), EMBED),
+        reads={"valid_courses", "validation_results"},
+        sinks=(store("pending_courses", frozenset()),),
     ),
     "rank_and_summarize_courses": flow(
         reads={
@@ -128,12 +133,12 @@ RESEARCH: dict[str, NodeFlow] = {
         redacts={"user_memory"},
     ),
     "edge:dispatch_search_queries": flow(reads={"research_plan"}, writes={"active_search_query"}),
+    "step:screen_course_text": flow(reads={"valid_courses"}, sinks=(INJECTION_SCREEN,)),
 }
 
 CURATOR: dict[str, NodeFlow] = {
     "load_context": flow(
         reads={"user_id", "feedback_history"},
-    "step:screen_course_text": flow(reads={"valid_courses"}, sinks=(INJECTION_SCREEN,)),
         writes={"memory_update"},
         redacts={"feedback_history"},
         declassifies={"memory_update": "status string only"},

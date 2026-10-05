@@ -65,8 +65,9 @@ Closes the state-size item under Optional and gives the article's §2.3 (`input_
 Decision and rationale are in `DECISIONS.md` ("Shared-cache promotion is a cascade"). Build as a
 separate graph off the request path (gap 4), triggered through the outbox.
 
-1. `promotion_status` column: `pending | promoted | rejected | needs_human`; the request-path
-   lookup reads `promoted` only; `upsert_courses` writes `pending`.
+1. Staging exists as `pending_courses` (per run; `DECISIONS.md`), promoted by `promote_approved_courses`
+   after the human gate. The cascade replaces that gate with tiers; add `rejected | needs_human`
+   states to the staging rows then, and a TTL prune for runs that are never resolved.
 2. `TypedVerifier` port (label, probability, confidence) with a stub and a JEV adapter; treat
    JEV vendor claims as unverified until measured.
 3. LLM reviewer node (structured verdict plus written critique) for items below threshold.
