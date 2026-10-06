@@ -149,3 +149,33 @@ whose keywords contain `python`), not tuned to the result. 13 topics, 15 courses
   a fixed-vector embedder on both the seed and the Postgres path. Checked live on the seed cache:
   `free certificate beginners cooking` and `cooking` return nothing, and `Find free Python
   certificate beginners` returns the two Python courses.
+
+## One `Send` over a batch versus one run per unit (measured 2026-10-06, langgraph 1.1.2)
+
+`scripts/send_vs_runs.py`, `uv run python -m scripts.send_vs_runs`. This is a stub workload: each
+unit returns 400 characters of seeded text, nothing calls a model, and `MemorySaver` stands in for
+Postgres. Sizes count serialized channel values and task writes only (the checkpoint envelope has
+version strings of varying length). One unit raises once; in the one-`Send` graph the failing unit
+waits until every other unit has finished, so the run is repeatable. Three runs printed identical
+tables.
+
+| N | mode | largest checkpoint (bytes) | total bytes | checkpoints | siblings re-run |
+|---|---|---|---|---|---|
+| 10 | one `Send` | 4084 | 9016 | 4 | 0 |
+| 10 | N runs | 417 | 8654 | 30 | 0 |
+| 100 | one `Send` | 43958 | 88950 | 4 | 0 |
+| 100 | N runs | 417 | 86234 | 300 | 0 |
+| 1000 | one `Send` | 445890 | 899462 | 4 | 0 |
+| 1000 | N runs | 419 | 868498 | 3000 | 0 |
+
+- The measured difference is the size of the thread's checkpoint: with one `Send` it grows with N
+  (445 KB at N=1000, and every later step rewrites it), with N runs it stays at one unit's state
+  while the row count grows with N. Total bytes are about the same.
+- Siblings that finished before the failure did not re-run on resume with `durability="sync"`: their
+  writes were stored as pending writes. The argument that one failure re-runs the batch does not
+  hold in that case, and the article should not make it.
+- Not in the committed table: while developing the script, with a failing unit that raised at once,
+  siblings re-ran in some runs (0 to 2 of 9 at N=10, different on each run) and LangGraph printed
+  `RuntimeError: cannot schedule new futures after shutdown` from its write callback. That is
+  timing-dependent and was not isolated. With `durability="exit"` and N=1000 the re-run count also
+  varied between runs (0 and 123), so that mode is left out of the table.

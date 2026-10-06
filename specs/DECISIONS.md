@@ -124,7 +124,8 @@ leave it and append a new one that says which it replaces and what changed.
 - **`courses.topics` is a property of the course, never of the query.** The run's topic is
   user-derived text; storing it in the shared cache reaches a table erasure cannot cover (the
   flow-rule check flags it) and lets loosely matched courses pollute later lookups. Topics come
-  from the course's own content, by a tagging step that is not built. (notes: 05-scale-and-scope.md)
+  from the course's own content, by a tagging job (`jobs/`, keyword tagger; a model tagger is not
+  built). (notes: 05-scale-and-scope.md)
 - **Do not restructure `AgentState` wholesale** (superseded for the research subgraph by the entries below; applies to the rest). It was wide (34 channels, 28 after the top-level pass below) but the width is mostly
   the article's subject: per-stage candidate lists are checkpoint history, and reducers and `Pii`
   markers are per channel, so nesting channels hides both from `flow_specs.py`. Fix the real
@@ -353,7 +354,8 @@ leave it and append a new one that says which it replaces and what changed.
   pass. Ruled out: cancelling the active run on a newer message (searches already paid for are
   wasted) and rejecting the message. Course tagging is one run per course, keyed on URL and
   content hash; the digest is one run per user and period. Batch-wide `Send` over all units is
-  the demonstrated wrong shape, not the design (backlog W6). Built for chat as a lease row per
+  the demonstrated wrong shape, not the design (`scripts/send_vs_runs.py`, `notes/05`; the
+  measured difference is checkpoint size per thread, not sibling re-runs). Built for chat as a lease row per
   user (`chat_user_leases`), not an advisory lock: a lease expires, so a killed worker's user is
   picked up again, and the worker renews it while a run is in progress. A batch is frozen at claim
   (`chat_inbox.batch_id`), so a message that arrives mid-run waits for the next batch and a
@@ -364,6 +366,17 @@ leave it and append a new one that says which it replaces and what changed.
   chat id is not the key of any other table. Ruled out: sending replies from the worker (the
   graph's effects already carry a stable key) and deduping on message text.
 
+- **Tagging is one run per course, keyed on URL and content.** `courses.content_hash` is a stored
+  generated column (`md5` of title, a newline and description; `sha256` is not immutable in a
+  generated expression), so the scheduler selects in SQL and the hash cannot drift from the text.
+  The effect key is `tag:{url_hash}:{content_hash}`: the same text submits once, new text is a new
+  key. The run checks the hash again before writing and writes with `WHERE content_hash = ...`, so
+  an effect queued for old text changes nothing. A course whose text the injection screen does not
+  pass is never sent to the tagger; it is marked `withheld` with its hash so the scheduler does not
+  pick it again until the text changes. Courses that already have topics and were never tagged are
+  left alone. The outbox lease makes delivery at-least-once, so a worker killed mid-run costs at
+  most the runs in flight. Ruled out: one `Send` over all courses (`notes/05`) and a
+  `sha256` hash computed in Python (two sources of truth for what changed).
 ## Compliance
 
 - **The privacy controls are justified by many users' stored data,** not by a single

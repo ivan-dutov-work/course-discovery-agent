@@ -130,37 +130,23 @@ Verify end to end:
   `evals.calibrate_judge`) prints TPR and TNR for both classes with the item counts per split, and
   fails if a test-split id appears in the tuning inputs.
 
-### W6. `wt/batch-jobs`: tagging and digest jobs, one run per unit
+### W6. `wt/batch-jobs`: digest job, one run per user and period
 
-Branch from `main`. Owns a new `course_discovery/jobs/` package and tests. The tagging node itself
-is the existing "Course topic tagging" item under Code; this item is the job around it and can use a
-stub tagger until that lands. The digest job depends on W5's per-user lock, so build tagging first.
+The tagging job is built (`STATUS.md`). What is left is the digest job in `course_discovery/jobs/`,
+after W8 merges, because it needs W5's per-user lease and the chat outbound effect.
 
 Ask first: does the digest job search the web or serve from the cache only?
 
-1. Tagging job: the unit is one course. A scheduler picks courses with no topics or a changed content
-   hash and submits one effect per course with key `tag:{url_hash}:{content_hash}`; a worker runs one
-   graph run per effect. Text goes through `screen_untrusted` before the model.
-2. Digest job: the unit is one user and one period, key `digest:{user_id}:{period}`; delivered through
-   the chat outbound effect; never runs beside an active chat run for the same user.
-3. A script that shows why a single run using `Send` over the whole batch is the wrong shape: the
-   same stub workload as one `Send` over N units and as N runs, for several N, measuring checkpoint
-   size and how many siblings re-run after one injected failure. Evidence goes in `notes/05`
-   (`DECISIONS.md` rule: say it is a stub workload).
+1. Digest job: the unit is one user and one period, key `digest:{user_id}:{period}`; delivered through
+   the chat outbound effect; never runs beside an active chat run for the same user (take the same
+   `chat_user_leases` row).
 
 Verify end to end:
-- 200 synthetic courses, scheduler started twice concurrently: exactly 200 tagger calls and 200
-  runs. SIGKILL the worker midway and restart: every course ends tagged and the total call count is
-  at most 200 plus the runs in flight at the kill. Drop the content hash from the key: the
-  "changed text" case fails.
-- Change one course's text and rerun: exactly one new tagger call.
-- A course whose description contains a sample from `tests/injection_samples.py`: the tagger stub
-  never receives that text.
 - Fifty users, digest job run twice for one period: one digest per user. A user with an active chat
   run is skipped or waits, and a concurrency assertion shows no overlap.
-- The comparison script runs with a fixed seed and prints a table; running it twice gives the same
-  numbers.
-- Draft follow-up: §3.2 and §5.5 gain the per-unit versus batch `Send` comparison.
+- Draft follow-up: §3.2 and §5.5 gain the per-unit versus batch `Send` comparison from
+  `scripts/send_vs_runs.py` (numbers in `notes/05`; the sibling re-run claim did not hold when the
+  siblings finish before the failure, so say what was measured).
 
 ### W7. `wt/article`: article changes from the grilling
 
@@ -265,7 +251,9 @@ Batch notes:
   `PERSON`. Either changes the redaction decision in `DECISIONS.md` ("instructor names are redacted as a
   known trade-off"), so decide it first. When fixed, drop `history` from the four cases in
   `tests/memory_cases.py`.
-- **Course topic tagging.** Fill `courses.topics` from the course's own title, description and
+- **Course topic tagging, model tagger.** The job, the content-hash key, the injection screen and a
+  keyword tagger are built (`course_discovery/jobs/`). Left: an LLM tagger behind `TopicTagger`
+  (module data is not stored, so `tag_course` does not fit as is). Fill `courses.topics` from the course's own title, description and
   evidence, never from the user's query (`DECISIONS.md`). Probably a fifth LLM node through
   `build_llm()` with a rule fallback (keyword extraction), run before `save_verified_courses`.
   The input is untrusted search text, so route it through `screen_untrusted` (see the injection
