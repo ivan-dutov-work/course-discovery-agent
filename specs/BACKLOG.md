@@ -130,40 +130,6 @@ Verify end to end:
   `evals.calibrate_judge`) prints TPR and TNR for both classes with the item counts per split, and
   fails if a test-split id appears in the tuning inputs.
 
-### W5. `wt/chat-surface`: Telegram in and out, one active run per user
-
-Branch from `main` after W4 merges (batch 2). Owns a new `course_discovery/chat/` package, a
-migration, and `privacy/sources.py` entries. Develops against a fake transport and does not need W3
-to merge first; W3 and W5 are joined in W8.
-
-1. `ChatTransport` port (receive an update, send a message) with an in-memory fake and a Telegram
-   Bot API adapter. First check the Bot API documentation on webhook retries and `update_id`, and
-   record what it says, with the date, in `notes/02`. Do not build dedupe on an assumption.
-2. Inbound dedupe: a `chat_updates` table keyed on `update_id`, insert `ON CONFLICT DO NOTHING`.
-   The same transaction enqueues the message, so a crash cannot lose it or double it.
-3. Per-user serial inbox with merge: a worker claims every pending message for one user under a
-   per-user lock (advisory lock or a unique active-run row in `run_threads`), merges them into one
-   request and runs once. Different users run in parallel.
-4. Identity: map a Telegram chat id to `user_id`; store only redacted text; add every new table to the
-   erasure sources.
-
-Verify end to end:
-- Fake Bot API server (a local HTTP process, not an in-process mock) posts the same update five
-  times, concurrently: one inbox row, one run.
-- Three messages for one user within a second while a run is active: after it finishes, one merged
-  run happens, not three. Two workers racing for one user: the test asserts at most one active run
-  at any instant. Remove the lock: the race test fails.
-- SIGKILL a worker mid-run: after the lease expires the message is processed once and no reply is
-  sent twice (keyed by `update_id`).
-- Canary: a message with an email address and a unique token; neither appears in any table
-  (`chat_updates`, inbox, `run_threads`, checkpoints) after the run.
-- `python -m course_discovery.privacy erase --user-id X --execute` removes the user's chat mapping and
-  inbox rows and exits 0; `tests/test_erasure.py` passes.
-- `scripts/chat_smoke.py` (new): fake Telegram, webhook, queue, graph on the in-memory catalogue,
-  reply captured; exits non-zero on any failure.
-- Draft follow-up: a design-only paragraph in §6 and §13 on keys from `update_id`, labelled "not
-  built" until this is merged.
-
 ### W6. `wt/batch-jobs`: tagging and digest jobs, one run per unit
 
 Branch from `main`. Owns a new `course_discovery/jobs/` package and tests. The tagging node itself

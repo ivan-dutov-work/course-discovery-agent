@@ -353,7 +353,16 @@ leave it and append a new one that says which it replaces and what changed.
   pass. Ruled out: cancelling the active run on a newer message (searches already paid for are
   wasted) and rejecting the message. Course tagging is one run per course, keyed on URL and
   content hash; the digest is one run per user and period. Batch-wide `Send` over all units is
-  the demonstrated wrong shape, not the design (backlog W5, W6).
+  the demonstrated wrong shape, not the design (backlog W6). Built for chat as a lease row per
+  user (`chat_user_leases`), not an advisory lock: a lease expires, so a killed worker's user is
+  picked up again, and the worker renews it while a run is in progress. A batch is frozen at claim
+  (`chat_inbox.batch_id`), so a message that arrives mid-run waits for the next batch and a
+  reclaimed batch keeps its id and thread. After three failed attempts the batch is closed and
+  the person gets a fixed notice. Inbound dedupe is `chat_updates.update_id` as a primary key,
+  because Telegram retries a webhook until it sees a 2xx and documents `update_id` for ignoring
+  repeats (`notes/02`). The Telegram user is a generated `tg-` id mapped from the chat id, so the
+  chat id is not the key of any other table. Ruled out: sending replies from the worker (the
+  graph's effects already carry a stable key) and deduping on message text.
 
 ## Compliance
 
