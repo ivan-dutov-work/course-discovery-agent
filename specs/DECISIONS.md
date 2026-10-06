@@ -169,7 +169,8 @@ leave it and append a new one that says which it replaces and what changed.
   markers and `flow_specs.py` anchor on it. Budgets are not persisted by LangGraph, so a caller
   that resumes with a different config changes them (measured in `tests/test_top_level_state.py`);
   accepted because the CLI is the only caller and always passes the defaults. `Command(goto=...)`
-  for the gateway failure stays out (`STATUS.md`, "Not in the code"). In-flight runs must be finished
+  for the gateway failure stays out (`STATUS.md`, "Not in the code"); the replan decision is the one
+  `Command` in the graph (entry below). In-flight runs must be finished
   or discarded before deploying it: a thread paused under the old channel set does not resume
   (`ARCHITECTURE.md`, "Naming"). (notes: 02-durability-replay-effects.md)
 - **The shared cache is written after approval, through a staging table, not a status column.**
@@ -269,6 +270,15 @@ leave it and append a new one that says which it replaces and what changed.
   Raising, not discarding, because a stale echo after a spent resume flag means the guard's
   assumption about LangGraph no longer holds, and that should stop the run visibly.
   (notes: 02-durability-replay-effects.md)
+
+- **The replan decision is a `Command` returned by the validator, and the gateway failure is not.**
+  `verify_course_claims` writes the verdicts and picks the next node in one return, so the update
+  and the route cannot disagree. `enough_valid` stays a pure function of state and is called on the
+  merged update, which keeps the eval rows and the unit tests that exercise the rule. The gateway
+  failure stays on `discard_reason` because the failing node sits in the outer graph and the
+  route reads a channel that the subgraph's output schema already exports. The return annotation
+  `Command[Literal[...]]` is what draws the two edges; without it the graph shows none.
+  (notes: 01-state-and-control-flow.md)
 
 - **Evals are layered, and cases start as labelled seeds.** Six levels (contract, deterministic
   component, model-node component, subgraph, graph scenarios, reliability), each owning one

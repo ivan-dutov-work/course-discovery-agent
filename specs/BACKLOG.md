@@ -67,10 +67,6 @@ Until that is decided, `CLAUDE.md`'s "Never auto-publish" stands and nothing her
   re-embed with `python -m course_discovery.research_agent.embeddings backfill` (extend it to
   `--all`), rerun `scripts/calibrate_topic_floor.py` and refit the floor. Expected gain on the
   mock catalog: recall 0.75 to 0.81 on the hashing embedder.
-- **`Command` in the replan node (§3.4).** `verify_course_claims` returns
-  `Command(update=..., goto="plan_gap_search" | "save_verified_courses")` in place of its
-  conditional edge. Leave the gateway failure on `discard_reason` (`DECISIONS.md`). Update
-  `test_graph_topology.py`, `ARCHITECTURE.md` and `STATUS.md` ("Not in the code"), then draft §3.4.
 - **Injection screen follow-ups.** The JEV screen on the synthesis prompt is built (`STATUS.md`).
   Left:
   1. A deterministic layer beside it (control-pattern stripping, fencing the untrusted text as data
@@ -89,7 +85,6 @@ Placeholders marked `[NOT DRAFTED]` in `specs/article/DRAFT.md`:
 
 - §0 TL;DR, §1 Agents vs. workflows, §2.1 state as the single channel, §3.1 conditional
   edges, §13 What's next, and the demo appendix.
-- §3.4 `Command` waits for the replan-node item under Code.
 - §13, prose only, no code: the many-user reframing (self-serve runs, human review at
   shared-cache promotion, N1) and implicit feedback (weighted counters with decay, an embedding
   moving average, batched LLM personas; collaborative filtering only at a scale this domain

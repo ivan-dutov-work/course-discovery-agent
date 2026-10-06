@@ -96,11 +96,18 @@ langgraph 1.1.2, memory saver and Postgres. `build_research_graph` compiles with
 - **Output keys must be parent channels.** A planning failure therefore leaves through `discard_reason`, which the outer graph already routes on (`tests/test_state_hygiene.py`).
 - **`Overwrite` clears an `operator.add` channel** (langgraph 1.1.2): `begin_pass` returns `Overwrite([])` for the ledger, notes and results on a fresh pass; a RESET test fails without it.
 
-## `Command` (§3.4, not in code)
+## `Command` (§3.4)
 
-- Routing today lives on conditional edges (`_dispatch_search_queries`). A `Command(update=...,
-  goto=[Send(...)])` return would fold the routing into the node. Not implemented; label the
-  section doc-only or add a small honest use.
+- `verify_course_claims` returns `Command(update=..., goto=...)` (langgraph 1.1.2). The graph
+  drops its conditional edge; the compiled graph still has both `verify_course_claims` edges,
+  because the return annotation `Command[Literal["save_verified_courses", "plan_gap_search"]]`
+  declares them (`tests/test_graph_topology.py`). Without the annotation LangGraph cannot see the
+  destinations, so the graph drawing and the edge test would lose them; routing itself still works.
+- Fan-out stays on `_dispatch_search_queries`: it needs the plan the planner has already written,
+  and a conditional edge reads it after the update commits.
+- Verified with a two-node graph on langgraph 1.1.2: without the annotation the routing runs but
+  the drawn graph has an edge to `__end__` and none to the target. Not tested: a kill and resume
+  while the `Command` node is the pending task inside the `course_research` subgraph.
 
 ## Removing a field from a checkpointed model
 

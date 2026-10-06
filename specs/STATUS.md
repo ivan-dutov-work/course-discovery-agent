@@ -20,6 +20,7 @@ Integration tests need `docker compose up -d` and
 - Multi-round review loop against Postgres, local only (skips without `TEST_DATABASE_URL`): augment, rewrite, reset, approve with a fresh saver and graph per segment, encryption on, registry guard on; plus the discard and wrong-owner and wrong-version paths: `tests/test_e2e_review_loops_postgres.py` (§2.3, §4).
 - Router classification failure writes the exception type into `discard_reason`, not its text: `review/router.py`, `tests/test_user_profile.py`. `langgraph` is pinned to the tested `>=1.1.2,<1.2`.
 - Plan-driven `Send` fan-out: `workflows/research_graph.py` (§3.2).
+- `verify_course_claims` returns `Command(update=..., goto="plan_gap_search" | "save_verified_courses")` in place of a conditional edge; `enough_valid` stays the pure decision: `research_agent/validation/nodes.py`, `tests/test_research_nodes.py`, `tests/test_graph_topology.py` (§3.4).
 - Only `await_human_review` remains as a no-op anchor; the research entry is a conditional
   entry point: `workflows/`, `tests/test_graph_topology.py` (§3.1, §4.1).
 - Research graph mounted as a subgraph of the outer graph (§3.3).
@@ -100,7 +101,7 @@ Integration tests need `docker compose up -d` and
 ## Not in the code
 
 Each of these is covered in the article as prose only, and the reason is in `DECISIONS.md`:
-`CachePolicy`, node-level `timeout=`, `Command` routing,
+`CachePolicy`, node-level `timeout=`, `Command` for the gateway failure,
 dynamic `interrupt()`, `durability=` set explicitly, circuit
 breaker, cross-worker coordination.
 - E1 milestone 3, partly: `evals/labels/judge_notes.yaml` (32 generated outputs awaiting the owner's labels), `python -m evals.calibrate_judge` (TPR and TNR per criterion, failure positive), and the first live memory run. Three harness bugs in `tests/test_memory_e2e_live.py` fixed; 7 of 12 cases fail live at one trial, 5 from provider names redacted as `<PERSON>`. Judge numbers are against generator labels, not yet the owner's; L1b live for router and synthesizer not built: `evals/calibrate_judge.py`, `evals/labels/`, `notes/04`.

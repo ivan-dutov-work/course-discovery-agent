@@ -91,9 +91,17 @@ class ResearchNodeTests(unittest.TestCase):
             confidence=0.5,
         )
         state = _state(deduplicated_courses=[candidate])
-        update = evidence_validator_node(state)
+        update = evidence_validator_node(state).update
         self.assertEqual(len(update["uncertain_courses"]), 1)
         self.assertEqual(update["validation_results"][0].missing_evidence, ["certificate"])
+
+    def test_validator_command_goes_to_replan_without_valid_courses(self) -> None:
+        state = _state(deduplicated_courses=[])
+        state.update(research_planner_node(state))
+        self.assertEqual(evidence_validator_node(state).goto, "plan_gap_search")
+        exhausted = _state(deduplicated_courses=[], research_iteration=2)
+        exhausted.update(research_planner_node(exhausted))
+        self.assertEqual(evidence_validator_node(exhausted).goto, "save_verified_courses")
 
     def test_enough_valid_routes_to_replan_until_budget_exhausted(self) -> None:
         state = _state(valid_courses=[])

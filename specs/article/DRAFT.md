@@ -159,7 +159,26 @@ What the boundary costs is in §5.5.
 
 ### 3.4 `Command` for update-and-route
 
-[NOT DRAFTED] — see outline §3.4.
+Some nodes both change state and decide where execution goes next. The usual wiring splits
+the two: the node returns an update, and a conditional edge reads the committed state to pick the
+successor. That works until the decision depends on what the node just computed, at which point the
+edge re-derives it from state and the two can drift apart. `Command` puts both in one return value:
+
+```python
+update = {"valid_courses": valid, "metrics": metrics}
+return Command(update=update, goto=enough_valid({**state, **update}))
+```
+
+The router is still an ordinary function, so the rule stays unit-testable on its own; only the
+call site moves into the node. One detail is easy to miss: the graph learns the possible
+destinations from the return annotation (`Command[Literal["save_verified_courses",
+"plan_gap_search"]]`), not from the value. Leave it off and routing still works, but the compiled
+graph shows no edge out of the node, so drawings and topology tests quietly lose it.
+
+Worth being precise about what this does not replace. A fan-out that needs a plan written earlier
+in the same step is still cleaner on a conditional edge, because the edge reads state after the
+update commits. And a `Command` makes the node responsible for every successor it can name: adding
+a route means editing the node, where a conditional edge keeps the topology in the graph builder.
 
 ---
 

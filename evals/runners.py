@@ -68,7 +68,7 @@ def _state(case: Case, **extra: Any) -> dict:
 
 def _run_validator(case: Case) -> dict:
     candidate = _candidate(case.input.get("candidate", {}))
-    update = evidence_validator_node(_state(case, deduplicated_courses=[candidate]))
+    update = evidence_validator_node(_state(case, deduplicated_courses=[candidate])).update
     verdict = update["validation_results"][0]
     return {
         "status": verdict.status,

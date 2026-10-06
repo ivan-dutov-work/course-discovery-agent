@@ -27,7 +27,6 @@ from course_discovery.resilience import transient_retry
 from course_discovery.research_agent.synthesis.nodes import synthesizer_node
 from course_discovery.research_agent.validation.nodes import (
     aggregate_node,
-    enough_valid,
     evidence_validator_node,
 )
 
@@ -113,14 +112,6 @@ def build_research_graph(**compile_kwargs):
     builder.add_edge("extract_courses_from_results", "merge_known_and_found_courses")
     builder.add_edge("merge_known_and_found_courses", "remove_duplicate_courses")
     builder.add_edge("remove_duplicate_courses", "verify_course_claims")
-    builder.add_conditional_edges(
-        "verify_course_claims",
-        enough_valid,
-        {
-            "save_verified_courses": "save_verified_courses",
-            "plan_gap_search": "plan_gap_search",
-        },
-    )
     builder.add_conditional_edges(
         "plan_gap_search",
         _dispatch_search_queries,
