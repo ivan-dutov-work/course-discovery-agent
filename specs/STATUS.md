@@ -20,7 +20,7 @@ Integration tests need `docker compose up -d` and
 - Multi-round review loop against Postgres, local only (skips without `TEST_DATABASE_URL`): augment, rewrite, reset, approve with a fresh saver and graph per segment, encryption on, registry guard on; plus the discard and wrong-owner and wrong-version paths: `tests/test_e2e_review_loops_postgres.py` (§2.3, §4).
 - Router classification failure writes the exception type into `discard_reason`, not its text: `review/router.py`, `tests/test_user_profile.py`. `langgraph` is pinned to the tested `>=1.1.2,<1.2`.
 - Plan-driven `Send` fan-out: `workflows/research_graph.py` (§3.2).
-- `verify_course_claims` returns `Command(update=..., goto="plan_gap_search" | "save_verified_courses")` in place of a conditional edge; `enough_valid` stays the pure decision: `research_agent/validation/nodes.py`, `tests/test_research_nodes.py`, `tests/test_graph_topology.py` (§3.4).
+- `verify_course_claims` returns `Command(update=..., goto="plan_gap_search" | "save_verified_courses")` in place of a conditional edge; `enough_valid` stays the pure decision: `research_agent/validation/nodes.py`, `tests/test_research_nodes.py`, `tests/test_graph_topology.py`; resume after an injected crash on the `Command` node and on its target, fresh Postgres saver per segment: `tests/test_command_resume_postgres.py` (§3.4).
 - Only `await_human_review` remains as a no-op anchor; the research entry is a conditional
   entry point: `workflows/`, `tests/test_graph_topology.py` (§3.1, §4.1).
 - Research graph mounted as a subgraph of the outer graph (§3.3).

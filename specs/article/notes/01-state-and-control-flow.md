@@ -106,8 +106,14 @@ langgraph 1.1.2, memory saver and Postgres. `build_research_graph` compiles with
 - Fan-out stays on `_dispatch_search_queries`: it needs the plan the planner has already written,
   and a conditional edge reads it after the update commits.
 - Verified with a two-node graph on langgraph 1.1.2: without the annotation the routing runs but
-  the drawn graph has an edge to `__end__` and none to the target. Not tested: a kill and resume
-  while the `Command` node is the pending task inside the `course_research` subgraph.
+  the drawn graph has an edge to `__end__` and none to the target.
+- Resume, with a fresh Postgres saver and graph per segment and an exception injected in a node
+  (no signal, so no timing): a crash while `verify_course_claims` is the pending task re-runs it
+  and it still routes to `plan_gap_search`; a crash in `plan_gap_search` after the validator
+  committed resumes at `plan_gap_search` without re-running the validator, so the `goto` is part of
+  the checkpoint. Both fail if the node ignores the replan decision
+  (`tests/test_command_resume_postgres.py`). The plan's `min_valid_candidates` is forced to its cap
+  of 15 so the first validation always replans on the 14-course catalog.
 
 ## Removing a field from a checkpointed model
 
