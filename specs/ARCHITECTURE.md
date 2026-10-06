@@ -53,7 +53,7 @@ the person's next message, which arrives as `manager_feedback` and routes as abo
 `interpret_review_feedback` straight to `record_review_outcome`, skipping `send_approved_courses`
 and `promote_approved_courses`: nothing from a chat run reaches the shared catalogue, and its
 staged rows stay in `pending_courses` for staff review. Chat mode is built in the graph; the
-transport, the thread selector and staff review are not.
+thread selector and staff review are not. The Telegram surface (`chat/`) is built apart from the graph and is described under "Chat surface".
 
 ## Research subgraph
 
@@ -245,6 +245,21 @@ Three stores, three lifetimes.
 The cost of this split: the profile is read at the start of each research pass, and
 feedback is written only after publish, so feedback given during a run reaches the
 next run's profile, not the pass in progress.
+
+### Chat surface
+
+`chat/` sits in front of the graph and does not change it. A webhook request is parsed by the
+`ChatTransport`, its text goes through `redact_pii`, and one transaction inserts `update_id` into
+`chat_updates` (`ON CONFLICT DO NOTHING`), maps the Telegram chat id to a generated `user_id` in
+`chat_identities` and queues the redacted text in `chat_inbox`. A repeat of an update changes
+nothing. The `ChatWorker` claims one user at a time by taking a row in `chat_user_leases` (an
+upsert that only wins when the old lease has expired, renewed while the run is going), freezes
+every pending message of that user into one batch (`batch_id` is the lowest `update_id`), merges
+the texts and runs the graph once on thread `chat-{batch_id}`. A batch left behind by a killed
+worker is claimed again with the same id, so the graph resumes from its checkpoint and the digest
+effect keeps its key. Replies are the graph's own effects (`send_digest_message`,
+`send_feedback_prompt`), delivered by `chat/handlers.py` through the transport. Every batch starts a
+new thread: continuing a parked thread is the thread selector's job and is not built.
 
 ### Top-level state and run configuration
 

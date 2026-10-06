@@ -259,3 +259,28 @@ no repair, only a refusal, since the intent (the review step) is gone.
   without a serde error (`tests/test_curator_checkpoint.py`). The other private channels hold
   only primitives, and proposals are stored as plain dicts so no new model needs allowlisting.
 
+
+## Telegram webhook delivery (read 2026-10-06, Bot API 10.3 of 2026-08-24)
+
+Read from `https://core.telegram.org/bots/api` (fetched and searched as text); nothing was sent to
+Telegram.
+
+- `setWebhook`: "In case of an unsuccessful request (a request with response HTTP status code
+  different from 2XY), we will repeat the request and give up after a reasonable amount of
+  attempts." The count and the backoff are not documented, so the intake answers 200 for a repeat
+  and 500 only when the insert failed.
+- `update_id`: "start from a certain positive number and increase sequentially", "allows you to
+  ignore repeated updates or to restore the correct update sequence, should they get out of
+  order". After a week without updates the next id is random, so ids are a dedupe key, not a
+  counter to compare.
+- `secret_token` on `setWebhook` makes Telegram send `X-Telegram-Bot-Api-Secret-Token`; the intake
+  rejects a mismatch with 403.
+- `sendMessage` has no idempotency parameter (the parameter table was read in full). A send that
+  succeeded but whose outbox row was not marked delivered is sent again on retry; the effect key
+  protects against a second submit, not against that window. Text is limited to 4096 characters
+  after entity parsing; the adapter splits longer replies. Broadcasts are limited to 30 messages
+  per second by default.
+- Observed here (Postgres, fake Bot API process, `tests/test_chat_surface_postgres.py`): five
+  concurrent posts of one update leave one inbox row; a worker killed after the digest effect was
+  submitted leaves the batch open, and after the lease expires a second worker resumes the thread
+  and the Bot API shows one digest.

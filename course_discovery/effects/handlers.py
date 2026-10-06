@@ -6,6 +6,7 @@ from course_discovery.effects.worker import Handler
 PUBLISH_DIGEST = "publish_digest"
 SEND_DIGEST_MESSAGE = "send_digest_message"
 SEND_FEEDBACK_PROMPT = "send_feedback_prompt"
+SEND_CHAT_NOTICE = "send_chat_notice"
 
 
 def deliver_digest(effect: Effect) -> None:
@@ -29,4 +30,5 @@ def default_handlers() -> dict[str, Handler]:
         PUBLISH_DIGEST: deliver_digest,
         SEND_DIGEST_MESSAGE: deliver_chat_message,
         SEND_FEEDBACK_PROMPT: deliver_chat_message,
+        SEND_CHAT_NOTICE: deliver_chat_message,
     }

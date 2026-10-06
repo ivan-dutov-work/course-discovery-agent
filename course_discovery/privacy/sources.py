@@ -41,6 +41,9 @@ class UserDataSource:
 # Rows that reference `users` go first: their foreign keys are ON DELETE SET NULL, so they
 # would otherwise outlive the user with their content intact.
 USER_DATA_SOURCES = (
+    UserDataSource("chat_inbox", "user_id"),
+    UserDataSource("chat_identities", "user_id"),
+    UserDataSource("chat_user_leases", "user_id"),
     UserDataSource("outbox", "payload", json_key="user_id", breakdown_column="status"),
     UserDataSource("memory_updates", "user_id"),
     UserDataSource("recommendation_events", "user_id"),
@@ -53,6 +56,7 @@ USER_DATA_SOURCES = (
 NOT_USER_DATA = frozenset(
     {
         "courses",
+        "chat_updates",
         "course_evidence",
         "pending_courses",
         "checkpoints",
