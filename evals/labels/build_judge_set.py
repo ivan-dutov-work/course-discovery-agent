@@ -71,10 +71,18 @@ ROWS = [
 ]
 
 
-HEADER = """# Label each item: set `fails` to the list of criteria it fails, or [] if it fails none.
-# Criteria: captured, polarity, scope, no_invention, no_loss.
-# Convention: list every criterion a careful reader would fail, so a note with the wrong sign
-# fails polarity, captured and no_invention, not only polarity.
+HEADER = """# Label each item: replace `fails: null` with the list of criteria the notes_after fail.
+#   fails: []                          -> notes_after is a correct update
+#   fails: [no_invention, captured]    -> it fails those two
+# Criteria (use exactly these names):
+#   captured      the lasting fact in the feedback is missing from notes_after; or the feedback
+#                 has nothing to store and a note was added
+#   polarity      a stored preference has the wrong sign (likes vs dislikes)
+#   scope         wrong scope: a one-search or one-topic statement stored as durable, a general
+#                 one stored under a topic, or the wrong topic
+#   no_invention  a note appears that the feedback and notes_before do not support
+#   no_loss       an old note is gone or changed in meaning
+# List every criterion a careful reader would fail, not only the main one.
 """
 
 
@@ -88,7 +96,9 @@ def main() -> None:
             {"id": item_id, "feedback": feedback, "notes_before": before, "notes_after": after, "fails": None}
         )
         intended.append({"id": item_id, "fails": fails})
-    (HERE / "judge_notes.yaml").write_text(HEADER + yaml.safe_dump(labelling, sort_keys=False, allow_unicode=True))
+    body = yaml.safe_dump(labelling, sort_keys=False, allow_unicode=True)
+    body = body.replace("  fails: null", "  fails: null  # [] if correct, else any of: captured, polarity, scope, no_invention, no_loss")
+    (HERE / "judge_notes.yaml").write_text(HEADER + body)
     (HERE / "judge_notes.intended.yaml").write_text(yaml.safe_dump(intended, sort_keys=False))
 
 
