@@ -122,7 +122,7 @@ parent and the shared reducer channel `feedback_history` is not echoed back and 
 | `load_context` | Redact the feedback lines again; skip (status `skipped:*`) when there is no user, no feedback beyond bare approvals, no key, or the run was already applied | rules |
 | `curator_model` | Choose the next tool call; an LLM error ends the loop with `failed:llm_error` | LLM |
 | `run_tools` | Execute `read_profile`, `read_run_events`, `propose_patch`, `finish`; validation errors go back to the model as text | rules |
-| `commit` | Merge the accepted proposals, stamp notes with `run_id` and time, write through `save_user_memory`; a cap or no `finish` writes nothing | DB write, `RetryPolicy` |
+| `commit` | Merge the accepted proposals, stamp notes with `run_id` and time, write through `save_user_memory`; a cap or no `finish` writes nothing; `propose` bounds note length and scope, `apply_patch` keeps the newest 30 notes | DB write, `RetryPolicy` |
 
 - The user id and run id come from state; no tool takes either, so feedback text cannot aim a
   write at another user.
@@ -295,7 +295,10 @@ design.
    was named (`notes/04`, `BACKLOG.md`). Cases: `FEEDBACK.md`.
 7. **The injection screen is one layer, on one prompt.** JEV can be steered by text that argues
    for its own classification, no deterministic rule or prompt fencing sits beside it, the
-   thresholds are unfitted, and the tagging step is not screened (`BACKLOG.md`).
+   thresholds are unfitted, and the tagging step is not screened (`BACKLOG.md`). Stored notes are
+   not screened either: they are user text that returns in the synthesis prompt and the profile
+   embedding on every later run. Length, count and a course-only prompt rule bound them; an
+   injection screen at `commit` and at render is open (`BACKLOG.md`).
 
 ## Known gaps, research boundary
 

@@ -22,6 +22,7 @@ from course_discovery.privacy import erase_user
 from course_discovery.research_agent.memory import repository
 from course_discovery.research_agent.memory.defaults import apply_profile_defaults
 from course_discovery.research_agent.memory.repository import (
+    MAX_NOTES,
     apply_patch,
     load_user_memory,
     save_user_memory,
@@ -60,6 +61,13 @@ class PatchTests(unittest.TestCase):
         self.assertEqual(merged.avoided_providers, ["edx"])
         self.assertEqual(merged.career_goals, ["rust"])
         self.assertEqual([n.text for n in merged.notes], ["likes labs", "theory ok"])
+
+    def test_notes_are_capped_and_the_oldest_are_dropped(self):
+        memory = UserMemory(notes=[MemoryNote(text=f"old {i}") for i in range(MAX_NOTES)])
+        merged = apply_patch(memory, MemoryPatch(add_notes=[MemoryNote(text="new")]))
+        self.assertEqual(len(merged.notes), MAX_NOTES)
+        self.assertEqual(merged.notes[-1].text, "new")
+        self.assertEqual(merged.notes[0].text, "old 1")
 
     def test_none_clears_a_scalar(self):
         merged = apply_patch(UserMemory(budget_preference="free"), MemoryPatch(set={"budget_preference": None}))

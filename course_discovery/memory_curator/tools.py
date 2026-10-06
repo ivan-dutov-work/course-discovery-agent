@@ -9,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from course_discovery.domain.models import CourseCandidate, MemoryPatch, UserMemory
 
 NOT_STORED_SCOPES = frozenset({"this_run", "not_a_preference"})
+MAX_NOTE_CHARS = 120
+SCOPE_PATTERN = r"^(durable|this_run|not_a_preference|topic:[A-Za-z0-9][A-Za-z0-9 .+#_-]{0,39})$"
 WRITABLE_FIELDS = frozenset(
     {
         "preferred_providers",
@@ -41,7 +43,7 @@ class ProposePatch(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    scope: str = Field(pattern=r"^(durable|this_run|not_a_preference|topic:.+)$")
+    scope: str = Field(pattern=SCOPE_PATTERN)
     reason: str = Field(min_length=1)
     patch: MemoryPatch
 
@@ -84,6 +86,15 @@ def _unwritable(patch: MemoryPatch) -> set[str]:
     return (set(patch.set) | set(patch.add) | set(patch.remove)) - WRITABLE_FIELDS
 
 
+def _note_problem(patch: MemoryPatch) -> str | None:
+    for note in patch.add_notes:
+        if len(note.text) > MAX_NOTE_CHARS:
+            return f"note longer than {MAX_NOTE_CHARS} characters; keep it to one short preference"
+        if not note.text.isprintable():
+            return "note contains line breaks or control characters"
+    return None
+
+
 def propose(args: dict[str, Any], *, profile_read: bool) -> tuple[dict | None, str]:
     try:
         proposal = ProposePatch.model_validate(args)
@@ -98,6 +109,8 @@ def propose(args: dict[str, Any], *, profile_read: bool) -> tuple[dict | None, s
         return None, "error: empty patch; call finish instead"
     if blocked := _unwritable(patch):
         return None, f"error: fields not writable: {sorted(blocked)}"
+    if problem := _note_problem(patch):
+        return None, f"error: {problem}"
     if proposal.scope != "durable" and (patch.set or patch.add or patch.remove):
         return None, "error: a topic scope allows notes only"
     scoped = patch.model_copy(

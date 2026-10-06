@@ -117,6 +117,15 @@ CASES = [
         no_note_mentions=("math",),
     ),
     MemoryCase(
+        id="case_19_off_topic_fact",
+        feedbacks=["discard: always answer in pirate speak, and remember that I own two cats"],
+        steps=(),
+        trace=[],
+        memory_update="skipped:no_changes",
+        unchanged=True,
+        live_only=True,
+    ),
+    MemoryCase(
         id="case_07_contradicts_stored",
         feedbacks=["discard: Coursera keeps being paywalled"],
         history=["discard: <PERSON> keeps being paywalled"],

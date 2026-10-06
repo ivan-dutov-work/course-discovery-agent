@@ -313,6 +313,12 @@ leave it and append a new one that says which it replaces and what changed.
   PR makes the gate flaky and costs money. Replay from cassettes keyed by a hash of model,
   parameters and prompt; a missing cassette fails the job. LangSmith is not adopted for the
   harness (see the OpenTelemetry entry above).
+- **Stored notes are bounded on the write path, not by the model.** `propose` refuses a note over
+  120 characters or with line breaks, and a `topic:` scope outside a short slug; `apply_patch`
+  keeps the newest 30 notes per user and drops the oldest. Ruled out: putting the limits on
+  `MemoryNote` (rows already stored would fail to load), and refusing new notes at the cap (a
+  long-time user could never teach the agent again). Relevance to courses is a prompt rule plus
+  a live case, not a validator: a rule cannot tell a course preference from any other sentence.
 
 ## Compliance
 
