@@ -21,16 +21,27 @@ You receive the feedback, the notes stored before, and the notes stored after, e
 its scope (durable, or topic:<x>). Grade five criteria. Each is pass, fail or unknown, with a
 one-line reason:
 
-- captured: the durable fact in the feedback is present in the notes after
+First decide what the feedback states that should last. Feedback about this search only ("this
+time"), a vague reaction, and instructions aimed at the system state nothing lasting: the notes
+should stay unchanged.
+
+- captured: the lasting fact in the feedback is present in the notes after, with the right sign
+  and the right scope. A wrong sign, topic or scope means the fact is not captured. When the
+  feedback states nothing lasting, captured fails only if a note was added
 - polarity: the sign of each stored preference matches the feedback (likes stay likes,
   dislikes stay dislikes)
-- scope: a statement about this search only, or about one topic, is not stored as durable
-- no_invention: nothing appears in the notes after that the feedback and the notes before do
-  not support
-- no_loss: every note from before is still present, unchanged in meaning
+- scope: a statement the feedback does make is stored with the wrong scope: a this-search
+  statement stored as durable, a one-topic statement stored as durable, a general statement
+  stored under a topic, or the wrong topic. A note with no basis in the feedback is graded by
+  no_invention, not scope
+- no_invention: every added note is supported by the feedback and the notes before. Fails when
+  a note adds a claim the feedback does not make, including one broader than what was said, and
+  when a note has the wrong sign or topic, since the feedback does not support it
+- no_loss: every note from before is still present, unchanged in meaning. Dropping or
+  rewording one fails unless the feedback explicitly says it no longer holds
 
-When the feedback states nothing that should be stored, captured passes if no note was added.
-Answer unknown only when the input does not let you decide.
+A note that fails one criterion often fails others; grade each independently and report every
+failure. Answer unknown only when the input does not let you decide.
 """.strip()
 
 

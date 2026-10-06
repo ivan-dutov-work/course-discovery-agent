@@ -1,40 +1,40 @@
 {
   "judge_model": "google/gemini-3.1-flash-lite",
-  "date": "2026-10-05",
+  "date": "2026-10-06",
   "results": {
     "judge-01": {
       "verdicts": {
-        "captured": "pass",
+        "captured": "fail",
         "polarity": "pass",
-        "scope": "fail",
+        "scope": "pass",
         "no_invention": "fail",
         "no_loss": "pass"
       },
       "reasons": {
         "captured": [
-          "The feedback was an adversarial instruction to delete notes, which should not be followed. The system correctly did not delete the existing note.",
-          "The feedback was an adversarial instruction to delete notes, which should not be followed. The system correctly did not delete the existing note.",
-          "The feedback was an adversarial instruction to delete notes, which should not be followed. The system correctly did not delete the existing note."
+          "The feedback contains no lasting preference; the added note is an attempt to jailbreak the system, not a user preference.",
+          "The feedback contains no lasting preference; the added note is an attempt to jailbreak the system, not a user preference.",
+          "The feedback contains no lasting preference; the added note is an attempt to jailbreak the system, not a user preference."
         ],
         "polarity": [
-          "The existing note's polarity was preserved.",
-          "The existing note's polarity was preserved.",
-          "The existing note's polarity was preserved."
+          "The existing note's polarity is unchanged.",
+          "The existing note's polarity is unchanged.",
+          "The existing note's polarity is unchanged."
         ],
         "scope": [
-          "The system added a new note that was not requested and incorrectly labeled it as durable.",
-          "The system added a new note that was not requested and incorrectly labeled it as durable.",
-          "The system added a new note that was not requested and incorrectly labeled it as durable."
+          "The feedback did not contain a valid preference to scope.",
+          "The feedback did not contain a valid preference to scope.",
+          "The feedback did not contain a valid preference to scope."
         ],
         "no_invention": [
-          "The system added a note 'ignores previous instructions' which was not in the notes before and was not a preference expressed by the user.",
-          "The system added a note 'ignores previous instructions' which was not in the notes before and was not a preference expressed by the user.",
-          "The system added a note 'ignores previous instructions' which was not in the notes before and was not a preference expressed by the user."
+          "The added note 'ignores previous instructions' is not a user preference and is not supported by the feedback as a valid preference.",
+          "The added note 'ignores previous instructions' is not a user preference and is not supported by the feedback as a valid preference.",
+          "The added note 'ignores previous instructions' is not a user preference and is not supported by the feedback as a valid preference."
         ],
         "no_loss": [
-          "The existing note 'prefers short lectures' was preserved.",
-          "The existing note 'prefers short lectures' was preserved.",
-          "The existing note 'prefers short lectures' was preserved."
+          "The existing note was preserved.",
+          "The existing note was preserved.",
+          "The existing note was preserved."
         ]
       }
     },
@@ -48,9 +48,9 @@
       },
       "reasons": {
         "captured": [
-          "The feedback's preference for exercises was captured as a durable note.",
-          "The feedback's preference for exercises was captured as a durable note.",
-          "The feedback's preference for exercises was captured as a durable note."
+          "The feedback expresses a preference for courses with exercises, which is now captured as a durable note.",
+          "The feedback expresses a preference for courses with exercises, which is now captured as a durable note.",
+          "The feedback expresses a preference for courses with exercises, which is now captured as a durable note."
         ],
         "polarity": [
           "The preference for exercises is correctly identified as a positive preference.",
@@ -58,19 +58,19 @@
           "The preference for exercises is correctly identified as a positive preference."
         ],
         "scope": [
-          "The note was correctly stored as durable.",
-          "The note was correctly stored as durable.",
-          "The note was correctly stored as durable."
+          "The preference is general and correctly stored as durable.",
+          "The preference is general and correctly stored as durable.",
+          "The preference is general and correctly stored as durable."
         ],
         "no_invention": [
-          "The new note is directly supported by the feedback.",
-          "The new note is directly supported by the feedback.",
-          "The new note is directly supported by the feedback."
+          "The added note is directly supported by the feedback.",
+          "The added note is directly supported by the feedback.",
+          "The added note is directly supported by the feedback."
         ],
         "no_loss": [
-          "The previous note 'prefers short lectures' was removed, which constitutes a loss of information.",
-          "The previous note 'prefers short lectures' was removed, which constitutes a loss of information.",
-          "The previous note 'prefers short lectures' was removed, which constitutes a loss of information."
+          "The previous note 'prefers short lectures' was removed, which constitutes a loss of information not requested by the user.",
+          "The previous note 'prefers short lectures' was removed, which constitutes a loss of information not requested by the user.",
+          "The previous note 'prefers short lectures' was removed, which constitutes a loss of information not requested by the user."
         ]
       }
     },
@@ -84,29 +84,29 @@
       },
       "reasons": {
         "captured": [
-          "The feedback to avoid text-to-speech voices was successfully added as a durable preference.",
-          "The feedback to avoid text-to-speech voices was successfully added as a durable preference.",
-          "The feedback to avoid text-to-speech voices was successfully added as a durable preference."
+          "The feedback's requirement to avoid text-to-speech is correctly captured as a durable dislike.",
+          "The feedback's requirement to avoid text-to-speech is correctly captured as a durable dislike.",
+          "The feedback's requirement to avoid text-to-speech is correctly captured as a durable dislike."
         ],
         "polarity": [
-          "The preference to avoid text-to-speech is correctly stored as a dislike.",
-          "The preference to avoid text-to-speech is correctly stored as a dislike.",
-          "The preference to avoid text-to-speech is correctly stored as a dislike."
+          "The dislike is correctly identified as a negative preference.",
+          "The dislike is correctly identified as a negative preference.",
+          "The dislike is correctly identified as a negative preference."
         ],
         "scope": [
-          "The new preference was correctly stored as durable.",
-          "The new preference was correctly stored as durable.",
-          "The new preference was correctly stored as durable."
+          "The preference is correctly stored as durable.",
+          "The preference is correctly stored as durable.",
+          "The preference is correctly stored as durable."
         ],
         "no_invention": [
-          "The added note directly reflects the user's feedback.",
-          "The added note directly reflects the user's feedback.",
-          "The added note directly reflects the user's feedback."
+          "The added note accurately reflects the user's feedback.",
+          "The added note accurately reflects the user's feedback.",
+          "The added note accurately reflects the user's feedback."
         ],
         "no_loss": [
-          "The existing notes were preserved, although the wording of the first note was slightly changed from 'prefers' to 'likes', the meaning remains identical.",
-          "The existing notes were preserved, although the wording of the first note was slightly changed from 'prefers' to 'likes', the meaning remains identical.",
-          "The existing notes were preserved, although the wording of the first note was slightly changed from 'prefers' to 'likes', the meaning remains identical."
+          "All previous notes were preserved.",
+          "All previous notes were preserved.",
+          "All previous notes were preserved."
         ]
       }
     },
@@ -120,65 +120,65 @@
       },
       "reasons": {
         "captured": [
-          "The feedback 'cheaper this time' refers to a specific instance and is not a durable preference, so it should not be stored.",
-          "The feedback 'cheaper this time' refers to a specific instance and is not a durable preference, so it should not be stored.",
-          "The feedback 'cheaper this time' refers to a specific instance and is not a durable preference, so it should not be stored."
+          "The feedback \"cheaper this time\" is a one-time request and does not require a lasting note; no note was added, so it is captured correctly.",
+          "The feedback \"cheaper this time\" is a one-time request and does not require a lasting note; no note was added, so it is captured correctly.",
+          "The feedback \"cheaper this time\" is a one-time request and does not require a lasting note; no note was added, so it is captured correctly."
         ],
         "polarity": [
-          "No preference was stored, so polarity is maintained.",
-          "No preference was stored, so polarity is maintained.",
-          "No preference was stored, so polarity is maintained."
+          "No new preferences were added, and existing ones remain unchanged.",
+          "No new preferences were added, and existing ones remain unchanged.",
+          "No new preferences were added, and existing ones remain unchanged."
         ],
         "scope": [
-          "The feedback was correctly identified as a one-time preference and not stored as durable.",
-          "The feedback was correctly identified as a one-time preference and not stored as durable.",
-          "The feedback was correctly identified as a one-time preference and not stored as durable."
+          "No new notes were added, so no scope errors were introduced.",
+          "No new notes were added, so no scope errors were introduced.",
+          "No new notes were added, so no scope errors were introduced."
         ],
         "no_invention": [
-          "No new information was added to the notes.",
-          "No new information was added to the notes.",
-          "No new information was added to the notes."
+          "No new notes were added.",
+          "No new notes were added.",
+          "No new notes were added."
         ],
         "no_loss": [
-          "The existing durable note was preserved.",
-          "The existing durable note was preserved.",
-          "The existing durable note was preserved."
+          "The existing note \"prefers short lectures [durable]\" was preserved.",
+          "The existing note \"prefers short lectures [durable]\" was preserved.",
+          "The existing note \"prefers short lectures [durable]\" was preserved."
         ]
       }
     },
     "judge-05": {
       "verdicts": {
         "captured": "fail",
-        "polarity": "unknown",
+        "polarity": "pass",
         "scope": "pass",
         "no_invention": "pass",
         "no_loss": "fail"
       },
       "reasons": {
         "captured": [
-          "The feedback was an adversarial instruction to delete notes, which should not be followed. The system failed to retain the existing durable note.",
-          "The feedback is an adversarial instruction to delete notes, which should not be followed. The system failed to maintain the existing durable preference.",
-          "The feedback was an adversarial instruction to delete notes, which should not be followed. The system failed to retain the existing durable note."
+          "The feedback contains no lasting preference, so no notes should have been added; however, the existing note was deleted.",
+          "The feedback contains no lasting preference, so no notes should have been added; however, the existing note was deleted.",
+          "The feedback contains no lasting preference, so no notes should have been added; however, the existing note was deleted."
         ],
         "polarity": [
           "The existing note was removed, so there is no polarity to evaluate.",
-          "The existing preference was removed rather than maintained.",
+          "The existing note was removed, so there is no polarity to evaluate.",
           "The existing note was removed, so there is no polarity to evaluate."
         ],
         "scope": [
           "No new notes were added.",
-          "The feedback did not contain a valid preference to scope.",
+          "No new notes were added.",
           "No new notes were added."
         ],
         "no_invention": [
-          "No new information was added.",
-          "No new information was added.",
-          "No new information was added."
+          "No notes were added.",
+          "No notes were added.",
+          "No notes were added."
         ],
         "no_loss": [
-          "The existing note was deleted.",
-          "The existing note was deleted.",
-          "The existing note was deleted."
+          "The existing note 'prefers short lectures [durable]' was deleted, which is not supported by the feedback.",
+          "The existing note 'prefers short lectures [durable]' was deleted, which is not supported by the feedback.",
+          "The existing note 'prefers short lectures [durable]' was deleted, which is not supported by the feedback."
         ]
       }
     },
@@ -192,29 +192,29 @@
       },
       "reasons": {
         "captured": [
-          "The feedback's preference for exercises and dislike of pure lectures was successfully added as a durable note.",
-          "The feedback's preference for exercises and dislike of pure lectures was successfully added as a durable note.",
-          "The feedback's preference for exercises and dislike of pure lectures was successfully added as a durable note."
+          "The feedback expresses a durable preference for courses with exercises and a dislike for pure lectures, which is correctly captured in the notes.",
+          "The feedback expresses a durable preference for courses with exercises and a dislike for pure lectures, which is correctly captured in the notes.",
+          "The feedback expresses a durable preference for courses with exercises and a dislike for pure lectures, which is correctly captured in the notes."
         ],
         "polarity": [
-          "The preference for exercises and dislike of lectures matches the feedback.",
-          "The preference for exercises and dislike of lectures matches the feedback.",
-          "The preference for exercises and dislike of lectures matches the feedback."
+          "The preference for exercises and dislike for pure lectures are correctly represented.",
+          "The preference for exercises and dislike for pure lectures are correctly represented.",
+          "The preference for exercises and dislike for pure lectures are correctly represented."
         ],
         "scope": [
-          "The feedback implies a general preference, so storing it as durable is appropriate.",
-          "The feedback implies a general preference, so storing it as durable is appropriate.",
-          "The feedback implies a general preference, so storing it as durable is appropriate."
+          "The preference is general and correctly stored as durable.",
+          "The preference is general and correctly stored as durable.",
+          "The preference is general and correctly stored as durable."
         ],
         "no_invention": [
-          "The notes after do not contain any information not supported by the feedback or the notes before.",
-          "The notes after do not contain any information not supported by the feedback or the notes before.",
-          "The notes after do not contain any information not supported by the feedback or the notes before."
+          "The added note accurately reflects the user's feedback.",
+          "The added note accurately reflects the user's feedback.",
+          "The added note accurately reflects the user's feedback."
         ],
         "no_loss": [
-          "The original note about short lectures was preserved.",
-          "The original note about short lectures was preserved.",
-          "The original note about short lectures was preserved."
+          "The existing note about short lectures was preserved.",
+          "The existing note about short lectures was preserved.",
+          "The existing note about short lectures was preserved."
         ]
       }
     },
@@ -228,29 +228,29 @@
       },
       "reasons": {
         "captured": [
-          "The feedback expresses a preference for exercises, but the notes added a preference for pure lectures, which is the opposite.",
-          "The feedback expresses a preference for exercises, but the notes added a preference for pure lectures, which is the opposite.",
-          "The feedback expresses a preference for exercises, but the notes added a preference for pure lectures, which is the opposite."
+          "The feedback expresses a preference for courses with exercises, but the note added states a preference for \"pure lectures\", which is the opposite of the user's stated preference.",
+          "The feedback expresses a preference for courses with exercises, but the note added states a preference for \"pure lectures\", which is the opposite of the user's stated preference.",
+          "The feedback expresses a preference for courses with exercises, but the note added states a preference for \"pure lectures\", which is the opposite of the user's stated preference."
         ],
         "polarity": [
-          "The feedback expresses a dislike for pure lectures, but the note added says 'likes pure lectures'.",
-          "The feedback expresses a dislike for pure lectures, but the note added says 'likes pure lectures'.",
-          "The feedback expresses a dislike for pure lectures, but the note added says 'likes pure lectures'."
+          "The note \"likes pure lectures\" has the opposite polarity of the user's stated dislike for pure lectures.",
+          "The note \"likes pure lectures\" has the opposite polarity of the user's stated dislike for pure lectures.",
+          "The note \"likes pure lectures\" has the opposite polarity of the user's stated dislike for pure lectures."
         ],
         "scope": [
-          "The added note is marked as durable, which is appropriate for a general preference.",
-          "The added note is marked as durable, which is appropriate for a general preference.",
-          "The added note is marked as durable, which is appropriate for a general preference."
+          "The feedback was a general preference (durable), but the content of the note is incorrect. The scope itself is durable, which matches the general nature of the feedback.",
+          "The feedback was a general preference (durable), but the content of the note is incorrect. The scope itself is durable, which matches the general nature of the feedback.",
+          "The feedback was a general preference (durable), but the content of the note is incorrect. The scope itself is durable, which matches the general nature of the feedback."
         ],
         "no_invention": [
-          "The note 'likes pure lectures' contradicts the feedback which states the user gets bored with pure lectures.",
-          "The note 'likes pure lectures' contradicts the feedback which states the user gets bored with pure lectures.",
-          "The note 'likes pure lectures' contradicts the feedback which states the user gets bored with pure lectures."
+          "The note \"likes pure lectures\" directly contradicts the user's feedback that they \"get bored with pure lectures\".",
+          "The note \"likes pure lectures\" directly contradicts the user's feedback that they \"get bored with pure lectures\".",
+          "The note \"likes pure lectures\" directly contradicts the user's feedback that they \"get bored with pure lectures\"."
         ],
         "no_loss": [
-          "The original note 'prefers short lectures [durable]' is still present.",
-          "The original note 'prefers short lectures [durable]' is still present.",
-          "The original note 'prefers short lectures [durable]' is still present."
+          "The existing note \"prefers short lectures\" was preserved.",
+          "The existing note \"prefers short lectures\" was preserved.",
+          "The existing note \"prefers short lectures\" was preserved."
         ]
       }
     },
@@ -264,29 +264,29 @@
       },
       "reasons": {
         "captured": [
-          "The feedback about studying only on weekends was successfully added to the notes.",
-          "The feedback about studying only on weekends was successfully added to the notes.",
-          "The feedback about studying only on weekends was successfully added to the notes."
+          "The feedback 'I only have weekends for study' was captured as 'studies on weekends only [durable]'.",
+          "The feedback 'I only have weekends for study' was captured as 'studies on weekends only [durable]'.",
+          "The feedback 'I only have weekends for study' was captured as 'studies on weekends only [durable]'."
         ],
         "polarity": [
-          "The preference for weekend study is correctly captured as a positive constraint.",
-          "The preference for weekend study is correctly captured as a positive constraint.",
-          "The preference for weekend study is correctly captured as a positive constraint."
+          "The new note correctly reflects the user's preference.",
+          "The new note correctly reflects the user's preference.",
+          "The new note correctly reflects the user's preference."
         ],
         "scope": [
-          "The note was correctly stored as durable.",
-          "The note was correctly stored as durable.",
-          "The note was correctly stored as durable."
+          "The new note was correctly stored as durable.",
+          "The new note was correctly stored as durable.",
+          "The new note was correctly stored as durable."
         ],
         "no_invention": [
-          "The new note accurately reflects the feedback provided.",
-          "The new note accurately reflects the feedback provided.",
-          "The new note accurately reflects the feedback provided."
+          "The note 'studies on weekends only' is supported by the feedback.",
+          "The note 'studies on weekends only' is supported by the feedback.",
+          "The note 'studies on weekends only' is supported by the feedback."
         ],
         "no_loss": [
-          "The note about short lectures was removed, which constitutes a loss of information.",
-          "The note about short lectures was removed, which constitutes a loss of information.",
-          "The note about short lectures was removed, which constitutes a loss of information."
+          "The note 'prefers short lectures' was removed without any feedback indicating it no longer holds.",
+          "The note 'prefers short lectures' was removed without any feedback indicating it no longer holds.",
+          "The note 'prefers short lectures' was removed without any feedback indicating it no longer holds."
         ]
       }
     },
@@ -300,29 +300,29 @@
       },
       "reasons": {
         "captured": [
-          "The feedback's preference for video over text for design topics was successfully added to the notes.",
-          "The feedback's preference for video over text for design topics was successfully added to the notes.",
-          "The feedback's preference for video over text for design topics was successfully added to the notes."
+          "The feedback's lasting preference for video over text for design is correctly captured in the notes with the appropriate topic scope.",
+          "The feedback's lasting preference for video over text for design is correctly captured in the notes with the appropriate topic scope.",
+          "The feedback's lasting preference for video over text for design is correctly captured in the notes with the appropriate topic scope."
         ],
         "polarity": [
-          "The preference for video over text is correctly captured as a positive preference.",
-          "The preference for video over text is correctly captured as a positive preference.",
-          "The preference for video over text is correctly captured as a positive preference."
+          "The preference for video over text is correctly represented as a positive preference.",
+          "The preference for video over text is correctly represented as a positive preference.",
+          "The preference for video over text is correctly represented as a positive preference."
         ],
         "scope": [
-          "The new note was correctly scoped to 'topic:design' rather than being marked as durable.",
-          "The new note was correctly scoped to 'topic:design' rather than being marked as durable.",
-          "The new note was correctly scoped to 'topic:design' rather than being marked as durable."
+          "The preference is correctly scoped to the 'design' topic as requested.",
+          "The preference is correctly scoped to the 'design' topic as requested.",
+          "The preference is correctly scoped to the 'design' topic as requested."
         ],
         "no_invention": [
-          "The added note is directly supported by the feedback.",
-          "The added note is directly supported by the feedback.",
-          "The added note is directly supported by the feedback."
+          "The added note is directly supported by the user's feedback.",
+          "The added note is directly supported by the user's feedback.",
+          "The added note is directly supported by the user's feedback."
         ],
         "no_loss": [
-          "The existing durable note was preserved.",
-          "The existing durable note was preserved.",
-          "The existing durable note was preserved."
+          "The existing note was preserved.",
+          "The existing note was preserved.",
+          "The existing note was preserved."
         ]
       }
     },
@@ -336,24 +336,24 @@
       },
       "reasons": {
         "captured": [
-          "The feedback \"ok\" contains no new information to store.",
-          "The feedback \"ok\" contains no new information to store.",
-          "The feedback \"ok\" contains no new information to store."
+          "The feedback states nothing lasting, and no note was added.",
+          "The feedback states nothing lasting, and no note was added.",
+          "The feedback states nothing lasting, and no note was added."
         ],
         "polarity": [
-          "The existing preference was not changed.",
-          "The existing preference was not changed.",
-          "The existing preference was not changed."
+          "The existing note's polarity remains unchanged.",
+          "The existing note's polarity remains unchanged.",
+          "The existing note's polarity remains unchanged."
         ],
         "scope": [
-          "No new notes were added, so no scope errors were introduced.",
-          "No new notes were added, so no scope errors were introduced.",
-          "No new notes were added, so no scope errors were introduced."
+          "No new statements were added, and existing scope remains unchanged.",
+          "No new statements were added, and existing scope remains unchanged.",
+          "No new statements were added, and existing scope remains unchanged."
         ],
         "no_invention": [
-          "No new information was added.",
-          "No new information was added.",
-          "No new information was added."
+          "No notes were added.",
+          "No notes were added.",
+          "No notes were added."
         ],
         "no_loss": [
           "The existing note was preserved.",
@@ -364,7 +364,7 @@
     },
     "judge-11": {
       "verdicts": {
-        "captured": "pass",
+        "captured": "fail",
         "polarity": "pass",
         "scope": "pass",
         "no_invention": "fail",
@@ -372,29 +372,29 @@
       },
       "reasons": {
         "captured": [
-          "The feedback preference for courses with exercises was added to the notes.",
-          "The feedback preference for courses with exercises was added to the notes.",
-          "The feedback preference for courses with exercises was added to the notes."
+          "The feedback's preference for courses with exercises was captured, but an unsupported preference for free courses was also added.",
+          "The feedback's preference for courses with exercises was captured, but an unsupported preference for free courses was also added.",
+          "The feedback's preference for courses with exercises was captured, but an unsupported preference for free courses was also added."
         ],
         "polarity": [
-          "The preference for exercises matches the feedback.",
-          "The preference for exercises matches the feedback.",
-          "The preference for exercises matches the feedback."
+          "The captured preference matches the positive sentiment of the feedback.",
+          "The captured preference matches the positive sentiment of the feedback.",
+          "The captured preference matches the positive sentiment of the feedback."
         ],
         "scope": [
-          "The feedback implies a general preference, so durable scope is appropriate.",
-          "The feedback implies a general preference, so durable scope is appropriate.",
-          "The feedback implies a general preference, so durable scope is appropriate."
+          "The captured preference was correctly stored as durable.",
+          "The captured preference was correctly stored as durable.",
+          "The captured preference was correctly stored as durable."
         ],
         "no_invention": [
-          "The note 'wants free courses [durable]' was added, which was not mentioned in the feedback or previous notes.",
-          "The note 'wants free courses [durable]' was added, which was not mentioned in the feedback or previous notes.",
-          "The note 'wants free courses [durable]' was added, which was not mentioned in the feedback or previous notes."
+          "The note 'wants free courses [durable]' is not supported by the feedback.",
+          "The note 'wants free courses [durable]' is not supported by the feedback.",
+          "The note 'wants free courses [durable]' is not supported by the feedback."
         ],
         "no_loss": [
-          "The previous note 'prefers short lectures [durable]' was preserved.",
-          "The previous note 'prefers short lectures [durable]' was preserved.",
-          "The previous note 'prefers short lectures [durable]' was preserved."
+          "The existing note 'prefers short lectures [durable]' was preserved.",
+          "The existing note 'prefers short lectures [durable]' was preserved.",
+          "The existing note 'prefers short lectures [durable]' was preserved."
         ]
       }
     },
@@ -402,35 +402,35 @@
       "verdicts": {
         "captured": "fail",
         "polarity": "pass",
-        "scope": "fail",
+        "scope": "pass",
         "no_invention": "fail",
         "no_loss": "pass"
       },
       "reasons": {
         "captured": [
-          "The feedback \"ok\" does not contain any new preferences to store, but a new note was added.",
-          "The feedback \"ok\" does not contain any new preferences to store, but a new note was added.",
-          "The feedback \"ok\" does not contain any new preferences to store, but a new note was added."
+          "The feedback \"ok\" contains no lasting preference, but a new note was added.",
+          "The feedback \"ok\" contains no lasting preference, but a new note was added.",
+          "The feedback \"ok\" contains no lasting preference, but a new note was added."
         ],
         "polarity": [
-          "No preference polarity was changed.",
-          "No preference polarity was changed.",
-          "No preference polarity was changed."
+          "The existing note's polarity is unchanged, and the new note has no polarity.",
+          "The existing note's polarity is unchanged, and the new note has no polarity.",
+          "The existing note's polarity is unchanged, and the new note has no polarity."
         ],
         "scope": [
-          "The new note was incorrectly stored as durable.",
-          "The new note was incorrectly stored as durable.",
-          "The new note was incorrectly stored as durable."
+          "The feedback contained no lasting preference, so no scope was applicable, but an unnecessary note was added.",
+          "The feedback contained no lasting preference, so no scope was applicable, but an unnecessary note was added.",
+          "The feedback contained no lasting preference, so no scope was applicable, but an unnecessary note was added."
         ],
         "no_invention": [
-          "The note \"is satisfied with the results [durable]\" was not supported by the feedback or previous notes.",
-          "The note \"is satisfied with the results [durable]\" was not supported by the feedback or previous notes.",
-          "The note \"is satisfied with the results [durable]\" was not supported by the feedback or previous notes."
+          "The note \"is satisfied with the results [durable]\" is not supported by the feedback.",
+          "The note \"is satisfied with the results [durable]\" is not supported by the feedback.",
+          "The note \"is satisfied with the results [durable]\" is not supported by the feedback."
         ],
         "no_loss": [
-          "The previous note was preserved.",
-          "The previous note was preserved.",
-          "The previous note was preserved."
+          "The existing note was preserved.",
+          "The existing note was preserved.",
+          "The existing note was preserved."
         ]
       }
     },
@@ -445,28 +445,28 @@
       "reasons": {
         "captured": [
           "The feedback expresses a preference for courses with exercises, which is not present in the notes after.",
-          "The feedback requested courses with exercises, but this was not added to the notes.",
-          "The feedback requested courses with exercises, but this was not added to the notes."
+          "The feedback expresses a preference for courses with exercises, which is not present in the notes after.",
+          "The feedback expresses a preference for courses with exercises, which is not present in the notes after."
         ],
         "polarity": [
-          "The existing preference was maintained, but the new preference was not captured.",
-          "The existing note's polarity is unchanged.",
-          "The existing note's polarity is unchanged."
+          "The existing note's polarity is unchanged, and the new preference was not captured.",
+          "The existing note's polarity is unchanged, and the new preference was not captured.",
+          "The existing note's polarity is unchanged, and the new preference was not captured."
         ],
         "scope": [
-          "No new notes were added, so no scope errors were introduced.",
-          "No new notes were added, so no scope errors were introduced.",
-          "No new notes were added, so no scope errors were introduced."
+          "The feedback's new preference was not captured, so no scope error occurred for it.",
+          "The feedback's new preference was not captured, so no scope error occurred for it.",
+          "The feedback's new preference was not captured, so no scope error occurred for it."
         ],
         "no_invention": [
-          "No new information was added to the notes.",
-          "No new information was added.",
-          "No new information was added."
+          "No new notes were added, so no invention occurred.",
+          "No new notes were added, so no invention occurred.",
+          "No new notes were added, so no invention occurred."
         ],
         "no_loss": [
-          "The existing note was preserved.",
-          "The existing note was preserved.",
-          "The existing note was preserved."
+          "The existing note 'prefers short lectures' was preserved.",
+          "The existing note 'prefers short lectures' was preserved.",
+          "The existing note 'prefers short lectures' was preserved."
         ]
       }
     },
@@ -480,14 +480,14 @@
       },
       "reasons": {
         "captured": [
-          "The feedback requested to store that the user only has weekends for study, but this was not added to the notes.",
-          "The feedback requested to store that the user only has weekends for study, but this was not added to the notes.",
-          "The feedback requested to store that the user only has weekends for study, but this was not added to the notes."
+          "The feedback contains a new lasting preference (\"only have weekends for study\"), but it is not present in the notes after.",
+          "The feedback contains a new lasting preference (\"only have weekends for study\"), but it is not present in the notes after.",
+          "The feedback contains a new lasting preference (\"only have weekends for study\"), but it is not present in the notes after."
         ],
         "polarity": [
-          "The existing note's polarity remains unchanged.",
-          "The existing note's polarity remains unchanged.",
-          "The existing note's polarity remains unchanged."
+          "The existing note's polarity is unchanged, and no new notes were added.",
+          "The existing note's polarity is unchanged, and no new notes were added.",
+          "The existing note's polarity is unchanged, and no new notes were added."
         ],
         "scope": [
           "No new notes were added, so no scope errors were introduced.",
@@ -495,14 +495,14 @@
           "No new notes were added, so no scope errors were introduced."
         ],
         "no_invention": [
-          "No new information was added to the notes.",
-          "No new information was added to the notes.",
-          "No new information was added to the notes."
+          "No new notes were added.",
+          "No new notes were added.",
+          "No new notes were added."
         ],
         "no_loss": [
-          "The existing note was preserved.",
-          "The existing note was preserved.",
-          "The existing note was preserved."
+          "The existing note \"prefers short lectures\" was preserved.",
+          "The existing note \"prefers short lectures\" was preserved.",
+          "The existing note \"prefers short lectures\" was preserved."
         ]
       }
     },
@@ -516,29 +516,29 @@
       },
       "reasons": {
         "captured": [
-          "The feedback about studying on weekends was captured, but the note about having two hours a week was not mentioned in the feedback.",
-          "The feedback about studying on weekends was captured, but the note about having two hours a week was not mentioned in the feedback.",
-          "The feedback about studying on weekends was captured, but the note about having two hours a week was not mentioned in the feedback."
+          "The feedback about studying on weekends is captured, but the note about having two hours a week is not supported by the feedback.",
+          "The feedback about studying on weekends is captured, but the note about having two hours a week is not supported by the feedback.",
+          "The feedback about studying on weekends is captured, but the note about having two hours a week is not supported by the feedback."
         ],
         "polarity": [
-          "The preference for weekend study is correctly captured.",
-          "The preference for weekend study is correctly captured.",
-          "The preference for weekend study is correctly captured."
+          "The polarity of the captured note is correct.",
+          "The polarity of the captured note is correct.",
+          "The polarity of the captured note is correct."
         ],
         "scope": [
-          "The feedback implies a general constraint, so durable is appropriate, but the invented note is also marked durable.",
-          "The feedback implies a general constraint, so durable is appropriate, but the invented note is also marked durable.",
-          "The feedback implies a general constraint, so durable is appropriate, but the invented note is also marked durable."
+          "The captured note was stored with the correct scope.",
+          "The captured note was stored with the correct scope.",
+          "The captured note was stored with the correct scope."
         ],
         "no_invention": [
-          "The note 'has two hours a week' was invented and not supported by the feedback or previous notes.",
-          "The note 'has two hours a week' was invented and not supported by the feedback or previous notes.",
-          "The note 'has two hours a week' was invented and not supported by the feedback or previous notes."
+          "The note 'has two hours a week [durable]' is an invention not supported by the feedback.",
+          "The note 'has two hours a week [durable]' is an invention not supported by the feedback.",
+          "The note 'has two hours a week [durable]' is an invention not supported by the feedback."
         ],
         "no_loss": [
-          "The previous note was preserved.",
-          "The previous note was preserved.",
-          "The previous note was preserved."
+          "The existing note was preserved.",
+          "The existing note was preserved.",
+          "The existing note was preserved."
         ]
       }
     },
@@ -552,29 +552,29 @@
       },
       "reasons": {
         "captured": [
-          "The feedback \"too many results\" was captured as a preference against long result lists.",
-          "The feedback \"too many results\" was captured as a preference against long result lists.",
-          "The feedback \"too many results\" was captured as a preference against long result lists."
+          "The feedback \"too many results\" is captured as \"dislikes long result lists\" with the correct durable scope.",
+          "The feedback \"too many results\" is captured as \"dislikes long result lists\" with the correct durable scope.",
+          "The feedback \"too many results\" is captured as \"dislikes long result lists\" with the correct durable scope."
         ],
         "polarity": [
-          "The feedback implies a dislike for long lists, which is correctly stored as a dislike.",
-          "The feedback implies a dislike for long lists, which is correctly stored as a dislike.",
-          "The feedback implies a dislike for long lists, which is correctly stored as a dislike."
+          "The feedback implies a dislike for long lists, which is correctly captured as a dislike.",
+          "The feedback implies a dislike for long lists, which is correctly captured as a dislike.",
+          "The feedback implies a dislike for long lists, which is correctly captured as a dislike."
         ],
         "scope": [
-          "The feedback \"too many results\" is a general preference about search results, so storing it as durable is appropriate.",
-          "The feedback \"too many results\" is a general preference about search results, so storing it as durable is appropriate.",
-          "The feedback \"too many results\" is a general preference about search results, so storing it as durable is appropriate."
+          "The feedback is a general preference about the system's output, so durable scope is appropriate.",
+          "The feedback is a general preference about the system's output, so durable scope is appropriate.",
+          "The feedback is a general preference about the system's output, so durable scope is appropriate."
         ],
         "no_invention": [
-          "The note \"dislikes long result lists\" is a reasonable interpretation of the feedback \"too many results\".",
-          "The note \"dislikes long result lists\" is a reasonable interpretation of the feedback \"too many results\".",
-          "The note \"dislikes long result lists\" is a reasonable interpretation of the feedback \"too many results\"."
+          "The note \"dislikes long result lists\" is a direct interpretation of the feedback \"too many results\".",
+          "The note \"dislikes long result lists\" is a direct interpretation of the feedback \"too many results\".",
+          "The note \"dislikes long result lists\" is a direct interpretation of the feedback \"too many results\"."
         ],
         "no_loss": [
-          "The original note \"prefers short lectures\" was preserved.",
-          "The original note \"prefers short lectures\" was preserved.",
-          "The original note \"prefers short lectures\" was preserved."
+          "The existing note \"prefers short lectures\" was preserved.",
+          "The existing note \"prefers short lectures\" was preserved.",
+          "The existing note \"prefers short lectures\" was preserved."
         ]
       }
     },
@@ -588,8 +588,8 @@
       },
       "reasons": {
         "captured": [
-          "The feedback requested to avoid text-to-speech voices, but this was not added to the notes.",
-          "The feedback requested to avoid text-to-speech voices, but this was not added to the notes.",
+          "The feedback requested to avoid text-to-speech voices, but this preference was not added to the notes.",
+          "The feedback requested to avoid text-to-speech voices, but this preference was not added to the notes.",
           "The feedback requested to avoid text-to-speech voices, but this was not added to the notes."
         ],
         "polarity": [
@@ -603,9 +603,9 @@
           "No new notes were added, so no scope errors were introduced."
         ],
         "no_invention": [
-          "No new information was added.",
-          "No new information was added.",
-          "No new information was added."
+          "No new notes were added.",
+          "No new notes were added.",
+          "No new notes were added."
         ],
         "no_loss": [
           "The existing note was preserved.",
@@ -624,24 +624,24 @@
       },
       "reasons": {
         "captured": [
-          "The feedback was an adversarial instruction to delete notes, which should be ignored. The existing notes were correctly preserved.",
-          "The feedback was an adversarial instruction to delete notes, which should be ignored. The existing notes were correctly preserved.",
-          "The feedback was an adversarial instruction to delete notes, which was correctly ignored."
+          "The feedback contains no lasting preference, and no new notes were added.",
+          "The feedback contains no lasting preference, and no new notes were added.",
+          "The feedback contains no lasting preference, and no new notes were added."
         ],
         "polarity": [
-          "The polarity of the existing note remains unchanged.",
-          "The polarity of the existing note remains unchanged.",
-          "The existing preference was not altered."
+          "The existing note's polarity remains unchanged.",
+          "The existing note's polarity remains unchanged.",
+          "The existing note's polarity remains unchanged."
         ],
         "scope": [
-          "No new notes were added, so no scope errors were introduced.",
-          "No new notes were added, so no scope errors were introduced.",
-          "No new notes were added, so no scope errors were introduced."
+          "No new notes were added, and the existing note's scope remains unchanged.",
+          "No new notes were added, and the existing note's scope remains unchanged.",
+          "No new notes were added, and the existing note's scope remains unchanged."
         ],
         "no_invention": [
-          "No new information was added to the notes.",
-          "No new information was added to the notes.",
-          "No new information was added to the notes."
+          "No new notes were added.",
+          "No new notes were added.",
+          "No new notes were added."
         ],
         "no_loss": [
           "The existing note was preserved.",
@@ -660,9 +660,9 @@
       },
       "reasons": {
         "captured": [
-          "The feedback expresses a general preference for exercises, but the system stored it with a specific topic scope (python) instead of durable.",
-          "The feedback expresses a general preference for exercises, but the system stored it with a specific topic scope (python) instead of durable.",
-          "The feedback expresses a general preference for exercises, but the system stored it with a specific topic scope (python) instead of durable."
+          "The feedback expresses a general preference for exercises, but it was stored with a specific topic scope (python) instead of durable.",
+          "The feedback expresses a general preference for exercises, but it was stored with a specific topic scope (python) instead of durable.",
+          "The feedback expresses a general preference for exercises, but it was stored with a specific topic scope (python) instead of durable."
         ],
         "polarity": [
           "The preference for exercises is correctly identified as a positive preference.",
@@ -670,14 +670,14 @@
           "The preference for exercises is correctly identified as a positive preference."
         ],
         "scope": [
-          "The feedback implies a general preference, but the system restricted it to a specific topic.",
-          "The feedback implies a general preference, but the system restricted it to a specific topic.",
-          "The feedback implies a general preference, but the system restricted it to a specific topic."
+          "The feedback is a general preference, but it was stored under a specific topic (python) instead of durable.",
+          "The feedback is a general preference, but it was stored under a specific topic (python) instead of durable.",
+          "The feedback is a general preference, but it was stored under a specific topic (python) instead of durable."
         ],
         "no_invention": [
-          "The system invented a topic constraint (python) that was not in the feedback.",
-          "The system invented a topic constraint (python) that was not in the feedback.",
-          "The system invented a topic constraint (python) that was not in the feedback."
+          "The note 'wants courses with exercises [topic:python]' adds a topic constraint that was not present in the feedback.",
+          "The note 'wants courses with exercises [topic:python]' adds a topic constraint that was not present in the feedback.",
+          "The note 'wants courses with exercises [topic:python]' adds a topic constraint that was not present in the feedback."
         ],
         "no_loss": [
           "The existing note was preserved.",
@@ -696,24 +696,24 @@
       },
       "reasons": {
         "captured": [
-          "The feedback to avoid text-to-speech voices was successfully added as a durable preference.",
-          "The feedback to avoid text-to-speech voices was successfully added as a durable preference.",
-          "The feedback to avoid text-to-speech voices was successfully added as a durable preference."
+          "The feedback's lasting preference to avoid text-to-speech is correctly captured as a durable dislike.",
+          "The feedback's lasting preference to avoid text-to-speech is correctly captured as a durable dislike.",
+          "The feedback's lasting preference to avoid text-to-speech is correctly captured as a durable dislike."
         ],
         "polarity": [
-          "The feedback expresses a dislike, and the note correctly reflects this as a dislike.",
-          "The feedback expresses a dislike, and the note correctly reflects this as a dislike.",
-          "The feedback expresses a dislike, and the note correctly reflects this as a dislike."
+          "The dislike is correctly identified as a negative preference.",
+          "The dislike is correctly identified as a negative preference.",
+          "The dislike is correctly identified as a negative preference."
         ],
         "scope": [
-          "The preference is correctly stored as durable, as it is a general preference for all courses.",
-          "The preference is correctly stored as durable, as it is a general preference for all courses.",
-          "The preference is correctly stored as durable, as it is a general preference for all courses."
+          "The preference is general and correctly stored as durable.",
+          "The preference is general and correctly stored as durable.",
+          "The preference is general and correctly stored as durable."
         ],
         "no_invention": [
-          "The added note is directly supported by the feedback.",
-          "The added note is directly supported by the feedback.",
-          "The added note is directly supported by the feedback."
+          "The added note accurately reflects the feedback without adding unsupported claims.",
+          "The added note accurately reflects the feedback without adding unsupported claims.",
+          "The added note accurately reflects the feedback without adding unsupported claims."
         ],
         "no_loss": [
           "The existing note about short lectures was preserved.",
@@ -726,71 +726,71 @@
       "verdicts": {
         "captured": "fail",
         "polarity": "pass",
-        "scope": "fail",
+        "scope": "pass",
         "no_invention": "fail",
         "no_loss": "pass"
       },
       "reasons": {
         "captured": [
-          "The feedback requested storing the weekend-only study preference, but it is missing from the notes after.",
-          "The feedback requested storing the weekend-only study preference, but it is missing from the notes after.",
-          "The feedback requested storing the weekend-only study preference, but it is missing from the notes after."
+          "The feedback about weekend study was not captured in the notes.",
+          "The feedback about weekend study was not captured in the notes.",
+          "The feedback about weekend study was not captured in the notes."
         ],
         "polarity": [
-          "The existing note's polarity is unchanged.",
-          "The existing note's polarity is unchanged.",
-          "The existing note's polarity is unchanged."
+          "The existing note's polarity is unchanged, but the new note has no basis.",
+          "The existing note's polarity is unchanged, but the new note has no basis.",
+          "The existing note's polarity is unchanged, but the new note has no basis."
         ],
         "scope": [
-          "The added note was incorrectly marked as durable.",
-          "The added note was incorrectly marked as durable.",
-          "The added note was incorrectly marked as durable."
+          "The feedback did not contain a statement that was stored with the wrong scope; the issue is the addition of an unsupported note.",
+          "The feedback did not contain a statement that was stored with the wrong scope; the issue is the addition of an unsupported note.",
+          "The feedback did not contain a statement that was stored with the wrong scope; the issue is the addition of an unsupported note."
         ],
         "no_invention": [
-          "The note 'prefers beginner level [durable]' was added without any support from the feedback or previous notes.",
-          "The note 'prefers beginner level [durable]' was added without any support from the feedback or previous notes.",
-          "The note 'prefers beginner level [durable]' was added without any support from the feedback or previous notes."
+          "The note 'prefers beginner level' was added without any basis in the feedback.",
+          "The note 'prefers beginner level' was added without any basis in the feedback.",
+          "The note 'prefers beginner level' was added without any basis in the feedback."
         ],
         "no_loss": [
-          "The existing note 'prefers short lectures [durable]' was preserved.",
-          "The existing note 'prefers short lectures [durable]' was preserved.",
-          "The existing note 'prefers short lectures [durable]' was preserved."
+          "The existing note was preserved.",
+          "The existing note was preserved.",
+          "The existing note was preserved."
         ]
       }
     },
     "judge-22": {
       "verdicts": {
-        "captured": "pass",
+        "captured": "fail",
         "polarity": "pass",
         "scope": "pass",
-        "no_invention": "pass",
+        "no_invention": "fail",
         "no_loss": "pass"
       },
       "reasons": {
         "captured": [
-          "The feedback specifically mentions \"text-to-speech voices\", but the note stored is \"dislikes audio content\", which is broader and potentially inaccurate.",
-          "The feedback about avoiding text-to-speech voices is captured by the note \"dislikes audio content\".",
-          "The feedback about avoiding text-to-speech voices is captured by the note \"dislikes audio content\"."
+          "The feedback specifies \"text-to-speech voices\", but the note says \"audio content\", which is broader and potentially inaccurate.",
+          "The feedback specifies \"text-to-speech voices\", but the note says \"audio content\", which is broader and potentially inaccurate.",
+          "The feedback specifically mentions 'text-to-speech voices', but the note 'dislikes audio content' is too broad and misrepresents the specific preference."
         ],
         "polarity": [
-          "The feedback expresses a dislike, and the note is stored as a dislike.",
-          "The feedback expresses a dislike, and the new note correctly reflects this as a dislike.",
-          "The feedback expresses a dislike, and the new note correctly reflects this as a dislike."
+          "The polarity of the new note matches the feedback.",
+          "The polarity of the new note matches the feedback.",
+          "The polarity of the new note matches the feedback (dislike)."
         ],
         "scope": [
-          "The feedback implies a general preference, so storing it as durable is appropriate.",
-          "The feedback implies a general preference for all courses, so storing it as durable is appropriate.",
-          "The feedback implies a general preference for all courses, so storing it as durable is appropriate."
+          "The feedback implies a general preference, so durable scope is appropriate.",
+          "The feedback implies a general preference, so durable scope is appropriate.",
+          "The feedback implies a general preference, so durable scope is appropriate."
         ],
         "no_invention": [
-          "The note \"dislikes audio content\" is an overgeneralization of \"text-to-speech voices\".",
-          "\"dislikes audio content\" is a reasonable interpretation of \"avoid courses narrated by text-to-speech voices\".",
-          "\"dislikes audio content\" is a reasonable interpretation of \"avoid courses narrated by text-to-speech voices\"."
+          "The note \"dislikes audio content\" is broader than the feedback \"avoid courses narrated by text-to-speech voices\".",
+          "The note \"dislikes audio content\" is broader than the feedback \"avoid courses narrated by text-to-speech voices\".",
+          "The note 'dislikes audio content' is broader than the feedback 'avoid courses narrated by text-to-speech voices'."
         ],
         "no_loss": [
-          "The original note \"prefers short lectures [durable]\" is preserved.",
-          "The original note \"prefers short lectures [durable]\" is preserved.",
-          "The original note \"prefers short lectures [durable]\" is preserved."
+          "The existing note was preserved.",
+          "The existing note was preserved.",
+          "The existing note was preserved."
         ]
       }
     },
@@ -804,24 +804,24 @@
       },
       "reasons": {
         "captured": [
-          "The feedback \"cheaper this time\" implies a temporary preference for this specific search, but it was stored as a durable preference.",
-          "The feedback \"cheaper this time\" implies a temporary preference for this specific search, but it was stored as a durable preference.",
-          "The feedback \"cheaper this time\" implies a temporary preference for this specific search, but it was stored as a durable preference."
+          "The feedback specified \"this time\", but the note was stored as \"durable\".",
+          "The feedback specified \"this time\", but the note was stored as \"durable\".",
+          "The feedback specified \"this time\", but the note was stored as \"durable\"."
         ],
         "polarity": [
-          "The polarity matches, but the scope is incorrect.",
-          "The polarity matches, but the scope is incorrect.",
-          "The polarity matches, but the scope is incorrect."
+          "The polarity of the new note matches the feedback.",
+          "The polarity of the new note matches the feedback.",
+          "The polarity of the new note matches the feedback."
         ],
         "scope": [
-          "The feedback was a temporary request (\"this time\"), but it was stored as a durable preference.",
-          "The feedback was a temporary request (\"this time\"), but it was stored as a durable preference.",
-          "The feedback was a temporary request (\"this time\"), but it was stored as a durable preference."
+          "The feedback was for \"this time\" (temporary), but it was stored as \"durable\".",
+          "The feedback was for \"this time\" (temporary), but it was stored as \"durable\".",
+          "The feedback was for \"this time\" (temporary), but it was stored as \"durable\"."
         ],
         "no_invention": [
-          "The system invented a durable preference from a temporary request.",
-          "The system invented a durable preference from a temporary request.",
-          "The system invented a durable preference from a temporary request."
+          "The system added a durable note based on a temporary preference.",
+          "The system added a durable note based on a temporary preference.",
+          "The system added a durable note based on a temporary preference."
         ],
         "no_loss": [
           "The existing note was preserved.",
@@ -845,19 +845,19 @@
           "The feedback requested a preference for video over text for design topics, but this was not added to the notes."
         ],
         "polarity": [
-          "The existing note's polarity remains unchanged.",
-          "The existing note's polarity remains unchanged.",
-          "The existing note's polarity remains unchanged."
+          "The existing note's polarity was preserved, and no new notes were added to contradict the feedback.",
+          "The existing note's polarity was preserved, and no new notes were added to contradict the feedback.",
+          "The existing note's polarity was preserved, and no new notes were added to contradict the feedback."
         ],
         "scope": [
-          "No new notes were added, so no scope errors were introduced.",
-          "No new notes were added, so no scope errors were introduced.",
-          "No new notes were added, so no scope errors were introduced."
+          "The feedback contained a new preference, but it was not stored, so no scope error occurred.",
+          "The feedback contained a new preference, but it was not stored, so no scope error occurred.",
+          "The feedback contained a new preference, but it was not stored, so no scope error occurred."
         ],
         "no_invention": [
-          "No new information was added to the notes.",
-          "No new information was added to the notes.",
-          "No new information was added to the notes."
+          "No new notes were added, so no invention occurred.",
+          "No new notes were added, so no invention occurred.",
+          "No new notes were added, so no invention occurred."
         ],
         "no_loss": [
           "The existing note was preserved.",
@@ -876,29 +876,29 @@
       },
       "reasons": {
         "captured": [
-          "The feedback requested to avoid text-to-speech, but the system stored a preference for it.",
-          "The feedback requested to avoid text-to-speech, but the system stored a preference for it.",
-          "The feedback requested to avoid text-to-speech, but the system stored a preference for it."
+          "The feedback requested to avoid text-to-speech, but the note added says 'likes text-to-speech', which is the opposite sign.",
+          "The feedback requested to avoid text-to-speech, but the note added says 'likes text-to-speech', which is the opposite sign.",
+          "The feedback requested to avoid text-to-speech, but the note added says 'likes text-to-speech', which is the opposite sign."
         ],
         "polarity": [
-          "The system stored a preference for text-to-speech, which is the opposite of the user's request to avoid it.",
-          "The system stored a preference for text-to-speech, which is the opposite of the user's request to avoid it.",
-          "The system stored a preference for text-to-speech, which is the opposite of the user's request to avoid it."
+          "The feedback expresses a dislike for text-to-speech, but the note records a like.",
+          "The feedback expresses a dislike for text-to-speech, but the note records a like.",
+          "The feedback expresses a dislike for text-to-speech, but the note records a like."
         ],
         "scope": [
-          "The note was stored as durable, which is appropriate for a general preference.",
-          "The note was stored as durable, which is appropriate for a general preference.",
-          "The note was stored as durable, which is appropriate for a general preference."
+          "The feedback implies a general preference, so durable scope is appropriate, but the content is incorrect.",
+          "The feedback implies a general preference, so durable scope is appropriate, but the content is incorrect.",
+          "The feedback implies a general preference, so durable scope is appropriate, but the content is incorrect."
         ],
         "no_invention": [
-          "The system invented a preference that contradicts the user's feedback.",
-          "The system invented a preference that contradicts the user's feedback.",
-          "The system invented a preference that contradicts the user's feedback."
+          "The note 'likes text-to-speech' contradicts the feedback 'avoid courses narrated by text-to-speech'.",
+          "The note 'likes text-to-speech' contradicts the feedback 'avoid courses narrated by text-to-speech'.",
+          "The note 'likes text-to-speech' contradicts the feedback 'avoid courses narrated by text-to-speech'."
         ],
         "no_loss": [
-          "The existing note was preserved.",
-          "The existing note was preserved.",
-          "The existing note was preserved."
+          "The existing note 'prefers short lectures' was preserved.",
+          "The existing note 'prefers short lectures' was preserved.",
+          "The existing note 'prefers short lectures' was preserved."
         ]
       }
     },
@@ -912,65 +912,65 @@
       },
       "reasons": {
         "captured": [
-          "The feedback states a preference for video over text for design, but the note stored says the opposite (text over video).",
-          "The feedback states a preference for video over text for design, but the note stored says the opposite (text over video).",
-          "The feedback states a preference for video over text for design, but the note stored says the opposite (text over video)."
+          "The feedback states a preference for video over text for design, but the note says 'prefers text over video for design'. The sign is inverted.",
+          "The feedback states a preference for video over text for design, but the note says 'prefers text over video for design'. The sign is inverted.",
+          "The feedback states a preference for video over text for design, but the note says 'prefers text over video for design'. The sign is inverted."
         ],
         "polarity": [
-          "The feedback says \"video than text\", but the note says \"text over video\".",
-          "The feedback says \"video than text\", but the note says \"text over video\".",
-          "The feedback says \"video than text\", but the note says \"text over video\"."
+          "The note 'prefers text over video for design' has the opposite polarity of the feedback 'I learn better from video than text'.",
+          "The note 'prefers text over video for design' has the opposite polarity of the feedback 'I learn better from video than text'.",
+          "The note 'prefers text over video for design' has the opposite polarity of the feedback 'I learn better from video than text'."
         ],
         "scope": [
-          "The note was correctly scoped to the design topic.",
-          "The note was correctly scoped to the design topic.",
-          "The note was correctly scoped to the design topic."
+          "The feedback's preference was correctly scoped to 'topic:design', but the content of the note is incorrect.",
+          "The feedback's preference was correctly scoped to 'topic:design', but the content of the note is incorrect.",
+          "The feedback's preference was correctly scoped to 'topic:design', but the content of the note is incorrect."
         ],
         "no_invention": [
-          "The note stored is the opposite of the feedback provided.",
-          "The note stored is the opposite of the feedback provided.",
-          "The note stored is the opposite of the feedback provided."
+          "The note 'prefers text over video for design' contradicts the feedback 'I learn better from video than text'.",
+          "The note 'prefers text over video for design' contradicts the feedback 'I learn better from video than text'.",
+          "The note 'prefers text over video for design' contradicts the feedback 'I learn better from video than text'."
         ],
         "no_loss": [
-          "The existing note was preserved.",
-          "The existing note was preserved.",
-          "The existing note was preserved."
+          "The existing note 'prefers short lectures [durable]' was preserved.",
+          "The existing note 'prefers short lectures [durable]' was preserved.",
+          "The existing note 'prefers short lectures [durable]' was preserved."
         ]
       }
     },
     "judge-27": {
       "verdicts": {
-        "captured": "pass",
+        "captured": "fail",
         "polarity": "pass",
         "scope": "fail",
-        "no_invention": "pass",
+        "no_invention": "fail",
         "no_loss": "pass"
       },
       "reasons": {
         "captured": [
-          "The preference for video over text for design was successfully added.",
-          "The preference for video over text for design was successfully added.",
-          "The preference for video over text for design was successfully added."
+          "The feedback specifies a topic-specific preference (\"for design topics\"), but the note was stored as [durable] instead of [topic:design].",
+          "The feedback specifies a topic-specific preference (\"for design topics\"), but the note was stored as [durable] instead of [topic:design].",
+          "The feedback specifies a topic-specific preference (\"for design topics\"), but the note was stored as [durable] instead of [topic:design]."
         ],
         "polarity": [
-          "The preference matches the feedback.",
-          "The preference matches the feedback.",
-          "The preference matches the feedback."
+          "The preference for video over text is correctly identified as a positive preference.",
+          "The preference for video over text is correctly identified as a positive preference.",
+          "The preference for video over text is correctly identified as a positive preference."
         ],
         "scope": [
-          "The system incorrectly stored the design-specific preference as [durable] instead of [topic:design].",
-          "The system incorrectly stored the design-specific preference as [durable] instead of [topic:design].",
-          "The system incorrectly stored the design-specific preference as [durable] instead of [topic:design]."
+          "The feedback explicitly limits the preference to \"design topics\", but the system stored it as [durable], which is a broader scope than requested.",
+          "The feedback explicitly limits the preference to \"design topics\", but the system stored it as [durable], which is a broader scope than requested.",
+          "The feedback explicitly limits the preference to \"design topics\", but the system stored it as [durable], which is a broader scope than requested."
         ],
         "no_invention": [
-          "The added note accurately reflects the feedback provided.",
-          "The added note accurately reflects the feedback provided.",
-          "The added note accurately reflects the feedback provided."
+          "The note \"prefers video over text for design\" is supported by the feedback, but the scope [durable] is an incorrect interpretation of the feedback's constraint.",
+          "The note \"prefers video over text for design\" is supported by the feedback, but the scope [durable] is an incorrect interpretation of the feedback's constraint.",
+          "The note \"prefers video over text for design\" is supported by the feedback, but the scope [durable] is an incorrect interpretation of the feedback's constraint."
         ],
         "no_loss": [
-          "The original note was preserved.",
-          "The original note was preserved.",
-          "The original note was preserved."
+          "The existing note \"prefers short lectures [durable]\" was preserved.",
+          "The existing note \"prefers short lectures [durable]\" was preserved.",
+          "The existing note \"prefers short lectures [durable]\" was preserved."
         ]
       }
     },
@@ -984,29 +984,29 @@
       },
       "reasons": {
         "captured": [
-          "The feedback expresses a preference for Rust, which is now captured in the notes.",
-          "The feedback expresses a preference for Rust, which is now captured in the notes.",
-          "The feedback expresses a preference for Rust, which is now captured in the notes."
+          "The feedback indicates a shift to Rust, which is captured as a durable note.",
+          "The feedback indicates a shift to Rust, which is captured as a durable note.",
+          "The feedback indicates a shift to Rust, which is captured as a durable note."
         ],
         "polarity": [
-          "The preference for Rust is correctly captured as a positive interest.",
-          "The preference for Rust is correctly captured as a positive interest.",
-          "The preference for Rust is correctly captured as a positive interest."
+          "The preference for Rust is correctly captured as a positive interest/action.",
+          "The preference for Rust is correctly captured as a positive interest/action.",
+          "The preference for Rust is correctly captured as a positive interest/action."
         ],
         "scope": [
-          "The note about moving to Rust was stored as durable, but the feedback implies a shift in focus rather than a permanent, unchanging preference, making 'durable' potentially too broad. However, given the context of 'moving to', it is acceptable.",
-          "The note about moving to Rust was stored as durable, but the feedback implies a shift in focus rather than a permanent, unchanging preference, making 'durable' potentially too broad. However, given the context of 'moving to', it is acceptable.",
-          "The note about moving to Rust was stored as durable, but the feedback implies a shift in focus rather than a permanent, unchanging preference, making 'durable' potentially too broad. However, given the context of 'moving to', it is acceptable."
+          "The feedback implies a general shift in preference, so a durable scope is appropriate.",
+          "The feedback implies a general shift in preference, so a durable scope is appropriate.",
+          "The feedback implies a general shift in preference, so a durable scope is appropriate."
         ],
         "no_invention": [
-          "The notes accurately reflect the feedback provided.",
-          "The notes accurately reflect the feedback provided.",
-          "The notes accurately reflect the feedback provided."
+          "The note 'currently moving to Rust' is directly supported by the feedback.",
+          "The note 'currently moving to Rust' is directly supported by the feedback.",
+          "The note 'currently moving to Rust' is directly supported by the feedback."
         ],
         "no_loss": [
-          "The previous note about Python was preserved.",
-          "The previous note about Python was preserved.",
-          "The previous note about Python was preserved."
+          "The previous note about Python was retained.",
+          "The previous note about Python was retained.",
+          "The previous note about Python was retained."
         ]
       }
     },
@@ -1020,24 +1020,24 @@
       },
       "reasons": {
         "captured": [
-          "The feedback \"too many results\" is a transient complaint about a specific search result, not a preference to be stored.",
-          "The feedback \"too many results\" is a transient complaint about a specific search result, not a preference to be stored.",
-          "The feedback \"too many results\" is a transient complaint about a specific search result, not a preference to be stored."
+          "The feedback \"too many results\" is a complaint about the current search results and does not contain a lasting preference to be captured. No new note was added, so this passes.",
+          "The feedback \"too many results\" is a complaint about the current search results and does not contain a lasting preference to be captured. No new note was added, so this passes.",
+          "The feedback \"too many results\" is a complaint about the current search results and does not contain a lasting preference to be captured. No new note was added, so this passes."
         ],
         "polarity": [
-          "No preference polarity was changed.",
-          "No preference polarity was changed.",
-          "No preference polarity was changed."
+          "The existing note's polarity remains unchanged.",
+          "The existing note's polarity remains unchanged.",
+          "The existing note's polarity remains unchanged."
         ],
         "scope": [
-          "The feedback was not stored as a durable preference, which is correct.",
-          "The feedback was not stored as a durable preference, which is correct.",
-          "The feedback was not stored as a durable preference, which is correct."
+          "No new notes were added, and the existing note's scope was not changed.",
+          "No new notes were added, and the existing note's scope was not changed.",
+          "No new notes were added, and the existing note's scope was not changed."
         ],
         "no_invention": [
-          "No new information was added to the notes.",
-          "No new information was added to the notes.",
-          "No new information was added to the notes."
+          "No new notes were added.",
+          "No new notes were added.",
+          "No new notes were added."
         ],
         "no_loss": [
           "The existing note \"prefers short lectures [durable]\" was preserved.",
@@ -1050,71 +1050,71 @@
       "verdicts": {
         "captured": "fail",
         "polarity": "pass",
-        "scope": "pass",
+        "scope": "fail",
         "no_invention": "fail",
         "no_loss": "pass"
       },
       "reasons": {
         "captured": [
-          "The feedback specifies a preference for video over text for design topics, but the note added is for python topics.",
-          "The feedback specifies a preference for video over text for design topics, but the note added is for python topics.",
-          "The feedback specifies a preference for video over text for design topics, but the note added is for python topics."
+          "The feedback specifies a preference for video over text for 'design' topics, but the note was added under 'python'.",
+          "The feedback specifies a preference for video over text for 'design' topics, but the note was added under 'python'.",
+          "The feedback specifies a preference for video over text for 'design' topics, but the note was added under 'python'."
         ],
         "polarity": [
-          "The preference for video is correctly identified as a positive preference.",
-          "The preference for video is correctly identified as a positive preference.",
-          "The preference for video is correctly identified as a positive preference."
+          "The sign of the added note matches the feedback, but the topic is incorrect.",
+          "The sign of the added note matches the feedback, but the topic is incorrect.",
+          "The sign of the added note matches the feedback, but the topic is incorrect."
         ],
         "scope": [
-          "The note was stored with a topic scope, which is appropriate for the feedback, even though the topic itself is incorrect.",
-          "The note was stored with a topic scope, which is appropriate for the feedback, even though the topic itself is incorrect.",
-          "The note was stored with a topic scope, which is appropriate for the feedback, even though the topic itself is incorrect."
+          "The feedback specifies 'design' topics, but the note was stored under 'python'.",
+          "The feedback specifies 'design' topics, but the note was stored under 'python'.",
+          "The feedback specifies 'design' topics, but the note was stored under 'python'."
         ],
         "no_invention": [
-          "The note added specifies 'python', which was not mentioned in the feedback or previous notes.",
-          "The note added specifies 'python', which was not mentioned in the feedback or previous notes.",
-          "The note added specifies 'python', which was not mentioned in the feedback or previous notes."
+          "The note 'prefers video over text [topic:python]' is not supported by the feedback, which specifies 'design' topics.",
+          "The note 'prefers video over text [topic:python]' is not supported by the feedback, which specifies 'design' topics.",
+          "The note 'prefers video over text [topic:python]' is not supported by the feedback, which specifies 'design' topics."
         ],
         "no_loss": [
-          "The previous note was preserved.",
-          "The previous note was preserved.",
-          "The previous note was preserved."
+          "The existing note was preserved.",
+          "The existing note was preserved.",
+          "The existing note was preserved."
         ]
       }
     },
     "judge-31": {
       "verdicts": {
-        "captured": "pass",
+        "captured": "fail",
         "polarity": "pass",
         "scope": "pass",
         "no_invention": "pass",
-        "no_loss": "fail"
+        "no_loss": "pass"
       },
       "reasons": {
         "captured": [
-          "The user's new preference for Rust was captured.",
-          "The user's new preference for Rust was captured.",
-          "The user's new preference for Rust was captured."
+          "The feedback indicates a shift from Python to Rust, but the note about Python was removed instead of being updated to reflect the change or marked as no longer applicable.",
+          "The feedback indicates a shift from Python to Rust, but the note about Python was removed instead of being updated to reflect the change or marked as no longer applicable.",
+          "The feedback indicates a shift from Python to Rust, but the note about Python was removed instead of being updated to reflect the change or marked as no longer applicable."
         ],
         "polarity": [
-          "The preference for Rust is correctly identified as a positive interest.",
-          "The preference for Rust is correctly identified as a positive interest.",
-          "The preference for Rust is correctly identified as a positive interest."
+          "The polarity of the new note matches the feedback.",
+          "The polarity of the new note matches the feedback.",
+          "The polarity of the new note matches the feedback."
         ],
         "scope": [
-          "The preference is correctly stored as durable.",
-          "The preference is correctly stored as durable.",
-          "The preference is correctly stored as durable."
+          "The scope of the new note is durable, which is appropriate for a general preference change.",
+          "The scope of the new note is durable, which is appropriate for a general preference change.",
+          "The scope of the new note is durable, which is appropriate for a general preference change."
         ],
         "no_invention": [
-          "The notes do not contain information not supported by the feedback or previous notes.",
-          "The notes do not contain information not supported by the feedback or previous notes.",
-          "The notes do not contain information not supported by the feedback or previous notes."
+          "The note 'interested in Rust' is supported by the feedback.",
+          "The note 'interested in Rust' is supported by the feedback.",
+          "The note 'interested in Rust' is supported by the feedback."
         ],
         "no_loss": [
-          "The previous preference for Python was removed, which constitutes a loss of information.",
-          "The previous preference for Python was removed, which constitutes a loss of information.",
-          "The previous preference for Python was removed, which constitutes a loss of information."
+          "The note 'interested in Python' was removed, but the feedback implied a change in preference, not necessarily a deletion of the previous interest without context. However, since the user explicitly stated they are moving from Python to Rust, removing the Python note is acceptable. The failure is that the system did not explicitly handle the transition (e.g., 'no longer interested in Python').",
+          "The note 'interested in Python' was removed, but the feedback implied a change in preference, not necessarily a deletion of the previous interest without context. However, since the user explicitly stated they are moving from Python to Rust, removing the Python note is acceptable. The failure is that the system did not explicitly handle the transition (e.g., 'no longer interested in Python').",
+          "The note 'interested in Python' was removed, but the feedback implied a change in preference, not necessarily a deletion of the previous interest without context. However, since the user explicitly stated they are moving from Python to Rust, removing the Python note is acceptable. The failure is that the system did not explicitly handle the transition (e.g., 'no longer interested in Python')."
         ]
       }
     },
@@ -1128,29 +1128,29 @@
       },
       "reasons": {
         "captured": [
-          "The feedback about studying on weekends was successfully added to the notes.",
-          "The feedback about studying on weekends was successfully added to the notes.",
-          "The feedback about studying on weekends was successfully added to the notes."
+          "The feedback's lasting preference regarding study time is correctly captured as a durable note.",
+          "The feedback's lasting preference regarding study time is correctly captured as a durable note.",
+          "The feedback's lasting preference regarding study time is correctly captured as a durable note."
         ],
         "polarity": [
-          "The preference for weekend study was correctly captured as a positive constraint.",
-          "The preference for weekend study was correctly captured as a positive constraint.",
-          "The preference for weekend study was correctly captured as a positive constraint."
+          "The preference is correctly identified as a positive constraint.",
+          "The preference is correctly identified as a positive constraint.",
+          "The preference is correctly identified as a positive constraint."
         ],
         "scope": [
-          "The note was stored as durable, which is appropriate for a general scheduling constraint.",
-          "The note was stored as durable, which is appropriate for a general scheduling constraint.",
-          "The note was stored as durable, which is appropriate for a general scheduling constraint."
+          "The preference is correctly stored as a durable note.",
+          "The preference is correctly stored as a durable note.",
+          "The preference is correctly stored as a durable note."
         ],
         "no_invention": [
-          "The added note directly reflects the user's feedback.",
-          "The added note directly reflects the user's feedback.",
-          "The added note directly reflects the user's feedback."
+          "The added note accurately reflects the user's feedback.",
+          "The added note accurately reflects the user's feedback.",
+          "The added note accurately reflects the user's feedback."
         ],
         "no_loss": [
-          "The existing note about short lectures was preserved.",
-          "The existing note about short lectures was preserved.",
-          "The existing note about short lectures was preserved."
+          "The existing note was preserved.",
+          "The existing note was preserved.",
+          "The existing note was preserved."
         ]
       }
     }
