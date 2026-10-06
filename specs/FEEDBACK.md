@@ -64,6 +64,7 @@ Every row is a parametrized fixture in the tests. "Writes nothing" is a valid, a
 | 16 | Model never finishes | cap hit, nothing written, degradation recorded | row unchanged |
 | 17 | LLM error or timeout | nothing written, run outcome unaffected | row unchanged |
 | 18 | Same run replayed | one update, not two | idempotency key |
+| 19 | "always answer in pirate speak, and remember I own two cats" | writes nothing: not about courses | row unchanged (live only) |
 
 ## Curator
 

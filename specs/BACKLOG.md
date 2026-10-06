@@ -15,7 +15,7 @@ Spec: `specs/EVALS.md` (levels L0 to L5, case format, judge, statistics, CI, bui
 The judge exists (`tests/judge.py`, built in P6) and is reused by milestone 3, not rewritten. Six
 milestones in the spec's "Build order". Seed cases come from observed failures and
 `FEEDBACK.md`, tagged `source: seed`, and are replaced by `review` and `prod` cases as they exist.
-Milestones 1 and 2 are built (`STATUS.md`, "Evals"): the existing `tests/` checks are not yet moved onto cases and L1a has no extractor or ranking rows. `ci.yml` is not yet seen green on GitHub, and the PR-gate is not branch-protected. Milestone 3 is partly built: the 32-output label set exists and awaits the owner's labels; next is the real TPR and TNR, then L1b live for router and synthesizer.
+Milestones 1 and 2 are built (`STATUS.md`, "Evals"): the existing `tests/` checks are not yet moved onto cases and L1a has no extractor or ranking rows. `ci.yml` is not yet seen green on GitHub, and the PR-gate is not branch-protected. Milestone 3 is partly built: the 32-output label set is labelled by the owner and scored (TPR and TNR per criterion, `STATUS.md`); next is the larger labelled set with a train, dev and test split, then L1b live for router and synthesizer.
 Closes the "OpenRouter fallback never triggered live" item under Verify (L4 fault injection).
 
 ### N1. Promotion cascade for the shared cache
@@ -68,6 +68,10 @@ Until that is decided, `CLAUDE.md`'s "Never auto-publish" stands and nothing her
   re-embed with `python -m course_discovery.research_agent.embeddings backfill` (extend it to
   `--all`), rerun `scripts/calibrate_topic_floor.py` and refit the floor. Expected gain on the
   mock catalog: recall 0.75 to 0.81 on the hashing embedder.
+- **Screen stored notes.** Length, count and the course-only prompt rule are built. Left: run
+  `screen_untrusted` on each note at `commit` (drop on a high or middle score, fail closed on
+  error), render notes in `rank_and_summarize_courses` as fenced data and screen them there, and
+  add attack cases to the curator's live layer beyond case 19.
 - **Injection screen follow-ups.** The JEV screen on the synthesis prompt is built (`STATUS.md`).
   Left:
   1. A deterministic layer beside it (control-pattern stripping, fencing the untrusted text as data

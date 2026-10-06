@@ -65,7 +65,7 @@ Seed targets (counts are a floor, not a quota):
 | L1b parser | 12 queries | filters implied, budget and certificate defaults, PII in the query, rule-fallback parity |
 | L1b router | 5 routes, 4 phrasings each, plus 4 look-alikes | `RoutingAction`, ambiguous approvals |
 | L1b synthesizer | 10 digests | groundedness against the evidence, ranking highlights, withheld free text |
-| L1b curator | `FEEDBACK.md` cases 1 to 3, 7, 10 to 18 stubbed; 4 and 8 live | the case list there |
+| L1b curator | `FEEDBACK.md` cases 1 to 3, 7, 10 to 18 stubbed; 4, 8 and 19 live | the case list there |
 | L2 subgraphs | 8 scenarios | enter at `plan_gap_search` for AUGMENT, budget exhausted, empty cache, search failure |
 | L3 graph | 8 scenarios | approve, discard, REWRITE, AUGMENT, RESET, multi-round, wrong owner, stale thread |
 | L4 reliability | 10 tasks, k trials each | the L3 scenarios that touch a live model, plus fault and injection probes |

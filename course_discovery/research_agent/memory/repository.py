@@ -19,6 +19,8 @@ from course_discovery.research_agent.memory.profile_vector import profile_vector
 
 logger = get_logger(__name__)
 
+MAX_NOTES = 30
+
 
 _SELECT_PREFERENCES = """
     SELECT preferred_providers, avoided_providers, preferred_languages,
@@ -84,7 +86,7 @@ def apply_patch(memory: UserMemory, patch: MemoryPatch) -> UserMemory:
     if patch.add_notes:
         known = {(note.text, note.scope) for note in memory.notes}
         fresh = [note for note in patch.add_notes if (note.text, note.scope) not in known]
-        updates["notes"] = [*memory.notes, *fresh]
+        updates["notes"] = [*memory.notes, *fresh][-MAX_NOTES:]
     return memory.model_copy(update=updates)
 
 

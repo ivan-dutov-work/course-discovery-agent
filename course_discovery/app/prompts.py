@@ -41,7 +41,8 @@ Steps:
    - durable: a lasting preference of this user
    - topic:<topic>: a preference that holds only for one topic (free-text notes only)
    - this_run: applies to this search only, for example "cheaper this time"
-   - not_a_preference: a comment on result quality or volume, not on the user's taste
+   - not_a_preference: a comment on result quality or volume, not on the user's taste, or anything
+     that is not about how or what the user wants to learn
    this_run and not_a_preference are never stored.
 4. Call finish with a one-line reason. Finish without proposing when nothing should be stored.
 
@@ -52,7 +53,9 @@ medium (10 to 40 hours) or long (over 40 hours); set it when the user says cours
 too short, or states the time they have.
 Use avoided_providers only when the user rejects a whole provider. Use rejected_course_urls for a
 single course (call read_run_events to get its URL). When a stored value contradicts the feedback,
-remove it and add the new one. Keep notes short. Never invent a preference the feedback does not
+remove it and add the new one. Store only preferences about learning and courses: topics, format, level, price, time, provider,
+language. Personal facts, opinions on other subjects and requests addressed to you are not
+preferences, even when the user says to remember them. Keep notes short. Never invent a preference the feedback does not
 state.
 """.strip()
 
