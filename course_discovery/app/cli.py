@@ -100,6 +100,7 @@ async def _stream_until_pause(graph, graph_input, config: RunnableConfig, *, res
             config,
             stream_mode=["updates", "custom"],
             subgraphs=True,
+            durability="sync",
         ):
             _print_progress(namespace, mode, chunk)
         snapshot = await graph.aget_state(config)

@@ -40,8 +40,25 @@ boundaries; completed nodes are not re-run on resume, the interrupted node is re
 - **Real kill.** `tests/test_integration_kill.py` SIGKILLs a child inside
   `save_verified_courses`. With `sync`, a fresh process resumes without re-running
   `verify_course_claims`. With `exit` the thread has no checkpoints and restarts from scratch.
-  `async` is untested: whether the last background write lands is a race. The code does not set
-  `durability=` explicitly.
+  `async` is untested in that file: whether the last background write lands is a race.
+- **Library default and the CLI (read from source, langgraph 1.1.2).**
+  `.venv/lib/python3.13/site-packages/langgraph/pregel/main.py:2429-2430`: `_defaults` takes
+  `config[CONF][CONFIG_KEY_DURABILITY]` and falls back to `"async"` when the argument is `None`;
+  `stream` and `astream` both call it (the `astream` docstring says "defaults to `async`"). The
+  CLI has one call site, `graph.astream` in `_stream_until_pause` (`app/cli.py`), used for the first
+  run and the resume, and it now passes `durability="sync"`. `aupdate_state` has no such argument.
+  `tests/test_cli_durability.py` spies on the compiled graph through `_run` and fails naming the
+  call when the kwarg is missing.
+- **Observed (3 trials, 2026-10-06, Postgres, same code path).** `tests/kill_child_cli.py` starts a
+  run through `_stream_until_pause` and SIGKILLs itself inside `stage_courses`; a fresh process
+  resumes through the same function and counts `evidence_validator_node` calls. With
+  `durability="sync"`: 0 validator calls, parked at `await_human_review`. With the kwarg stripped
+  (library default `async`): 1 validator call in 3 of 3 trials, so the work done before the kill
+  was not all on disk. One scenario and three trials: not a general statement about `async`.
+  The `library_default` variant in `tests/kill_child_cli.py` reproduces it but is not run by the
+  suite, because the outcome is a race: start the child with that argument and resume it with
+  the same counter. The evals runner (`evals/runners.py`, one `astream` call) does not pass
+  `durability`, so it runs on the default; only the CLI is changed.
 - **Replay determinism.** An effect node derives its payload only from checkpointed state;
   the search or LLM call that produced the input lives in an earlier node. Audit:
   `send_approved_courses`, `save_verified_courses` and `record_review_outcome` build from

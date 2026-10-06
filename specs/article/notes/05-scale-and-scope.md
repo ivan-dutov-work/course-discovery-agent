@@ -20,8 +20,8 @@ All three patterns are architectural descriptions; no code implements them.
 
 - State once, plainly: this is not a production case study. See `DECISIONS.md`.
 - "Production would swap this one class" is an architectural claim, not a tested migration.
-- Strongest evidence in the repo: the SIGKILL child-process test. `async` durability is
-  deliberately untested for a hard kill.
+- Strongest evidence in the repo: the SIGKILL child-process test. `async` durability has
+  one three-trial hard-kill observation (`notes/02`), not a measured rate.
 - Strict-mode msgpack behaviour for a type outside the state schema is untested.
 - Not verified: the OpenRouter fallback path live, OpenRouter retention controls, `Command` or
   dynamic `interrupt()` inside a subgraph, `@task` inside a subgraph mechanism.
