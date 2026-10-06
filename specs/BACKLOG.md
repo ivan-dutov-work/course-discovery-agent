@@ -41,6 +41,286 @@ separate graph off the request path (gap 4), triggered through the outbox.
 Open question, not a task. If runs become self-serve for many users, `send_approved_courses` and
 the per-run `interrupt_before` become a per-user "save" action, and the human gate lives in N1.
 Until that is decided, `CLAUDE.md`'s "Never auto-publish" stands and nothing here changes it.
+Partly settled by the chat product (`DECISIONS.md`, "Product shape: one continuous chat"): in chat
+mode the parked thread is a conversation wait, acceptance is implicit and only catalogue promotion
+is gated. W4 carries the `CLAUDE.md` wording change and needs the owner's sign-off.
+
+## Chat product and load: worktrees
+
+Eight worktrees, each a branch an agent can take whole. They mostly own different files but share
+the state contract, the migration numbers and the spec documents, so they run in batches, not all
+at once. Each batch ends in a checkpoint you can run, and the next batch branches from `main` after
+it merges. The batches and merge notes are at the end of this section. The source of each item is
+the grilling session of 2026-10-06 (decisions recorded in `DECISIONS.md`).
+
+Product shape in one paragraph: one continuous Telegram chat per person. Each message is first
+classified (JEV, app layer, before a thread exists) as continuing the person's latest parked thread
+or starting a new topic. Inside a thread the existing review loop (`REWRITE`, `AUGMENT`, `RESET`)
+handles refinement. There is no approval step: the person's next message is the feedback, and a
+thread that is left behind counts as implicitly accepted. Staff review happens only when a course
+enters the shared catalogue (N1). Two automated job shapes sit beside the chat: course tagging
+(one run per course) and a recurring digest (one run per user). At most one run is active per user.
+
+### Rules for every agent on these items
+
+- Load the `minimal-comments` skill before writing any code comment or commit message, and put the
+  same instruction in any prompt you delegate. No ticket or item codes (`W3`, `N1`) in comments or
+  commit messages.
+- Read `CLAUDE.md`, `ARCHITECTURE.md`, `STATUS.md`, `DECISIONS.md` first. Stop and ask if an item
+  contradicts a `DECISIONS.md` entry or the code disagrees with the docs about something the item
+  depends on.
+- Definition of done is `CLAUDE.md`'s, with one change: edits to `DRAFT.md` belong to W7 only. Every
+  other worktree adds a "Draft follow-up" bullet to its report instead of touching the article.
+- Changing a state channel, a node or a node that can hold a pause means bumping
+  `STATE_SCHEMA_VERSION`, running `uv run python -m tests.contract_snapshot`, adding a fixture and
+  manifest entry, and updating `privacy/flow_specs.py` (`DECISIONS.md`, "State contract changes are
+  versioned").
+- A new table goes in `privacy/sources.py:USER_DATA_SOURCES` or `NOT_USER_DATA` (`tests/test_erasure.py`
+  fails otherwise), and anything storing user text stores it after `redact_pii`.
+- **How to verify.** Every item below ends with a "Verify end to end" block. Run it, and paste the
+  commands and observed output into the final report. Rules for all of them:
+  1. Postgres comes from `docker compose up -d` (use the `docker-compose-up` skill if Docker is
+     down), with `TEST_DATABASE_URL=postgresql://course:course@localhost:55432/course_discovery`
+     and `scripts/apply_migrations.py` run on an empty database. A check that skips without it does
+     not count as run.
+  2. No network and no API key unless the block says `live`. Use stubs and a fake Telegram. A `live`
+     check without a key is reported as "not run", never as passed.
+  3. Mutation check: break the behaviour the test guards, show the test fail, restore it, show it
+     pass. A test that cannot be made to fail does not count.
+  4. Finish with `uv run python -m unittest discover tests` and `uv run pytest evals -n 4`, and report
+     the pass counts next to the counts before your change.
+  5. Record evidence (library version, how it was checked) in the matching `specs/article/notes/` file.
+
+### W3. `wt/continuation-routing`: which thread does this message belong to
+
+Branch from `main`. Owns a new `course_discovery/conversation/` package, `evals/cases/` rows for
+it, and tests. Does not touch the graphs.
+
+Ask first: does the age of the latest thread alone force a new topic (a message the next day), or
+only feed the classifier as a feature? Do not decide it silently.
+
+1. `ThreadSelector` port: input is the redacted message, the sender's latest parked thread (filters,
+   topic, age) and nothing else; output is `CONTINUE` or `NEW_TOPIC` with a score. It only ever
+   sees the sender's own threads.
+2. JEV adapter, reusing the transport and score bands of `guardrails/jev.py` (JEV alone, no
+   fallback model, `DECISIONS.md`). Any error, timeout, malformed answer or middle score returns
+   `NEW_TOPIC` and calls `record_degradation("thread_selector", reason)`. The input is passed
+   through `redact_pii` first.
+3. Stub selector for tests; a `live` probe of the Decisions API contract (`alpha`, per the injection
+   follow-ups) recorded in `notes/04`.
+4. Labelled conversation pairs and the measurement. Reuse the labelling UI in
+   `evals/labels/label_ui.py`; the owner labels. At least enough pairs for per-class TPR and TNR with a
+   train, dev and test split, and the test split is never used to tune the prompt or the bands.
+   Nothing about accuracy goes in the article until this is measured (`DECISIONS.md`).
+
+Verify end to end:
+- A scripted table of at least twelve conversations (refinement, unrelated query, same topic after a
+  gap, a message that only says "thanks", a message in another language) runs through the real
+  selector code against a stub transport and every row gets the expected class.
+- Fault injection against the stub transport: 500, timeout, malformed JSON, a middle score. Each
+  returns `NEW_TOPIC` and increments the degradation metric. Change the error path to return
+  `CONTINUE`: the test fails.
+- PII canary: a message containing an email and a phone number; the captured outgoing request body
+  contains neither.
+- Ownership: with user A's thread parked and user B writing, the selector's input never contains A's
+  data (assert on the captured request).
+- `live` (needs `OPENROUTER_API_KEY`): the probe runs against the real endpoint and records latency
+  and the score for the twelve scripted rows. Without a key, say "not run".
+- Measurement: `uv run python -m evals.calibrate_thread_selector` (new, modelled on
+  `evals.calibrate_judge`) prints TPR and TNR for both classes with the item counts per split, and
+  fails if a test-split id appears in the tuning inputs.
+
+### W4. `wt/chat-review-mode`: the parked thread is a conversation, closing it is acceptance
+
+Branch from `main`. Owns `workflows/outer_graph.py`, `review/`, `effects/handlers.py` and the state
+contract files. Depends on nothing in the other worktrees; W5 and the integration item use it.
+
+First step, stop and ask: the owner confirms this default before any code. `interrupt_before`
+stays compiled in. In chat mode the pause at `await_human_review` is where the thread waits for the
+person's next message, which arrives as `manager_feedback` and routes as today. A thread the person
+leaves (a new topic, or idle past a cutoff) is closed by resuming it with `PUBLISH` and reason
+`implicit`. Nothing reaches the shared catalogue from a chat run; staged rows stay in
+`pending_courses` for N1's staff review. "Never auto-publish" in `CLAUDE.md` is reworded to say
+that, and the per-run digest gate stays as the CLI demo. If the owner prefers another shape, update
+this item before anyone starts.
+
+1. `CLAUDE.md` wording and a `DECISIONS.md` entry for the above (owner approves the text).
+2. A node that sends the digest to the person when the run parks, as an effect through
+   `EffectGateway.submit` with a key from `run_id` and `research_pass`, so each round has its own
+   stable key. New node means a state contract bump.
+3. Closing a thread with implicit acceptance: `record_review_outcome` writes an accept event with an
+   idempotency key; in chat mode `promote_approved_courses` is skipped, not run. Closing twice is a
+   no-op.
+4. An optional feedback prompt, sent as an effect once per thread (not once per round), whose reply
+   arrives as feedback and feeds the curator as today.
+
+Verify end to end (Postgres, fake transport recording sends):
+- Drive a full chat through the real graph: query, digest sent, `REWRITE` message, second digest sent,
+  then close. The recorder shows exactly two digest sends, with keys that differ by `research_pass`.
+- Replay: kill the process after the digest effect is submitted and before the checkpoint, resume in
+  a fresh process; the recorder still shows one send for that pass. Change the key to a random uuid:
+  the test fails.
+- Close twice, and close concurrently from two tasks: one `recommendation_events` row with the
+  implicit-accept key, and the `courses` table is unchanged while `pending_courses` still holds the
+  run's rows.
+- The wrong owner and a thread under another `STATE_SCHEMA_VERSION` are still refused by
+  `authorize_thread` when closing.
+- Contract tests (`tests/test_state_contract.py`, `tests/test_checkpoint_compatibility.py`,
+  `tests/test_flow_rules.py`) pass with the bumped version and the new fixture marked `resumes` or
+  `refused` on purpose.
+- Draft follow-up: §4 and §6 call the digest gate a stand-in, and a framing paragraph says the
+  mechanics are the same for the product's gated effect.
+
+### W5. `wt/chat-surface`: Telegram in and out, one active run per user
+
+Branch from `main` after W4 merges (batch 2). Owns a new `course_discovery/chat/` package, a
+migration, and `privacy/sources.py` entries. Develops against a fake transport and does not need W3
+to merge first; W3 and W5 are joined in W8.
+
+1. `ChatTransport` port (receive an update, send a message) with an in-memory fake and a Telegram
+   Bot API adapter. First check the Bot API documentation on webhook retries and `update_id`, and
+   record what it says, with the date, in `notes/02`. Do not build dedupe on an assumption.
+2. Inbound dedupe: a `chat_updates` table keyed on `update_id`, insert `ON CONFLICT DO NOTHING`.
+   The same transaction enqueues the message, so a crash cannot lose it or double it.
+3. Per-user serial inbox with merge: a worker claims every pending message for one user under a
+   per-user lock (advisory lock or a unique active-run row in `run_threads`), merges them into one
+   request and runs once. Different users run in parallel.
+4. Identity: map a Telegram chat id to `user_id`; store only redacted text; add every new table to the
+   erasure sources.
+
+Verify end to end:
+- Fake Bot API server (a local HTTP process, not an in-process mock) posts the same update five
+  times, concurrently: one inbox row, one run.
+- Three messages for one user within a second while a run is active: after it finishes, one merged
+  run happens, not three. Two workers racing for one user: the test asserts at most one active run
+  at any instant. Remove the lock: the race test fails.
+- SIGKILL a worker mid-run: after the lease expires the message is processed once and no reply is
+  sent twice (keyed by `update_id`).
+- Canary: a message with an email address and a unique token; neither appears in any table
+  (`chat_updates`, inbox, `run_threads`, checkpoints) after the run.
+- `python -m course_discovery.privacy erase --user-id X --execute` removes the user's chat mapping and
+  inbox rows and exits 0; `tests/test_erasure.py` passes.
+- `scripts/chat_smoke.py` (new): fake Telegram, webhook, queue, graph on the in-memory catalogue,
+  reply captured; exits non-zero on any failure.
+- Draft follow-up: a design-only paragraph in §6 and §13 on keys from `update_id`, labelled "not
+  built" until this is merged.
+
+### W6. `wt/batch-jobs`: tagging and digest jobs, one run per unit
+
+Branch from `main`. Owns a new `course_discovery/jobs/` package and tests. The tagging node itself
+is the existing "Course topic tagging" item under Code; this item is the job around it and can use a
+stub tagger until that lands. The digest job depends on W5's per-user lock, so build tagging first.
+
+Ask first: does the digest job search the web or serve from the cache only?
+
+1. Tagging job: the unit is one course. A scheduler picks courses with no topics or a changed content
+   hash and submits one effect per course with key `tag:{url_hash}:{content_hash}`; a worker runs one
+   graph run per effect. Text goes through `screen_untrusted` before the model.
+2. Digest job: the unit is one user and one period, key `digest:{user_id}:{period}`; delivered through
+   the chat outbound effect; never runs beside an active chat run for the same user.
+3. A script that shows why a single run using `Send` over the whole batch is the wrong shape: the
+   same stub workload as one `Send` over N units and as N runs, for several N, measuring checkpoint
+   size and how many siblings re-run after one injected failure. Evidence goes in `notes/05`
+   (`DECISIONS.md` rule: say it is a stub workload).
+
+Verify end to end:
+- 200 synthetic courses, scheduler started twice concurrently: exactly 200 tagger calls and 200
+  runs. SIGKILL the worker midway and restart: every course ends tagged and the total call count is
+  at most 200 plus the runs in flight at the kill. Drop the content hash from the key: the
+  "changed text" case fails.
+- Change one course's text and rerun: exactly one new tagger call.
+- A course whose description contains a sample from `tests/injection_samples.py`: the tagger stub
+  never receives that text.
+- Fifty users, digest job run twice for one period: one digest per user. A user with an active chat
+  run is skipped or waits, and a concurrency assertion shows no overlap.
+- The comparison script runs with a fixed seed and prints a table; running it twice gives the same
+  numbers.
+- Draft follow-up: §3.2 and §5.5 gain the per-unit versus batch `Send` comparison.
+
+### W7. `wt/article`: article changes from the grilling
+
+Branch from `main`, merged last. Owns `specs/article/DRAFT.md` and `OUTLINE.md`. Load the
+`course-article-style` skill. Every change below is prose labelled with what was observed, read from
+source, or designed and not built. Do not describe unbuilt behaviour as present.
+
+1. §1: lift the Classification table from `ARCHITECTURE.md` into §1.2 and reframe it as where each
+   decision sits between code-owned and model-owned and what bounds it. Drop the binary "workflow,
+   not agent" wording. Keep the curator as the example of the mix, no dedicated section. §0 follows,
+   last.
+2. §5.2: the demo uses the library default (or `sync` once W1 merges; read what the code does that
+   day). §5.3: the reviewed digest and the promoted `valid_courses` are different sets in the demo,
+   and the product moves review to promotion.
+3. §4 and §6: the per-run gate is a stand-in; one paragraph on the chat product (a parked thread is a
+   conversation wait, acceptance implicit, staff review at promotion), labelled "not built" until W4
+   merges.
+4. Label as "design, not built" and mark any invented snippet as illustrative: §4.2 (dynamic
+   `interrupt()`), §5.6 (`Store`), §7.3 (`CachePolicy`), §7.4 and all of §11. Remove nothing.
+5. §6 and §13: Telegram effect keys and inbound dedupe as design only; §13: the continuous chat, the
+   continuation classifier, the two job shapes.
+6. `OUTLINE.md`: rewrite the word budgets to the draft's real counts (a script counts words per
+   section), correct §9.1 and §13, and say the draft is the article, not a trimmed outline.
+7. Evals section: not now. Draft it after E1's held-out set and W3's labelled pairs exist.
+
+Verify end to end:
+- A script prints words per section from `DRAFT.md`; the outline table matches it within five words.
+- `grep -c "design, not built"` shows a label in each section listed in item 4, and the list of
+  sections with invented snippets is in the report.
+- Every fenced snippet that claims to come from the repo is looked up in the source with `grep`;
+  the report lists the `path:line` for each one touched.
+- No sentence in a changed section uses the present tense for a mechanism that `STATUS.md` lists
+  under "Not in the code" or that a worktree above has not merged; the agent lists the sentences it
+  checked.
+
+### W8. `wt/chat-integration`: the whole chat, after W3, W4 and W5 merge
+
+Branch from `main` after those three. Owns `scripts/chat_e2e.py`, new L3 scenarios in
+`evals/cases/l3/` and the glue between the pieces (thread selection wired into the inbox worker).
+
+1. On a new message the worker calls the selector. `CONTINUE`: `authorize_thread`, `update_state`
+   with the merged text as feedback, resume. `NEW_TOPIC`: close the old parked thread through W4's
+   implicit acceptance, mint a `thread_id`, register it in `run_threads`, start.
+2. L3 scenarios for chat, so the PR gate runs them (`requires: [postgres]`).
+
+Verify end to end: `scripts/chat_e2e.py` plays a three-day script on Postgres through the fake
+Telegram server, and asserts at each step.
+- Day one: a query, a digest reply, a refinement (`REWRITE`), a second reply.
+- Day two: an unrelated message. The selector returns `NEW_TOPIC`, the old thread is closed with one
+  implicit-accept event, a new thread exists, and the `courses` table is unchanged.
+- A duplicated update and a SIGKILL during a run: no duplicate replies, no lost message.
+- A second user's chat cannot resume the first user's thread.
+- With JEV stubbed to fail: every message starts a new thread and the degradation metric counts them.
+- `erase --user-id X --execute` leaves no row for the user in any table and exits 0.
+- The script exits non-zero on the first failed assertion and prints a one-line summary per step.
+
+### Batches and checkpoints
+
+Why not all at once: W2 renumbers gap references across files every other item edits; W4 and W6
+tagging can both bump `STATE_SCHEMA_VERSION`; W5 and W6 both add migrations; and W4 is the riskiest
+item and starts with an owner sign-off, so W5 and W8 should build on it merged, not on a guess.
+Items inside a batch run in parallel; batches run in order. A batch is done when its items are
+merged to `main` and its checkpoint passes there, not on the branches.
+
+| Batch | Items | Checkpoint (run on `main` after merge) |
+|---|---|---|
+| 0. Clean base | W2, W1 | Test counts unchanged, every gap reference resolves, the CLI passes `durability="sync"` on every call. |
+| 1. Core semantics | W4, W3 | CLI demo still runs. A chat-mode run on Postgres with a fake transport shows digest, `REWRITE`, second digest, implicit close, with exactly-once effects. The thread selector is measured on the held-out split. |
+| 2. Surface | W5, W6 (tagging part) | `scripts/chat_smoke.py` passes: fake Telegram, webhook, queue, graph and captured reply, with dedupe and the per-user lock. Tagging runs 200 courses exactly once each. |
+| 3. Integration | W8, then W6 (digest part) | `scripts/chat_e2e.py` passes the three-day script. The digest job runs once per user and period and never beside an active chat run. |
+| 4. Article | W7 | The draft matches what is merged; "design, not built" labels remain only on what is still unbuilt. |
+
+Batch notes:
+- Stop between batches. Report the checkpoint output and any inconsistencies found; start the next
+  batch only after the owner has looked.
+- W2 goes first in batch 0 and merges before W1 is rebased. W1 only touches `app/cli.py`.
+- In batch 1, W4 waits for the owner's answer to its first step. W3 can start at once, but its
+  open question (does thread age force a new topic) is asked before the selector is built, and the
+  owner labelling is the slow part.
+- In batch 2, W5 and W6 each take the next free migration number at merge time; the later one
+  renumbers. Only one of them may bump `STATE_SCHEMA_VERSION` per merge; the other rebases and
+  regenerates the snapshot.
+- Every worktree adds one line to `STATUS.md`; merge conflicts there are resolved by keeping both
+  lines. W2, W4 and W5 all edit `ARCHITECTURE.md`; rebase on `main` before merging.
+- Each worktree's "Draft follow-up" bullets are W7's input, so keep them in the merged reports.
 
 ## Verify
 
@@ -86,6 +366,9 @@ Until that is decided, `CLAUDE.md`'s "Never auto-publish" stands and nothing her
 
 ## Article drafting
 
+The changes that follow from the chat product and the labelling pass are item W7 above. Evals
+section: after E1's held-out set and W3's labelled pairs.
+
 Placeholders marked `[NOT DRAFTED]` in `specs/article/DRAFT.md`:
 
 - §0 TL;DR, §1 Agents vs. workflows, §2.1 state as the single channel, §3.1 conditional
@@ -108,12 +391,6 @@ New sections proposed, not yet in the outline:
   mock catalog and measure plumbing, not generalization, and that no production traffic backs
   it. Needs an outline entry with a word budget first. P6 is the first working example. The old
   metrics and testing proposals are in `archive/`.
-
-## Freshness
-
-- **Draft pass after the Postgres, PII and OpenTelemetry work.** Some earlier drafted
-  sections were written when the checkpointer was `MemorySaver` and search nodes were
-  described as LLM calls. Read `DRAFT.md` against `STATUS.md` and correct stale statements.
 
 ## Optional
 

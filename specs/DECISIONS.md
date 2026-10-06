@@ -38,7 +38,7 @@ leave it and append a new one that says which it replaces and what changed.
 
 ## Design
 
-- **Workflow, not agent.** Planning, extraction and validation are rules; three nodes use an
+- **Workflow, not agent.** Planning, extraction and validation are rules; four nodes use an
   LLM. A model-driven planner is the one change that would move the graph toward an agent
   (`ARCHITECTURE.md`).
 - **`RetryPolicy` only on read-only or idempotent nodes,** retrying `is_transient` errors.
@@ -58,8 +58,9 @@ leave it and append a new one that says which it replaces and what changed.
 - **Outbox behind a port, not a queue.** Deterministic submission, at-least-once delivery,
   consumer idempotent. Lease-versus-handler-duration is queue territory and not built.
   The outbox row does not share a transaction with the domain write.
-- **`async` durability is not tested under a hard kill:** whether the last background write
-  lands is a race.
+- **`async` durability is only lightly tested under a hard kill:** whether the last background write
+  lands is a race. One scenario, three trials (`notes/02`): the validator re-ran after the kill.
+  The CLI passes `durability="sync"`.
 - **Cross-worker patterns (§11) are architectural descriptions,** with no implementation.
 - **Feedback handling is one bounded agentic step; the rest stays a workflow.** Refines
   "Workflow, not agent": planning, extraction and validation stay rules, but turning free-text
@@ -319,6 +320,27 @@ leave it and append a new one that says which it replaces and what changed.
   `MemoryNote` (rows already stored would fail to load), and refusing new notes at the cap (a
   long-time user could never teach the agent again). Relevance to courses is a prompt rule plus
   a live case, not a validator: a rule cannot tell a course preference from any other sentence.
+- **Product shape: one continuous chat per person, in Telegram.** A message is classified before
+  a thread exists, as continuing the person's latest parked thread or starting a new topic (JEV,
+  app layer, redacted input, any error or middle score means a new topic). Refinement inside a
+  thread stays on the existing `REWRITE`, `AUGMENT` and `RESET` routes. A wrong "new topic" costs a
+  repeated filter; a wrong "continue" applies stale constraints to an unrelated query and writes
+  wrong profile notes, so the default is the cheaper error. Ruled out: one thread per person
+  forever (checkpoint grows without bound), and one thread per message (no refinement). The
+  classifier has no fallback model; its accuracy is unmeasured and the article says so until the
+  labelled pairs exist (backlog W3). Built later: backlog W3, W5, W8. Partly settles N2.
+- **Acceptance is implicit and review sits at catalogue promotion only.** In chat mode the
+  pause at `await_human_review` is where the thread waits for the person's next message. A thread
+  left behind (new topic or idle) is closed as accepted with reason `implicit`, and nothing from a
+  chat run reaches the shared catalogue without staff review (N1). The per-run digest gate stays
+  as the CLI demo and keeps the article's verified claims true. Pending the owner's sign-off on
+  the `CLAUDE.md` wording (backlog W4).
+- **At most one run is active per user.** Messages that arrive during a run wait in a per-user
+  queue and are merged into one request, so a person sending two short messages gets one research
+  pass. Ruled out: cancelling the active run on a newer message (searches already paid for are
+  wasted) and rejecting the message. Course tagging is one run per course, keyed on URL and
+  content hash; the digest is one run per user and period. Batch-wide `Send` over all units is
+  the demonstrated wrong shape, not the design (backlog W5, W6).
 
 ## Compliance
 

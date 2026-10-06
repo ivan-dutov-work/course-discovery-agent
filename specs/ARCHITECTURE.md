@@ -236,7 +236,7 @@ next run's profile, not the pass in progress.
 
 ### Top-level state and run configuration
 
-The outer graph owns fifteen channels. The research subgraph runs on `ResearchState` with
+The outer graph owns fifteen channels (counted 2026-10-06 from `AgentState`; `ResearchState` has 23, nine of them shared). The research subgraph runs on `ResearchState` with
 `input_schema=ResearchInput` and `output_schema=ResearchOutput`, so its other fourteen channels
 (plan, queries, candidate lists, validation results, notes, iteration, profile) are private and
 persist across passes only because it is compiled with `checkpointer=True`; they are checkpointed
@@ -293,7 +293,7 @@ design.
    behaves on the case list is unmeasured (the live layer exists and has not been run). Capitalised provider names (`Udemy`, `Coursera`) are redacted as
    `<PERSON>` before the curator reads the feedback, so a live model cannot tell which provider
    was named (`notes/04`, `BACKLOG.md`). Cases: `FEEDBACK.md`.
-7. **The injection screen is one layer, on one prompt.** JEV can be steered by text that argues
+6. **The injection screen is one layer, on one prompt.** JEV can be steered by text that argues
    for its own classification, no deterministic rule or prompt fencing sits beside it, the
    thresholds are unfitted, and the tagging step is not screened (`BACKLOG.md`). Stored notes are
    not screened either: they are user text that returns in the synthesis prompt and the profile

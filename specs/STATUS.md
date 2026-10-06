@@ -12,12 +12,13 @@ Integration tests need `docker compose up -d` and
 - Bounded workflow with four LLM nodes through `build_llm()`: `app/llm.py` (§1, §8.2).
 - Reducers on parallel-written channels (`tavily_results`, `completed_queries`,
   `research_notes`); `extracted_candidates` is a plain list (§2.2; open question in BACKLOG).
-- Top-level state slimmed from 34 to 28 channels: run id is the `thread_id`, review and research
+- Top-level state slimmed from 34 to 15 channels (counted 2026-10-06 from `AgentState`; `ResearchState` has 23, nine shared with the outer state and fourteen private): run id is the `thread_id`, review and research
   budgets are `configurable` keys, the review round is `len(feedback_history)`, counters live in
   `metrics` only, the gateway failure signals through `discard_reason`: `domain/run_config.py`,
   `tests/test_top_level_state.py` (§2.1).
 - State contract is versioned: `STATE_SCHEMA_VERSION` stamped in `run_threads` (migration 011), `authorize_thread` refuses a thread from another version with `IncompatibleThreadError`, the CLI exits non-zero; channel and node names snapshotted, one stored checkpoint per version marked `resumes` or `refused`: `domain/contract.py`, `privacy/registry.py`, `tests/test_state_contract.py`, `tests/test_checkpoint_compatibility.py`, `tests/fixtures/checkpoints/`, `scripts/dump_checkpoint_fixture.py` (§10.2).
 - Multi-round review loop against Postgres, local only (skips without `TEST_DATABASE_URL`): augment, rewrite, reset, approve with a fresh saver and graph per segment, encryption on, registry guard on; plus the discard and wrong-owner and wrong-version paths: `tests/test_e2e_review_loops_postgres.py` (§2.3, §4).
+- Docs drift cleared: unused `telegram_gate_node` alias removed, known gaps renumbered 1 to 6, channel counts (outer 15, subgraph 23) computed from the state classes on 2026-10-06 and quoted in `ARCHITECTURE.md` and above, stray bullets moved out of `Not in the code`.
 - Router classification failure writes the exception type into `discard_reason`, not its text: `review/router.py`, `tests/test_user_profile.py`. `langgraph` is pinned to the tested `>=1.1.2,<1.2`.
 - Plan-driven `Send` fan-out: `workflows/research_graph.py` (§3.2).
 - `verify_course_claims` returns `Command(update=..., goto="plan_gap_search" | "save_verified_courses")` in place of a conditional edge; `enough_valid` stays the pure decision: `research_agent/validation/nodes.py`, `tests/test_research_nodes.py`, `tests/test_graph_topology.py`; resume after an injected crash on the `Command` node and on its target, fresh Postgres saver per segment: `tests/test_command_resume_postgres.py` (§3.4).
@@ -40,6 +41,10 @@ Integration tests need `docker compose up -d` and
   `tests/test_checkpointer.py` (§5.1, §10.2).
 - Durability modes `sync`, `async`, `exit` tested against Postgres; SIGKILL resume test:
   `tests/test_integration_kill.py` (§5.2).
+- CLI passes `durability="sync"` on its one `astream` call (first run and resume); the library
+  default is `async` (langgraph 1.1.2). A SIGKILL through the CLI path resumes without re-running the
+  validator under `sync`, and re-ran it in 3 of 3 trials under the default: `app/cli.py`,
+  `tests/test_cli_durability.py`, `tests/kill_child_cli.py` (§5.2).
 - Replay-safe writes: `migrations/002`, `004`; `ON CONFLICT` on evidence and events (§6.1).
 - Read and write paths fail closed: DB helpers re-raise after logging (§6.1).
 - Outbox behind an `EffectGateway` port, worker with leases, backoff and dead-letter,
@@ -70,6 +75,7 @@ Integration tests need `docker compose up -d` and
 - Memory curator subgraph `curate_user_memory` after `record_review_outcome`: bounded tool loop (`read_profile`, `read_run_events`, `propose_patch`, `finish`), 4-step cap, fail-closed commit, idempotent per `run_id` through `memory_updates` (migration 008, erasable); uses `input_schema`/`output_schema`: `memory_curator/`, `tests/test_memory_curator.py` (cases 1, 2, 3, 7, 10 to 18 with a scripted model, plus Postgres), `tests/test_curator_checkpoint.py` (private channels through the encrypted Postgres checkpointer). `tests/test_memory_e2e.py` now runs the real curator between run one and run two.
 - End-to-end feedback tests (P6): eleven cases of `FEEDBACK.md` (1, 2, 3, 7, 8, 9, 10, 11, 12, 13, 14) as a table through the whole outer graph with a scripted curator and a stubbed router, on the fake store and Postgres, asserting the profile, the tool trace, the route and run two; case 4 and the live layer (real models, repeated trials, judge for free text) are written and skip without `OPENROUTER_API_KEY` and `LIVE_LLM_TESTS=1`, never run live: `tests/memory_cases.py`, `tests/test_memory_e2e.py`, `tests/test_memory_e2e_live.py`. Judge (`google/gemini-3.1-flash-lite`, five criteria, three calls, majority) with stubbed tests and a labelled live check: `tests/judge.py`, `tests/test_judge.py`, `tests/test_judge_live.py`.
 - Not built yet: case 6 of `FEEDBACK.md` (no consumer for career goals).
+- Note hardening: `propose` refuses notes over 120 characters, with control characters, or with a `topic:` scope outside a short slug; `apply_patch` keeps the newest 30 notes; the curator prompt stores only course-learning preferences; live case 19 (off-topic fact plus an instruction) wrote nothing in 3 of 3 trials: `memory_curator/tools.py`, `research_agent/memory/repository.py`, `app/prompts.py`, `tests/test_memory_curator.py`, `tests/test_user_profile.py`, `tests/memory_cases.py`.
 
 ## Observability
 
@@ -98,13 +104,16 @@ Integration tests need `docker compose up -d` and
 
 - Eval harness skeleton (E1 milestone 1): YAML cases per level, grader registry, `run.py`, pytest parametrization. 33 L1a rows (validator evidence rule, dedup, planner, replan route) and 7 L3 scenarios (approve, discard, rewrite, augment, reset, multi-round, parked at gate) on `MemorySaver`, no key, no network. Mutating the evidence rule fails 10 rows: `evals/`, `uv run python -m evals.run`, `uv run pytest evals -n 4`.
 - E1 milestone 2: two Postgres-backed L3 scenarios (`requires: [postgres]`, skipped without `TEST_DATABASE_URL`): a wrong owner and a thread stored under another schema version are refused and leave the parked thread untouched; skipping either check in `privacy/registry.py` fails its case. `.github/workflows/ci.yml` runs the unittest suite and the evals on every push and pull request against a pgvector service container, migrations applied by `scripts/apply_migrations.py`. Rehearsed locally on a fresh pgvector container with a fresh venv (`uv sync --locked`, 481 tests, 42 evals); the workflow has not run on GitHub: `evals/runners.py`, `evals/graders/l3.py`, `evals/cases/l3/scenarios.yaml`, `.github/workflows/ci.yml`.
+- E1 milestone 3, partly: `evals/labels/judge_notes.yaml` (32 generated outputs, labelled by the owner with `evals/labels/label_ui.py`), `python -m evals.calibrate_judge` (TPR and TNR per criterion, failure positive; on the owner's labels `captured` 0.93 / 0.67, `scope` 0.57 / 1.00, `no_invention` 0.91 / 0.86, `no_loss` 0.75 / 1.00, `polarity` 1.00 / 1.00, one labeller, 32 items, so run to run noise is large; judge prompt revised once against these labels, so they are no longer a held-out measure), and the first live memory run. Three harness bugs in `tests/test_memory_e2e_live.py` fixed; 7 of 12 cases fail live at one trial, 5 from provider names redacted as `<PERSON>`. Judge numbers are against generator labels, not yet the owner's; L1b live for router and synthesizer not built: `evals/calibrate_judge.py`, `evals/labels/`, `notes/04`.
+
+## Article
+
+- Article: §2.1, §3.1, §13 and the appendix drafted in `DRAFT.md`. Only §0 and §1 remain, and are best written last.
+- Article freshness pass: `DRAFT.md` snippets and claims checked against the code (research-graph state type and node names, outbox claim SQL, `ServedModelLogger` call, per-schema `user_memory`, topology-change test no longer listed as untested).
 
 ## Not in the code
 
 Each of these is covered in the article as prose only, and the reason is in `DECISIONS.md`:
 `CachePolicy`, node-level `timeout=`, `Command` for the gateway failure,
-dynamic `interrupt()`, `durability=` set explicitly, circuit
+dynamic `interrupt()`, circuit
 breaker, cross-worker coordination.
-- E1 milestone 3, partly: `evals/labels/judge_notes.yaml` (32 generated outputs, labelled by the owner with `evals/labels/label_ui.py`), `python -m evals.calibrate_judge` (TPR and TNR per criterion, failure positive; on the owner's labels `captured` 0.93 / 0.67, `scope` 0.57 / 1.00, `no_invention` 0.91 / 0.86, `no_loss` 0.75 / 1.00, `polarity` 1.00 / 1.00, one labeller, 32 items, so run to run noise is large; judge prompt revised once against these labels, so they are no longer a held-out measure), and the first live memory run. Three harness bugs in `tests/test_memory_e2e_live.py` fixed; 7 of 12 cases fail live at one trial, 5 from provider names redacted as `<PERSON>`. Judge numbers are against generator labels, not yet the owner's; L1b live for router and synthesizer not built: `evals/calibrate_judge.py`, `evals/labels/`, `notes/04`.
-- Article: §2.1, §3.1, §13 and the appendix drafted in `DRAFT.md`. Only §0 and §1 remain, and are best written last.
-- Note hardening: `propose` refuses notes over 120 characters, with control characters, or with a `topic:` scope outside a short slug; `apply_patch` keeps the newest 30 notes; the curator prompt stores only course-learning preferences; live case 19 (off-topic fact plus an instruction) wrote nothing in 3 of 3 trials: `memory_curator/tools.py`, `research_agent/memory/repository.py`, `app/prompts.py`, `tests/test_memory_curator.py`, `tests/test_user_profile.py`, `tests/memory_cases.py`.
