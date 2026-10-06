@@ -29,6 +29,7 @@
       "record_review_outcome",
       "retry_research_pass",
       "send_approved_courses",
+      "send_review_digest",
       "start_research_pass"
     ]
   },
@@ -73,5 +74,5 @@
       "verify_course_claims"
     ]
   },
-  "version": 3
+  "version": 4
 }

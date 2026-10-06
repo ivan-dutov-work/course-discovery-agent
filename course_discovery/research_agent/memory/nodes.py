@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from langchain_core.runnables import RunnableConfig
 
-from course_discovery.domain.models import DeliveryStatus
-from course_discovery.domain.run_config import current_run_id, run_id_of
+from course_discovery.domain.models import DeliveryStatus, RoutingAction
+from course_discovery.domain.run_config import chat_mode, close_reason, current_run_id, run_id_of
 from course_discovery.domain.state import AgentState, ResearchState
 from course_discovery.observability.logging import get_logger
 from course_discovery.research_agent.memory.repository import (
@@ -34,7 +34,11 @@ def user_memory_lookup_node(state: ResearchState) -> dict:
 def user_memory_update_node(state: AgentState, config: RunnableConfig) -> dict:
     run_id = run_id_of(config)
     feedback = "\n".join(state.get("feedback_history") or []) or None
-    accepted = state.get("publish_status") in {DeliveryStatus.QUEUED, DeliveryStatus.DELIVERED}
+    chatting = chat_mode(config)
+    if chatting:
+        accepted = state.get("routing_decision") == RoutingAction.PUBLISH
+    else:
+        accepted = state.get("publish_status") in {DeliveryStatus.QUEUED, DeliveryStatus.DELIVERED}
     record_feedback(
         state.get("user_id"),
         state.get("valid_courses", []),
@@ -42,6 +46,8 @@ def user_memory_update_node(state: AgentState, config: RunnableConfig) -> dict:
         accepted=accepted,
         feedback_text=feedback,
         run_id=run_id,
+        reason=(close_reason(config) or "accepted in chat") if chatting and accepted else None,
+        uncatalogued=chatting and accepted,
     )
     logger.info(
         "user_memory_update_complete",

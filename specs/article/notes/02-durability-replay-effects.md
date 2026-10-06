@@ -239,6 +239,15 @@ no repair, only a refusal, since the intent (the review step) is gone.
   fixture must raise `IncompatibleThreadError` and leave the checkpoint rows unchanged) and
   `tests/test_state_contract.py`. Both fail if the guard or the version bump is removed (checked by
   mutation).
+- **Closing a parked thread with `update_state(as_node="interpret_review_feedback")` (verified
+  2026-10-06, langgraph 1.1.2, Postgres).** Writing `routing_decision=PUBLISH` as the router node
+  skips the router and follows its conditional edge on resume, so a parked thread can be closed
+  without feedback text. A thread not at `await_human_review` is left alone. Two concurrent closes
+  both resume; the accept events are keyed `{run_id}:{url}` with `ON CONFLICT DO NOTHING`, so one
+  set of rows results (`tests/test_chat_review_mode_postgres.py`). Replay: the digest node is
+  crashed after `submit` and before the step's checkpoint, then the thread is resumed with a fresh
+  graph; the outbox key makes the second submit a no-op, one delivery. This is an in-process
+  exception, not a SIGKILL; a random key fails it (checked by mutation).
 - **Resume into a stateful subgraph (found in review of S1, langgraph 1.1.2).** See
   `01-state-and-control-flow.md`, "The research subgraph": with `checkpointer=True`, a crash or
   `update_state(as_node=...)` that leaves the subgraph node as the first task of the resume makes

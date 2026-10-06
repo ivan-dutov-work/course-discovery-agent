@@ -30,3 +30,11 @@ def max_review_rounds(config: RunnableConfig | None = None) -> int:
 
 def max_research_iterations(config: RunnableConfig | None = None) -> int:
     return _configurable(config).get("max_research_iterations", DEFAULT_MAX_RESEARCH_ITERATIONS)
+
+
+def chat_mode(config: RunnableConfig | None = None) -> bool:
+    return bool(_configurable(config).get("chat_mode", False))
+
+
+def close_reason(config: RunnableConfig | None = None) -> str | None:
+    return _configurable(config).get("close_reason")

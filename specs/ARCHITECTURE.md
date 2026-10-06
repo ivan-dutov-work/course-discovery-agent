@@ -30,7 +30,7 @@ would keep the same bounds (`max_research_iterations`, validation before synthes
 ## Outer graph
 
 ```
-parse_user_request ──ok──▶ start_research_pass ──▶ course_research ──▶ [interrupt] await_human_review ──▶ interpret_review_feedback
+parse_user_request ──ok──▶ start_research_pass ──▶ course_research ──▶ send_review_digest ──▶ [interrupt] await_human_review ──▶ interpret_review_feedback
         │                          │                  │ stale result: retry_research_pass ─▶ course_research (once, then error)
         │                          └──────────────────┤ planning failure: discard_run
         └─error─▶ discard_run ─▶ drop_pending_courses ─▶ record_review_outcome ─▶ curate_user_memory ─▶ END
@@ -43,6 +43,17 @@ parse_user_request ──ok──▶ start_research_pass ──▶ course_resear
 
 `interrupt_before=["await_human_review"]` is always compiled in. Nothing publishes
 without passing it.
+
+Chat mode (`configurable["chat_mode"]`, supplied on every invocation) changes three things and
+nothing else. `send_review_digest` sits before the pause and submits the digest to the person as
+an effect (key from `run_id` and `research_pass`, so each round has one stable key) plus a feedback
+prompt once per thread; without chat mode it does nothing. The pause is where the thread waits for
+the person's next message, which arrives as `manager_feedback` and routes as above. `PUBLISH`
+(typed, or the implicit close from `review/close.py:close_thread`) goes from
+`interpret_review_feedback` straight to `record_review_outcome`, skipping `send_approved_courses`
+and `promote_approved_courses`: nothing from a chat run reaches the shared catalogue, and its
+staged rows stay in `pending_courses` for staff review. Chat mode is built in the graph; the
+transport, the thread selector and staff review are not.
 
 ## Research subgraph
 
@@ -76,12 +87,13 @@ One responsibility each. "Rules" means deterministic code with no model call.
 | `start_research_pass` | Stamp `research_pass = len(feedback_history)`; the subgraph echoes it back, and a mismatch after `course_research` means the stateful subgraph ignored its input on a resumed tick; resets `research_retries` (`article/notes/01`) | rules |
 | `retry_research_pass` | Re-stamp `research_pass` and count the retry; raises `StaleResearchResultError` once `MAX_STALE_RETRIES` (1) is spent, so a result that stays stale fails with a named error instead of looping to the recursion limit | rules |
 | `course_research` | Run the research subgraph; sees five input keys, returns `valid_courses`, `digest`, `metrics`, `discard_reason` and the echoed `research_pass` | subgraph |
+| `send_review_digest` | In chat mode, submit the round's digest and a once-per-thread feedback prompt through `EffectGateway` (keys `digest:{run_id}:{research_pass}` and `feedback_prompt:{run_id}`); otherwise nothing | side effect |
 | `await_human_review` | The pause point where the interrupt fires; does nothing itself | anchor |
 | `interpret_review_feedback` | Map reviewer feedback to one routing action, append the redacted feedback to `feedback_history` and clear the `manager_feedback` inbox; rounds already completed are `len(feedback_history)` | LLM, rule fallback |
 | `send_approved_courses` | Submit the publish effect through `EffectGateway` with a key derived from `run_id` | side effect |
 | `promote_approved_courses` | Move this run's staged courses that appear in the approved `valid_courses` into the shared cache (embedding computed here), then clear the run's staging rows; idempotent | DB write |
 | `drop_pending_courses` | Delete this run's staged courses without promoting; runs on every discard path | DB write |
-| `record_review_outcome` | Record accept or reject events for the user, with the whole `feedback_history` as the text; runs after publish and after discard | DB write |
+| `record_review_outcome` | Record accept or reject events for the user, with the whole `feedback_history` as the text; runs after publish and after discard; in chat mode an accept is `routing_decision == PUBLISH`, labelled with the close reason, and written even for courses not in the catalogue | DB write |
 | `curate_user_memory` | Turn the review feedback into a validated patch to the stored profile (subgraph, below); writes only the `memory_update` status channel | subgraph, LLM |
 | `discard_run` | End the run as discarded, with a reason | terminal |
 

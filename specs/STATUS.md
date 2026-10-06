@@ -51,6 +51,7 @@ Integration tests need `docker compose up -d` and
   inline and outbox adapters: `course_discovery/effects/`, `migrations/003`,
   `tests/outbox_contract.py` (§6.2, §6.4).
 - Publish key derived from `run_id`; `publish_status` is `queued | delivered | dead` (§6.2).
+- Chat review mode: `chat_mode` configurable key, `send_review_digest` (digest effect per round, one feedback prompt per thread), `review/close.py:close_thread` (implicit acceptance, idempotent, owner and schema checks), `PUBLISH` in chat mode skips publish and promotion, curator reads `routing_decision`; schema v4 with a fixture and v3 flipped to `refused`. In-process crash after the effect submit does not resend (not a SIGKILL), concurrent close writes one event set: `review/`, `tests/test_chat_review_mode_postgres.py`.
 
 ## Resilience
 

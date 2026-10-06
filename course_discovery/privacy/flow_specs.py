@@ -26,6 +26,10 @@ OUTER: dict[str, NodeFlow] = {
     ),
     "course_research": flow(),
     "curate_user_memory": flow(),
+    "send_review_digest": flow(
+        reads={"user_id", "digest", "valid_courses", "research_pass"},
+        sinks=(store("outbox"),),
+    ),
     "await_human_review": flow(),
     "interpret_review_feedback": flow(
         reads={"manager_feedback", "feedback_history"},
@@ -58,6 +62,7 @@ OUTER: dict[str, NodeFlow] = {
             "user_query",
             "feedback_history",
             "publish_status",
+            "routing_decision",
         },
         sinks=(store("users"), store("recommendation_events")),
     ),
@@ -167,7 +172,7 @@ CURATOR: dict[str, NodeFlow] = {
         reads={"feedback_history"},
         sinks=(LLM,),
     ),
-    "run_tools": flow(reads={"user_id", "valid_courses", "publish_status"}),
+    "run_tools": flow(reads={"user_id", "valid_courses", "publish_status", "routing_decision"}),
     "commit": flow(
         reads={"user_id", "feedback_history"},
         writes={"memory_update"},
