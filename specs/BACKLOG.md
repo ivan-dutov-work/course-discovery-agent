@@ -43,7 +43,7 @@ the per-run `interrupt_before` become a per-user "save" action, and the human ga
 Until that is decided, `CLAUDE.md`'s "Never auto-publish" stands and nothing here changes it.
 Partly settled by the chat product (`DECISIONS.md`, "Product shape: one continuous chat"): in chat
 mode the parked thread is a conversation wait, acceptance is implicit and only catalogue promotion
-is gated. W4 carries the `CLAUDE.md` wording change and needs the owner's sign-off.
+is gated. The `CLAUDE.md` wording is drafted and awaits the owner's approval.
 
 ## Chat product and load: worktrees
 
@@ -129,47 +129,6 @@ Verify end to end:
 - Measurement: `uv run python -m evals.calibrate_thread_selector` (new, modelled on
   `evals.calibrate_judge`) prints TPR and TNR for both classes with the item counts per split, and
   fails if a test-split id appears in the tuning inputs.
-
-### W4. `wt/chat-review-mode`: the parked thread is a conversation, closing it is acceptance
-
-Branch from `main`. Owns `workflows/outer_graph.py`, `review/`, `effects/handlers.py` and the state
-contract files. Depends on nothing in the other worktrees; W5 and the integration item use it.
-
-First step, stop and ask: the owner confirms this default before any code. `interrupt_before`
-stays compiled in. In chat mode the pause at `await_human_review` is where the thread waits for the
-person's next message, which arrives as `manager_feedback` and routes as today. A thread the person
-leaves (a new topic, or idle past a cutoff) is closed by resuming it with `PUBLISH` and reason
-`implicit`. Nothing reaches the shared catalogue from a chat run; staged rows stay in
-`pending_courses` for N1's staff review. "Never auto-publish" in `CLAUDE.md` is reworded to say
-that, and the per-run digest gate stays as the CLI demo. If the owner prefers another shape, update
-this item before anyone starts.
-
-1. `CLAUDE.md` wording and a `DECISIONS.md` entry for the above (owner approves the text).
-2. A node that sends the digest to the person when the run parks, as an effect through
-   `EffectGateway.submit` with a key from `run_id` and `research_pass`, so each round has its own
-   stable key. New node means a state contract bump.
-3. Closing a thread with implicit acceptance: `record_review_outcome` writes an accept event with an
-   idempotency key; in chat mode `promote_approved_courses` is skipped, not run. Closing twice is a
-   no-op.
-4. An optional feedback prompt, sent as an effect once per thread (not once per round), whose reply
-   arrives as feedback and feeds the curator as today.
-
-Verify end to end (Postgres, fake transport recording sends):
-- Drive a full chat through the real graph: query, digest sent, `REWRITE` message, second digest sent,
-  then close. The recorder shows exactly two digest sends, with keys that differ by `research_pass`.
-- Replay: kill the process after the digest effect is submitted and before the checkpoint, resume in
-  a fresh process; the recorder still shows one send for that pass. Change the key to a random uuid:
-  the test fails.
-- Close twice, and close concurrently from two tasks: one `recommendation_events` row with the
-  implicit-accept key, and the `courses` table is unchanged while `pending_courses` still holds the
-  run's rows.
-- The wrong owner and a thread under another `STATE_SCHEMA_VERSION` are still refused by
-  `authorize_thread` when closing.
-- Contract tests (`tests/test_state_contract.py`, `tests/test_checkpoint_compatibility.py`,
-  `tests/test_flow_rules.py`) pass with the bumped version and the new fixture marked `resumes` or
-  `refused` on purpose.
-- Draft follow-up: §4 and §6 call the digest gate a stand-in, and a framing paragraph says the
-  mechanics are the same for the product's gated effect.
 
 ### W5. `wt/chat-surface`: Telegram in and out, one active run per user
 

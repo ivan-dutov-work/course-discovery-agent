@@ -333,8 +333,21 @@ leave it and append a new one that says which it replaces and what changed.
   pause at `await_human_review` is where the thread waits for the person's next message. A thread
   left behind (new topic or idle) is closed as accepted with reason `implicit`, and nothing from a
   chat run reaches the shared catalogue without staff review (N1). The per-run digest gate stays
-  as the CLI demo and keeps the article's verified claims true. Pending the owner's sign-off on
-  the `CLAUDE.md` wording (backlog W4).
+  as the CLI demo and keeps the article's verified claims true. Owner approved the shape on
+  2026-10-06; the `CLAUDE.md` wording is drafted and awaits approval. Built as a `chat_mode`
+  configurable key (caller-supplied on every invocation, like the round budgets), not a state
+  channel, so a thread is chat or CLI by how it is driven. `send_review_digest` submits the
+  digest effect (`digest:{run_id}:{research_pass}`) and a once-per-thread feedback prompt
+  (`feedback_prompt:{run_id}`) before the pause; it is a no-op without chat mode. Closing is
+  `review.close.close_thread`: `authorize_thread`, `update_state(routing_decision=PUBLISH,
+  as_node="interpret_review_feedback")`, resume; a thread that is not parked at the gate is left
+  alone, so a second close is a no-op. In chat mode `PUBLISH` skips `send_approved_courses` and
+  `promote_approved_courses` and goes to `record_review_outcome`, which writes accept events keyed
+  `{run_id}:{url}` with `course_id` NULL for courses that are not in the catalogue (a chat run
+  stages its web courses, so without this the accept would leave no event). The curator reads
+  `routing_decision` to tell an accepted run from a discarded one. Ruled out: a close-reason state
+  channel (the reason is an invocation key and only labels the event). Bumped
+  `STATE_SCHEMA_VERSION` to 4 (new node).
 - **At most one run is active per user.** Messages that arrive during a run wait in a per-user
   queue and are merged into one request, so a person sending two short messages gets one research
   pass. Ruled out: cancelling the active run on a newer message (searches already paid for are

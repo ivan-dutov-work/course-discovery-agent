@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import time
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, StateGraph
 
 from course_discovery.app.gateway import gateway_node
 from course_discovery.domain.models import RoutingAction
+from course_discovery.domain.run_config import chat_mode
 from course_discovery.domain.state import AgentState
 from course_discovery.memory_curator import build_curator_graph
 from course_discovery.observability.logging import get_logger
@@ -15,7 +17,7 @@ from course_discovery.research_agent.cache.nodes import (
     promote_approved_courses_node,
 )
 from course_discovery.research_agent.memory.nodes import user_memory_update_node
-from course_discovery.review.nodes import review_gate_node
+from course_discovery.review.nodes import review_gate_node, send_review_digest_node
 from course_discovery.review.router import (
     discard_node,
     publish_node,
@@ -54,7 +56,7 @@ def _after_research(state: AgentState):
         return "discard_run"
     if state.get("research_pass") != len(state.get("feedback_history", [])):
         return "retry_research_pass"
-    return "await_human_review"
+    return "send_review_digest"
 
 
 def _after_gateway(state: AgentState):
@@ -63,8 +65,11 @@ def _after_gateway(state: AgentState):
     return "course_research"
 
 
-def _route_from_router(state: AgentState):
-    return state.get("routing_decision", RoutingAction.DISCARD)
+def _route_from_router(state: AgentState, config: RunnableConfig):
+    decision = state.get("routing_decision", RoutingAction.DISCARD)
+    if decision == RoutingAction.PUBLISH and chat_mode(config):
+        return "chat_accept"
+    return decision
 
 
 def build_graph(checkpointer=None, research_compile_kwargs=None):
@@ -79,6 +84,7 @@ def build_graph(checkpointer=None, research_compile_kwargs=None):
         "course_research",
         build_research_graph(**{"checkpointer": True, **(research_compile_kwargs or {})}),
     )
+    builder.add_node("send_review_digest", send_review_digest_node, retry_policy=retry)
     builder.add_node("await_human_review", review_gate_node)
     builder.add_node("interpret_review_feedback", router_node)
     builder.add_node("send_approved_courses", publish_node, retry_policy=retry)
@@ -104,9 +110,10 @@ def build_graph(checkpointer=None, research_compile_kwargs=None):
         {
             "discard_run": "discard_run",
             "retry_research_pass": "retry_research_pass",
-            "await_human_review": "await_human_review",
+            "send_review_digest": "send_review_digest",
         },
     )
+    builder.add_edge("send_review_digest", "await_human_review")
     builder.add_edge("retry_research_pass", "course_research")
     builder.add_edge("await_human_review", "interpret_review_feedback")
     builder.add_conditional_edges(
@@ -114,6 +121,7 @@ def build_graph(checkpointer=None, research_compile_kwargs=None):
         _route_from_router,
         {
             RoutingAction.PUBLISH: "send_approved_courses",
+            "chat_accept": "record_review_outcome",
             RoutingAction.REWRITE: "start_research_pass",
             RoutingAction.AUGMENT: "start_research_pass",
             RoutingAction.RESET: "parse_user_request",
@@ -136,7 +144,7 @@ def build_graph(checkpointer=None, research_compile_kwargs=None):
         "graph_compiled",
         extra={
             "event": "outer_graph.compiled",
-            "node_count": 11,
+            "node_count": 12,
             "duration_ms": int((time.perf_counter() - start_ts) * 1000),
             "interrupt_before": ["await_human_review"],
         },

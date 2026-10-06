@@ -196,6 +196,8 @@ def record_feedback(
     accepted: bool,
     feedback_text: str | None,
     run_id: str | None = None,
+    reason: str | None = None,
+    uncatalogued: bool = False,
 ) -> None:
     if not user_id or not courses:
         return
@@ -215,7 +217,7 @@ def record_feedback(
                         "SELECT id FROM courses WHERE canonical_url = %s",
                         (course.url,),
                     ).fetchone()
-                    if course_row is None:
+                    if course_row is None and not uncatalogued:
                         continue
                     conn.execute(
                         """
@@ -228,10 +230,10 @@ def record_feedback(
                         """,
                         (
                             user_id,
-                            course_row[0],
+                            course_row[0] if course_row else None,
                             query,
                             rank,
-                            "published recommendation" if accepted else "review feedback",
+                            reason or ("published recommendation" if accepted else "review feedback"),
                             accepted,
                             not accepted,
                             feedback_text,

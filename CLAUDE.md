@@ -107,7 +107,7 @@ All LLM nodes go through `course_discovery/app/llm.py:build_llm()`, which return
 
 ## Key Constraints
 
-- **Never auto-publish.** `interrupt_before=["await_human_review"]` is always compiled in.
+- **Never auto-publish.** `interrupt_before=["await_human_review"]` is always compiled in. The CLI demo gates every run on a human decision. In chat mode (`configurable["chat_mode"]`) the pause is where the thread waits for the person's next message, a thread left behind is closed as accepted with reason `implicit`, and nothing from a chat run reaches the shared catalogue: its staged rows stay in `pending_courses` for staff review.
 - **Loop budget.** `max_research_iterations` caps the replanning loop and `max_review_rounds` the review rounds; both are optional `configurable` keys (defaults 2 and 3), supplied by the caller on every invocation, not state.
 - **Evidence over claims.** Treat missing evidence as `uncertain`, not `valid`.
 - **Cache first.** The search worker is only dispatched for gaps, freshness checks, or new topics.

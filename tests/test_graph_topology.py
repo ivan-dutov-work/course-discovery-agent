@@ -19,6 +19,7 @@ OUTER_NODES = {
     "start_research_pass",
     "retry_research_pass",
     "course_research",
+    "send_review_digest",
     "await_human_review",
     "interpret_review_feedback",
     "send_approved_courses",

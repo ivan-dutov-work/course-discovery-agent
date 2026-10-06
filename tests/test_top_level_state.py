@@ -108,7 +108,9 @@ class TopLevelStateTests(unittest.IsolatedAsyncioTestCase):
         first = await self._top_level(_initial_state(QUERY), config)
         paused = await self._values(config)
 
-        self.assertEqual(first, ["parse_user_request", "start_research_pass", "course_research"])
+        self.assertEqual(
+            first, ["parse_user_request", "start_research_pass", "course_research", "send_review_digest"]
+        )
         self.assertTrue(await self._is_paused(config))
         self.assertEqual(paused["user_id"], "cli-user")
         self.assertEqual(paused["user_query"], QUERY)

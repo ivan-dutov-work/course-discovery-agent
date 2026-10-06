@@ -11,7 +11,7 @@ from langgraph.graph.message import add_messages
 
 from course_discovery.app.llm import build_llm, llm_enabled
 from course_discovery.app.prompts import CURATOR_SYSTEM_PROMPT
-from course_discovery.domain.models import CourseCandidate, DeliveryStatus
+from course_discovery.domain.models import CourseCandidate, DeliveryStatus, RoutingAction
 from course_discovery.domain.run_config import run_id_of
 from course_discovery.guardrails import redact_pii
 from course_discovery.memory_curator.tools import (
@@ -42,6 +42,7 @@ class CuratorInput(TypedDict):
     feedback_history: list[str]
     valid_courses: list[CourseCandidate]
     publish_status: DeliveryStatus | None
+    routing_decision: RoutingAction | None
 
 
 class CuratorOutput(TypedDict):
@@ -58,6 +59,8 @@ class CuratorState(CuratorInput, CuratorOutput):
 
 
 def _published(state: CuratorInput) -> bool:
+    if state.get("routing_decision") == RoutingAction.PUBLISH:
+        return True
     return state.get("publish_status") in {DeliveryStatus.QUEUED, DeliveryStatus.DELIVERED}
 
 
