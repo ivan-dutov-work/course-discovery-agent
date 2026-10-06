@@ -261,6 +261,16 @@ effect keeps its key. Replies are the graph's own effects (`send_digest_message`
 `send_feedback_prompt`), delivered by `chat/handlers.py` through the transport. Every batch starts a
 new thread: continuing a parked thread is the thread selector's job and is not built.
 
+### Tagging job
+
+`jobs/` fills `courses.topics` outside the research graph. `schedule_tagging` selects courses with
+no topics that were never tagged, or whose `content_hash` moved since the last tagging, and submits
+one `tag_course` effect each (`tag:{url_hash}:{content_hash}`). The outbox worker runs
+`jobs/tagging_graph.py` once per effect: load the course and stop if its hash changed, screen the
+text with `screen_untrusted`, tag it, write with a compare-and-set on the hash. Anything but a pass
+withholds the course from the tagger. The tagger is a `TopicTagger` port; the one built is a
+keyword matcher over the topic vocabulary, and the output is clipped to that vocabulary.
+
 ### Top-level state and run configuration
 
 The outer graph owns fifteen channels (counted 2026-10-06 from `AgentState`; `ResearchState` has 23, nine of them shared). The research subgraph runs on `ResearchState` with

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from course_discovery.effects.models import Effect, PermanentEffectError
 from course_discovery.effects.worker import Handler
 
@@ -26,6 +28,16 @@ def deliver_chat_message(effect: Effect) -> None:
 
 
 def default_handlers() -> dict[str, Handler]:
+    handlers = _stub_handlers()
+    database_url = os.getenv("DATABASE_URL")
+    if database_url:
+        from course_discovery.jobs.tagging import TAG_COURSE, KeywordTagger, tagging_handler
+
+        handlers[TAG_COURSE] = tagging_handler(database_url, KeywordTagger())
+    return handlers
+
+
+def _stub_handlers() -> dict[str, Handler]:
     return {
         PUBLISH_DIGEST: deliver_digest,
         SEND_DIGEST_MESSAGE: deliver_chat_message,
