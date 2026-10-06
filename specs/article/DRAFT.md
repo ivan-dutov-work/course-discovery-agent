@@ -5,8 +5,8 @@ either drafted prose or an explicit placeholder naming what's pending — nothin
 silently missing. Placeholders are marked `[NOT DRAFTED]` so a partial read never
 gets mistaken for a finished section.
 
-Drafted so far: §2.2, §3.2, §3.3, §4, §5, §6, §7, §8.1–§8.4, §9, §10.1, §10.2, §10.4, §11, §12.
-Everything else is outline-only — see `specs/article/OUTLINE.md` for what each
+Drafted so far: §2.1, §2.2, §3.1, §3.2, §3.3, §3.4, §4, §5, §6, §7, §8.1–§8.4, §9, §10.1, §10.2, §10.4, §11, §12, §13, appendix.
+Everything else (§0, §1) is outline-only — see `specs/article/OUTLINE.md` for what each
 pending section needs to say.
 
 ---
@@ -27,7 +27,21 @@ pending section needs to say.
 
 ### 2.1 The state is the single channel between nodes
 
-[NOT DRAFTED] — see outline §2.1.
+Nodes never call each other. Each one reads a typed state object and returns a partial update,
+and the graph merges that update into the state before the next node runs. The state is the only
+channel, so it is the only place a coupling between two nodes can hide:
+
+```python
+class AgentState(TypedDict):
+    user_query: str
+    valid_courses: list[CourseCandidate]
+    feedback_history: Annotated[list[str], operator.add]
+    routing_decision: RoutingAction | None
+```
+
+The cost is that renaming a field changes every node that touches it, and nothing flags which
+ones. Treating the schema as a contract, with an owner and a version, is cheaper than discovering
+the coupling when an old thread resumes (§10.2).
 
 ### 2.2 Reducers for safe concurrent merges
 
@@ -95,7 +109,23 @@ the subgraph looks like the fix and is not: a crash after the node commits reach
 
 ### 3.1 Conditional edges
 
-[NOT DRAFTED] — see outline §3.1.
+Control flow that lives in prompt text can't be tested without a model. A conditional edge moves
+the decision into a plain function of state, so a routing rule is inspectable, unit-testable and
+identical on every run:
+
+```python
+def _after_research(state: AgentState):
+    if state.get("discard_reason"):
+        return "discard_run"
+    if state.get("research_pass") != len(state.get("feedback_history", [])):
+        return "retry_research_pass"
+    return "await_human_review"
+```
+
+Worth naming: a model can still supply the input to the decision, such as a classified review
+action, but the branch it selects comes from a closed set the graph author wrote down. The cost is
+that the router reads committed state, so any value it needs has to be put there by an earlier
+node. §3.4 covers the case where that indirection gets in the way.
 
 ### 3.2 Plan-driven `Send` fan-out
 
@@ -894,13 +924,36 @@ The delivery handler is a stub that prints; the submit, lease, retry and dead-le
 
 ## 13. What's Next
 
-[NOT DRAFTED] — see outline §13.
+Everything left sits around the mechanics shown here and changes none of them.
+
+- **The shared cache.** Staging then promotion after human approval is a stand-in for tiered
+  promotion: a typed verifier, an LLM reviewer for borderline items, and a human queue with a
+  time limit, run as a separate graph off the request path and triggered through the outbox.
+- **Ingestion off the request path.** Search, extraction and validation still run while a user
+  waits. The production shape serves from the cache and feeds web results back asynchronously.
+- **The review gate itself.** If runs become self-serve, the per-run `interrupt_before` turns into
+  a per-user save action and the human gate moves to the cache.
+- **Scheduling.** The outbox worker and the staging prune are commands someone has to run; nothing
+  schedules them.
+
+Repository: <https://github.com/ivan-dutov-work/course-discovery-agent>
 
 ---
 
 ## Appendix: Running the Demo
 
-[NOT DRAFTED] — see outline appendix. (The old M1 appendix in
-`archive/ARTICLE_M1_DRAFT.md` describes a different CLI surface —
-`telegram_gate`, `worker_a/b/c` — and should not be reused verbatim; the
-current CLI/router action set is PUBLISH/REWRITE/AUGMENT/RESET/DISCARD.)
+```bash
+git clone git@github.com:ivan-dutov-work/course-discovery-agent.git
+cd course-discovery-agent
+cp .env.example .env   # optional: OPENROUTER_API_KEY, DATABASE_URL; search is mocked, no search key
+uv sync
+uv run python main.py
+```
+
+Optional local Postgres (pgvector) for the durable checkpointer, the outbox and the integration
+tests: `docker compose up -d`, then
+`export TEST_DATABASE_URL=postgresql://course:course@localhost:55432/course_discovery`.
+
+The CLI prints the digest after synthesis with the cache hit count, search call count and
+validation summary, then pauses at the review gate. Type `approve`, `rewrite: ...`,
+`augment: ...`, `reset: ...` or `discard`.
