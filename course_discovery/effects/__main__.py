@@ -18,6 +18,7 @@ from course_discovery.observability.metrics import (
 )
 from course_discovery.observability.tracing import configure_tracing, shutdown_tracing
 from course_discovery.persistence.checkpointer import open_checkpointer, prune_checkpoints
+from course_discovery.research_agent.cache.repository import prune_staged_courses
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -71,6 +72,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"requeued {args.key}")
     elif command == "prune":
         print(f"deleted {prune_outbox(store, args.older_than_days)} delivered outbox rows")
+        print(f"deleted {prune_staged_courses(args.older_than_days)} abandoned staging rows")
         if args.checkpoints:
             threads = asyncio.run(_prune_checkpoints(args.older_than_days))
             print(f"deleted checkpoints for {len(threads)} threads")

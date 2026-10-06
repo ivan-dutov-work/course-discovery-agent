@@ -320,8 +320,9 @@ design.
 
 ## Known gaps, cache staging
 
-- **Abandoned runs leave staging rows.** A run that is never resumed or discarded keeps its
-  `pending_courses` rows; nothing prunes them yet (`BACKLOG.md`).
+- **Abandoned runs leave staging rows until `prune` runs.** `python -m course_discovery.effects prune`
+  deletes `pending_courses` rows older than the cutoff whose thread has had no activity since
+  (`prune_staged_courses`); nothing runs it on a schedule.
 - **Approval is per digest.** The reviewer approves the digest, and every valid web-sourced
   course in it is promoted; there is no per-course approval.
 

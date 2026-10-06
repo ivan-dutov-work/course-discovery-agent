@@ -184,6 +184,14 @@ leave it and append a new one that says which it replaces and what changed.
   served them). Rows already in `courses` are left alone, not re-screened. This is the interim
   human tier for backlog N1 and does not settle N2; N1's `promotion_status` column is replaced by
   this table, so N1 item 1 is amended.
+- **Staging rows are pruned by thread inactivity, not by row age alone.** `prune_staged_courses`
+  deletes a `pending_courses` row only when it is older than the cutoff and its run has no
+  `run_threads.last_activity_at` since. Age alone would delete the staging of a run a reviewer is
+  still working through (`created_at` is not bumped by later rounds), and the approval would then
+  promote nothing without an error. A run with no `run_threads` row (already forgotten by
+  `prune --checkpoints`) counts as idle. Same cutoff as `prune --checkpoints`, so a pruned thread and its
+  staging go together.
+
 - **The curator writes only fields a next-run consumer reads.** `career_goals`,
   `learning_style_notes` and `preferred_course_length` are refused by `propose_patch`; free-text
   preferences go into scoped notes, which the ranking prompt reads. Cases 5 and 6 of

@@ -25,7 +25,8 @@ separate graph off the request path (gap 4), triggered through the outbox.
 
 1. Staging exists as `pending_courses` (per run; `DECISIONS.md`), promoted by `promote_approved_courses`
    after the human gate. The cascade replaces that gate with tiers; add `rejected | needs_human`
-   states to the staging rows then, and a TTL prune for runs that are never resolved.
+   states to the staging rows then. Abandoned runs are already pruned by inactivity (`STATUS.md`);
+   unresolved items in the cascade need their own TTL.
 2. `TypedVerifier` port (label, probability, confidence) with a stub and a JEV adapter; treat
    JEV vendor claims as unverified until measured.
 3. LLM reviewer node (structured verdict plus written critique) for items below threshold.
