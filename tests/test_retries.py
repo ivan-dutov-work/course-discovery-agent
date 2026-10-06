@@ -27,6 +27,7 @@ from course_discovery.research_agent.search.tavily_client import TavilyClient
 from course_discovery.resilience import RETRY_SETTINGS, is_transient
 from course_discovery.workflows.outer_graph import build_graph
 from course_discovery.workflows.research_graph import build_research_graph
+from tests.research_view import research_values
 
 QUERY = "Find free Python courses with certificate for beginners"
 FAST_RETRY = {**RETRY_SETTINGS, "initial_interval": 0.0, "jitter": False}
@@ -40,6 +41,10 @@ class _StatusError(Exception):
 
 def _config(run_id: str) -> RunnableConfig:
     return {"configurable": {"thread_id": run_id}}
+
+
+async def _flat_values(graph, run_id: str) -> dict:
+    return (await graph.aget_state(_config(run_id))).values
 
 
 class TransientClassificationTests(unittest.TestCase):
@@ -124,7 +129,7 @@ class GraphRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result["routing_decision"])
         self.assertIn("Gateway failed (ValueError)", result["discard_reason"])
 
-    async def _resume_after_search_outage(self, graph, state, run_id):
+    async def _resume_after_search_outage(self, graph, state, run_id, view):
         real = TavilyClient.search
         calls = Counter()
         broken = {"active": True}
@@ -144,7 +149,8 @@ class GraphRetryTests(unittest.IsolatedAsyncioTestCase):
                 await graph.ainvoke(state, config)
             after_failure = dict(calls)
             broken["active"] = False
-            final = await graph.ainvoke(None, config)
+            await graph.ainvoke(None, config)
+        final = await view(graph, run_id)
 
         self.assertEqual(after_failure[poisoned[0]], RETRY_SETTINGS["max_attempts"])
         self.assertEqual(calls[poisoned[0]], RETRY_SETTINGS["max_attempts"] + 1)
@@ -158,7 +164,10 @@ class GraphRetryTests(unittest.IsolatedAsyncioTestCase):
         state.update(gateway_module.gateway_node(state))
 
         siblings, final = await self._resume_after_search_outage(
-            build_research_graph(checkpointer=memory_saver()), state, "r-flat"
+            build_research_graph(checkpointer=memory_saver()),
+            state,
+            "r-flat",
+            _flat_values,
         )
         self.assertEqual(final["metrics"].tavily_calls, len(set(final["completed_queries"])))
 
@@ -166,7 +175,7 @@ class GraphRetryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_subgraph_resume_reruns_completed_sibling_without_double_counting(self):
         siblings, final = await self._resume_after_search_outage(
-            build_graph(), _initial_state(QUERY), "r-nested"
+            build_graph(), _initial_state(QUERY), "r-nested", research_values
         )
 
         self.assertTrue(all(n == 2 for n in siblings.values()), siblings)
@@ -195,9 +204,9 @@ class GraphRetryTests(unittest.IsolatedAsyncioTestCase):
             raise ValueError("bad response shape")
 
         with patch.object(TavilyClient, "search", broken):
-            result = await build_graph().ainvoke(
-                _initial_state(QUERY), _config("r-badsearch")
-            )
+            graph = build_graph()
+            await graph.ainvoke(_initial_state(QUERY), _config("r-badsearch"))
+        result = await research_values(graph, "r-badsearch")
 
         self.assertTrue(all(n == 1 for n in calls.values()))
         self.assertTrue(any("Tavily search failed" in n for n in result["research_notes"]))

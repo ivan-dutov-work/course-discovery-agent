@@ -13,6 +13,7 @@ from course_discovery.domain.models import (
     CourseCandidate,
     MemoryNote,
     MemoryPatch,
+    RoutingAction,
     SearchFilters,
     UserMemory,
 )
@@ -201,6 +202,14 @@ class FeedbackHistoryNodeTests(unittest.TestCase):
     def test_empty_feedback_adds_nothing(self):
         update = router_node({"manager_feedback": "  "}, CONFIG)
         self.assertNotIn("feedback_history", update)
+
+    def test_a_classifier_failure_keeps_the_error_text_out_of_state(self):
+        os.environ["OPENROUTER_API_KEY"] = "test-key"
+        with patch("course_discovery.review.router.build_llm", side_effect=ValueError("jane.doe@example.com")):
+            update = router_node({"manager_feedback": "make it shorter"}, CONFIG)
+        self.assertEqual(update["routing_decision"], RoutingAction.DISCARD)
+        self.assertIn("ValueError", update["discard_reason"])
+        self.assertNotIn("jane.doe@example.com", update["discard_reason"])
 
 
 @unittest.skipUnless(os.getenv("TEST_DATABASE_URL"), "TEST_DATABASE_URL not set")

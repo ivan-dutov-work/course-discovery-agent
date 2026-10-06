@@ -1,0 +1,5 @@
+[
+  {"file": "v1_paused_at_review.json", "version": 1, "expect": "refused"},
+  {"file": "v2_paused_at_review.json", "version": 2, "expect": "refused"},
+  {"file": "v3_paused_at_review.json", "version": 3, "expect": "resumes"}
+]

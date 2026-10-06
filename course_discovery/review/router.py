@@ -179,7 +179,7 @@ def _route(state: AgentState, config: RunnableConfig) -> dict:
         )
         return {
             "routing_decision": RoutingAction.DISCARD,
-            "discard_reason": f"Router classification failed: {exc}",
+            "discard_reason": f"Router classification failed ({type(exc).__name__}). Check logs.",
         }
 
 

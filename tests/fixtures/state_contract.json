@@ -1,0 +1,77 @@
+{
+  "outer": {
+    "channels": [
+      "digest",
+      "discard_reason",
+      "feedback_history",
+      "manager_feedback",
+      "memory_update",
+      "metrics",
+      "publish_status",
+      "research_pass",
+      "research_retries",
+      "rewrite_instructions",
+      "routing_decision",
+      "search_filters",
+      "user_id",
+      "user_query",
+      "valid_courses"
+    ],
+    "nodes": [
+      "await_human_review",
+      "course_research",
+      "curate_user_memory",
+      "discard_run",
+      "drop_pending_courses",
+      "interpret_review_feedback",
+      "parse_user_request",
+      "promote_approved_courses",
+      "record_review_outcome",
+      "retry_research_pass",
+      "send_approved_courses",
+      "start_research_pass"
+    ]
+  },
+  "research": {
+    "channels": [
+      "active_search_query",
+      "cache_candidates",
+      "completed_queries",
+      "deduplicated_courses",
+      "digest",
+      "discard_reason",
+      "extracted_candidates",
+      "metrics",
+      "rejected_courses",
+      "research_iteration",
+      "research_notes",
+      "research_pass",
+      "research_plan",
+      "rewrite_instructions",
+      "routing_decision",
+      "scraped_courses",
+      "search_filters",
+      "tavily_results",
+      "uncertain_courses",
+      "user_id",
+      "user_memory",
+      "valid_courses",
+      "validation_results"
+    ],
+    "nodes": [
+      "begin_pass",
+      "extract_courses_from_results",
+      "find_known_courses",
+      "load_user_profile",
+      "merge_known_and_found_courses",
+      "plan_gap_search",
+      "plan_web_search",
+      "rank_and_summarize_courses",
+      "remove_duplicate_courses",
+      "save_verified_courses",
+      "search_web_for_courses",
+      "verify_course_claims"
+    ]
+  },
+  "version": 3
+}

@@ -24,11 +24,11 @@ parse_user_request
   -> course_research subgraph
   -> [interrupt_before: await_human_review]
   -> interpret_review_feedback
-      -> PUBLISH -> send_approved_courses -> record_review_outcome -> END
+      -> PUBLISH -> send_approved_courses -> promote_approved_courses -> record_review_outcome -> END
       -> REWRITE -> course_research subgraph
       -> AUGMENT -> course_research subgraph
       -> RESET   -> parse_user_request
-      -> DISCARD -> discard_run -> END
+      -> DISCARD -> discard_run -> drop_pending_courses -> END
 ```
 
 The research subgraph owns the bounded research loop. Node responsibilities and known gaps are in `specs/ARCHITECTURE.md`.
@@ -43,7 +43,7 @@ load_user_profile
   -> remove_duplicate_courses
   -> verify_course_claims
   -> plan_gap_search when validation is insufficient
-  -> save_verified_courses
+  -> save_verified_courses (stages; the cache is written after approval)
   -> rank_and_summarize_courses
 ```
 

@@ -5,6 +5,7 @@ from course_discovery.privacy.flow import NodeFlow, SUBJECT, external, flow, sto
 LLM = external("llm:openrouter", accepts=frozenset({SUBJECT}))
 SEARCH = external("search:tavily", accepts=frozenset({SUBJECT}))
 EMBED = external("embeddings:openrouter", accepts=frozenset({SUBJECT}))
+INJECTION_SCREEN = external("injection_screen:openrouter")
 
 OUTER: dict[str, NodeFlow] = {
     "parse_user_request": flow(
@@ -12,6 +13,16 @@ OUTER: dict[str, NodeFlow] = {
         writes={"search_filters", "routing_decision", "discard_reason"},
         sinks=(LLM,),
         redacts={"user_query", "feedback_history"},
+    ),
+    "start_research_pass": flow(
+        reads={"feedback_history"},
+        writes={"research_pass", "research_retries"},
+        declassifies={"research_pass": "round counter", "research_retries": "retry counter"},
+    ),
+    "retry_research_pass": flow(
+        reads={"feedback_history", "research_retries"},
+        writes={"research_pass", "research_retries"},
+        declassifies={"research_pass": "round counter", "research_retries": "retry counter"},
     ),
     "course_research": flow(),
     "curate_user_memory": flow(),
@@ -35,6 +46,11 @@ OUTER: dict[str, NodeFlow] = {
         declassifies={"publish_status": "delivery state only"},
     ),
     "discard_run": flow(reads={"discard_reason"}),
+    "promote_approved_courses": flow(
+        reads={"valid_courses"},
+        sinks=(store("courses", frozenset()), store("course_evidence", frozenset()), EMBED),
+    ),
+    "drop_pending_courses": flow(),
     "record_review_outcome": flow(
         reads={
             "user_id",
@@ -48,6 +64,16 @@ OUTER: dict[str, NodeFlow] = {
 }
 
 RESEARCH: dict[str, NodeFlow] = {
+    "begin_pass": flow(
+        reads={"routing_decision"},
+        writes={"tavily_results", "completed_queries", "research_notes", "research_iteration"},
+        declassifies={
+            "tavily_results": "reset",
+            "completed_queries": "reset",
+            "research_notes": "reset",
+            "research_iteration": "reset",
+        },
+    ),
     "load_user_profile": flow(reads={"user_id"}, writes={"user_memory"}),
     "find_known_courses": flow(
         reads={"search_filters", "user_memory", "metrics", "user_id"},
@@ -62,7 +88,7 @@ RESEARCH: dict[str, NodeFlow] = {
     ),
     "plan_web_search": flow(
         reads={"search_filters", "cache_candidates", "research_iteration", "completed_queries"},
-        writes={"research_plan", "error"},
+        writes={"research_plan", "discard_reason"},
     ),
     "search_web_for_courses": flow(
         reads={"active_search_query"},
@@ -103,12 +129,12 @@ RESEARCH: dict[str, NodeFlow] = {
             "research_iteration",
             "metrics",
         },
-        writes={"research_plan", "research_iteration", "metrics", "tavily_results", "extracted_candidates", "error"},
+        writes={"research_plan", "research_iteration", "metrics", "tavily_results", "extracted_candidates", "discard_reason"},
         declassifies={"metrics": "counters", "tavily_results": "reset", "extracted_candidates": "reset"},
     ),
     "save_verified_courses": flow(
-        reads={"valid_courses", "uncertain_courses", "validation_results"},
-        sinks=(store("courses", frozenset()), store("course_evidence", frozenset()), EMBED),
+        reads={"valid_courses", "validation_results"},
+        sinks=(store("pending_courses", frozenset()),),
     ),
     "rank_and_summarize_courses": flow(
         reads={
@@ -122,11 +148,12 @@ RESEARCH: dict[str, NodeFlow] = {
             "user_memory",
             "search_filters",
         },
-        writes={"digest", "rewrite_instructions"},
+        writes={"digest"},
         sinks=(LLM,),
         redacts={"user_memory"},
     ),
     "edge:dispatch_search_queries": flow(reads={"research_plan"}, writes={"active_search_query"}),
+    "step:screen_course_text": flow(reads={"valid_courses"}, sinks=(INJECTION_SCREEN,)),
 }
 
 CURATOR: dict[str, NodeFlow] = {
@@ -149,5 +176,5 @@ CURATOR: dict[str, NodeFlow] = {
     ),
 }
 
-EDGES = {"edge:dispatch_search_queries"}
+EDGES = {"edge:dispatch_search_queries", "step:screen_course_text"}
 FLOWS = {**OUTER, **RESEARCH, **CURATOR}

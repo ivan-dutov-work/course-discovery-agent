@@ -74,22 +74,69 @@ boundaries; completed nodes are not re-run on resume, the interrupted node is re
   and a new `operator.add` channel `feedback_history` went `[a]` to `[a, a, b]`. Fix for a
   channel the subgraph never uses: build the subgraph on a state schema without it
   (`domain/state.py:ResearchState`), so it is neither passed in nor echoed back. Not applicable
-  to `completed_queries`, `tavily_calls` and `research_notes`, which the parent needs from the
-  subgraph (AUGMENT re-enters at `plan_gap_search` and reads them); those need a reducer that is
-  idempotent over the echo. Open, `BACKLOG.md` S1. Pinned for the new channel by
-  `tests/test_memory_e2e.py`.
+  to `completed_queries`, `tavily_results` and `research_notes`, which the parent needs from the
+  subgraph (AUGMENT re-enters at `plan_gap_search` and reads them). Fixed by declaring the
+  reducer only on the subgraph's schema (`ResearchState`, where the `Send` branches meet) and
+  leaving the parent's copy a plain list: the subgraph receives the parent's value, appends to
+  it, and the parent overwrites with the result. Before the fix, two consecutive `rewrite:` rounds
+  gave `len(completed_queries)` 2, 4, 8 and `tavily_results` 10, 20, 40; after it 2, 2, 2 and 10,
+  10, 10 (a REWRITE plans no new query because every planned one is already in
+  `completed_queries`), and `augment:` gave 2, 3, 3. Pinned by `tests/test_state_hygiene.py`
+  (fails on the earlier schema) and, for `feedback_history`, by `tests/test_memory_e2e.py`.
 - **Budgets in `configurable` are per invocation, not per thread.** langgraph 1.1.2, memory saver,
   no LLM key: a run started with `max_review_rounds=1` and resumed with a config that omits the key
   ran its second review round on the default (3) instead of discarding
   (`tests/test_top_level_state.py`). The checkpoint stores the run's state, not the caller's
   config. `max_research_iterations` behaves the same: 0, 1 and the default gave 0, 1 and 2
   replans on an all-rejected run. `tavily_calls` is no longer a channel; `metrics.tavily_calls`
-  is `len(completed_queries)`, so it inherits the echo above until S1 item 0.
-- **Removing channels breaks resume of an old pause.** langgraph 1.1.2, memory saver: a thread
-  paused under the graph with `run_id`, `iteration_count` and the other removed channels, its
-  storage pickled and loaded by the slimmed graph, accepts `update_state` but `astream(None)` then
-  yields only `__interrupt__`, twice; nothing publishes. The same sequence without the pickle round
-  trip publishes. Cause not isolated. Postgres not run.
+  is `len(completed_queries)`.
+- **Removing channels breaks resume of an old pause (cause isolated, verified on Postgres).**
+  langgraph 1.1.2. A thread paused under the old graph (`725f85a`: `run_id`, `iteration_count`
+  and four more channels) and resumed under the slimmed one accepts `update_state` and then
+  `astream(None)` yields nothing: no error, still parked at `await_human_review`. Mechanism, from
+  reading source: on resume `pregel/_loop.py` (~L718) records "seen at last interrupt" only for
+  channels the *new* graph has; `should_interrupt` (`_algo.py` ~L150) re-interrupts while any
+  version in the checkpoint's `channel_versions` is newer than that record. A channel that no
+  longer exists keeps its version forever, so the gate re-fires on every resume. The earlier
+  pickle-round-trip observation was incidental: the toy graph reproduces it on a shared in-memory
+  saver. Only resuming from an `interrupt_before` is affected; a stale channel with no interrupt
+  configured completes. See "Schema evolution" below.
+
+## Schema evolution of a paused thread (verified, langgraph 1.1.2)
+
+Method: pause a thread under the old graph, build the new graph on the same saver, `invoke(None)`,
+classify the outcome as `RESUMES`, `STUCK` (still parked) or `SILENT_FINISH` (`next == ()` but the
+downstream node never ran). A 17-variant toy graph (`a -> gate[interrupt_before] -> c`) on the
+in-memory saver and on `AsyncPostgresSaver` gave identical results, then the real graph on Postgres
+(old `725f85a` against the working tree). Scripts not kept.
+
+| Change between pause and resume | Outcome |
+|---|---|
+| add a channel, with or without a writer; add or remove a reducer; change a channel's type | resumes. The type is not checked: a `str` channel keeps its old `int` |
+| add a node after, before or between existing nodes; rename a node not yet reached | resumes |
+| remove or rename a channel, even an unused one | **STUCK** |
+| remove a node that already ran in this thread (its `branch:to:<node>` channel is stale) | **STUCK**. A node that never ran in this thread (branch not taken) is safe |
+| remove or rename the node the thread is parked at | **SILENT_FINISH**: the thread ends as if complete and nothing downstream runs |
+| Pydantic field with a default added or removed | resumes; defaults are filled |
+| Pydantic field added without a default, renamed, or retyped | resumes, then fails lazily: the value is rehydrated without validation, so `AttributeError` at first read, or the old type persists |
+| Pydantic class moved or renamed | value comes back as a plain `dict` (not in the msgpack allowlist) |
+
+**It is predictable from the checkpoint alone.** Stale channels are
+`set(checkpoint.channel_versions) - set(new_graph.channels)`. Pending nodes are the
+`branch:to:<node>` keys present in `checkpoint.channel_values` (consumed trigger channels are
+re-versioned but carry no value, so version comparison misclassifies them). Rule: a pending node
+missing from the new graph is `SILENT_FINISH`; any stale channel on a graph with `interrupt_before`
+is `STUCK`; otherwise `RESUMES`. It matched all 17 toy variants on both savers and the real graph
+(predicted stale set equals the six removed channels).
+
+**It is repairable for everything except a deleted pending node.** Writing a new checkpoint
+(`aput`, parent = the old one) that renames moved channels in `channel_values`, `channel_versions`,
+`versions_seen` and `updated_channels`, and drops every stale key, made every `STUCK` variant
+resume with values intact (a renamed channel carried its value into the new name), and made a
+renamed pending node resume. `updated_channels` matters: without renaming inside it the renamed
+node is not scheduled. On the real graph the repaired thread approved to `publish_status=delivered`,
+and a `rewrite:` re-entered `course_research` and parked at review again. A deleted pending node has
+no repair, only a refusal, since the intent (the review step) is gone.
 - **Approved digest equals published digest.** `send_approved_courses` reads `digest` from
   checkpointed state. The router LLM can classify differently if re-run after a crash, but the
   reviewer's text is already in `manager_feedback`. Not tested end to end.
@@ -153,7 +200,32 @@ boundaries; completed nodes are not re-run on resume, the interrupted node is re
   to `send_approved_courses` and finished with `publish_status` set. The checkpoint stores the
   pending node name, so removing nodes that are not pending is safe; renaming the pending node
   is not. Checked with two checkouts (old at HEAD, new working tree) against one database.
+  Refined by "Schema evolution" above: this is consistent with those nodes never having run in
+  that thread (not re-checked). Removing a node that did run leaves its `branch:to:` channel stale
+  and the thread stuck at the gate.
 
+- **A checkpoint from the pre-boundary graph does not resume (verified, langgraph 1.1.2, Postgres).**
+  Paused at `await_human_review` under 98d61f9 (28 outer channels, flat research channels), then
+  opened by the current graph on the same database: `aget_state` returns the thread with
+  `next == ("await_human_review",)`, but after `aupdate_state(manager_feedback="approve")` and
+  `ainvoke(None)` it returns without `publish_status` and stays at the gate. A control thread
+  created and approved entirely under the current graph publishes.
+- **Resuming that thread re-runs the research pass (verified 2026-10-05, langgraph 1.1.2,
+  Postgres, with the `research_pass` change).** Streaming the resume with `subgraphs=True` shows
+  `start_research_pass`, then every node of `course_research` from `begin_pass` through
+  `rank_and_summarize_courses`, then `__interrupt__`. The search calls, the `pending_courses`
+  staging and the synthesis call all run again, and the digest is new. So the earlier "stays at
+  the gate" understates it: the failure is a silent re-execution with side effects. Cause: not
+  isolated beyond the observed node order; the checkpoint predates the channel that triggers
+  `start_research_pass`. The fix is to refuse before the resume (`DECISIONS.md`, "State contract
+  changes are versioned"). Pinned by `tests/test_checkpoint_compatibility.py` (a stored v1
+  fixture must raise `IncompatibleThreadError` and leave the checkpoint rows unchanged) and
+  `tests/test_state_contract.py`. Both fail if the guard or the version bump is removed (checked by
+  mutation).
+- **Resume into a stateful subgraph (found in review of S1, langgraph 1.1.2).** See
+  `01-state-and-control-flow.md`, "The research subgraph": with `checkpointer=True`, a crash or
+  `update_state(as_node=...)` that leaves the subgraph node as the first task of the resume makes
+  the subgraph skip its new input. `start_research_pass` is the guard.
 - **Private subgraph channels through the encrypted Postgres checkpointer (verified, langgraph
   1.1.2).** The curator's `messages` channel holds `SystemMessage`, `HumanMessage`, `AIMessage`
   with `tool_calls` and `ToolMessage`. A full outer run with `AsyncPostgresSaver`, the msgpack

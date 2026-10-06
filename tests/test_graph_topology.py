@@ -6,23 +6,30 @@ from unittest.mock import patch
 
 from course_discovery.app.cli import _initial_state
 from course_discovery.domain.models import RoutingAction
+from course_discovery.persistence.checkpointer import memory_saver
 from course_discovery.privacy.flow_specs import FLOWS
 from course_discovery.workflows.outer_graph import build_graph
+from tests.research_view import research_values
 from course_discovery.workflows.research_graph import build_research_graph
 
 QUERY = "Find free Python courses with certificate for beginners"
 
 OUTER_NODES = {
     "parse_user_request",
+    "start_research_pass",
+    "retry_research_pass",
     "course_research",
     "await_human_review",
     "interpret_review_feedback",
     "send_approved_courses",
     "discard_run",
+    "promote_approved_courses",
+    "drop_pending_courses",
     "record_review_outcome",
     "curate_user_memory",
 }
 RESEARCH_NODES = {
+    "begin_pass",
     "load_user_profile",
     "find_known_courses",
     "plan_web_search",
@@ -63,8 +70,15 @@ class TopologyTests(unittest.TestCase):
 
     def test_discard_is_recorded_before_the_end(self):
         edges = _edges(build_graph())
-        self.assertIn(("discard_run", "record_review_outcome"), edges)
+        self.assertIn(("discard_run", "drop_pending_courses"), edges)
+        self.assertIn(("drop_pending_courses", "record_review_outcome"), edges)
         self.assertNotIn(("discard_run", "__end__"), edges)
+
+    def test_pending_courses_are_promoted_only_after_the_publish_path(self):
+        edges = _edges(build_graph())
+        self.assertIn(("send_approved_courses", "promote_approved_courses"), edges)
+        self.assertIn(("promote_approved_courses", "record_review_outcome"), edges)
+        self.assertNotIn(("discard_run", "promote_approved_courses"), edges)
 
     def test_curator_runs_after_the_outcome_is_recorded_and_before_the_end(self):
         edges = _edges(build_graph())
@@ -72,13 +86,19 @@ class TopologyTests(unittest.TestCase):
         self.assertIn(("curate_user_memory", "__end__"), edges)
         self.assertNotIn(("record_review_outcome", "__end__"), edges)
 
-    def test_augment_edge_goes_straight_to_research(self):
-        self.assertIn(("interpret_review_feedback", "course_research"), _edges(build_graph()))
+    def test_every_route_into_research_passes_the_anchor(self):
+        edges = _edges(build_graph())
+        self.assertIn(("interpret_review_feedback", "start_research_pass"), edges)
+        self.assertIn(("parse_user_request", "start_research_pass"), edges)
+        self.assertIn(("start_research_pass", "course_research"), edges)
+        self.assertNotIn(("interpret_review_feedback", "course_research"), edges)
+        self.assertNotIn(("parse_user_request", "course_research"), edges)
 
     def test_research_entry_is_conditional(self):
         edges = _edges(build_research_graph())
-        self.assertIn(("__start__", "load_user_profile"), edges)
-        self.assertIn(("__start__", "plan_gap_search"), edges)
+        self.assertIn(("__start__", "begin_pass"), edges)
+        self.assertIn(("begin_pass", "load_user_profile"), edges)
+        self.assertIn(("begin_pass", "plan_gap_search"), edges)
 
 
 class TopologyRunTests(unittest.IsolatedAsyncioTestCase):
@@ -107,7 +127,7 @@ class TopologyRunTests(unittest.IsolatedAsyncioTestCase):
         )
         visited = await self._visited(graph, None, config)
 
-        self.assertEqual(visited[0], "plan_gap_search")
+        self.assertEqual(visited[:3], ["start_research_pass", "begin_pass", "plan_gap_search"])
         self.assertNotIn("load_user_profile", visited)
         self.assertNotIn("find_known_courses", visited)
         self.assertEqual((await graph.aget_state(config)).next, ("await_human_review",))
@@ -122,20 +142,21 @@ class TopologyRunTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             visited,
-            ["parse_user_request", "discard_run", "record_review_outcome", "load_context", "curate_user_memory"],
+            ["parse_user_request", "discard_run", "drop_pending_courses", "record_review_outcome", "load_context", "curate_user_memory"],
         )
         self.assertEqual((await graph.aget_state(config)).next, ())
 
     async def test_planning_error_ends_research_without_dangling_node(self):
-        graph = build_research_graph()
-        state = _initial_state(QUERY)
+        graph = build_research_graph(checkpointer=memory_saver())
+        config = {"configurable": {"thread_id": "topo-plan-error"}}
+        state = {"user_id": "cli-user", "search_filters": None}
 
-        visited = await self._visited(graph, state, None)
-        result = await graph.ainvoke(state)
+        visited = await self._visited(graph, state, config)
+        result = await graph.aget_state(config)
 
-        self.assertEqual(visited, ["load_user_profile", "find_known_courses", "plan_web_search"])
-        self.assertIn("search filters missing", result["error"])
-        self.assertFalse(result["digest"])
+        self.assertEqual(visited, ["begin_pass", "load_user_profile", "find_known_courses", "plan_web_search"])
+        self.assertIn("search filters missing", result.values["discard_reason"])
+        self.assertFalse(result.values.get("digest"))
 
     async def test_search_failure_leaves_a_limitation_note_and_finishes(self):
         graph = build_graph()
@@ -147,10 +168,10 @@ class TopologyRunTests(unittest.IsolatedAsyncioTestCase):
         ):
             visited = await self._visited(graph, _initial_state(QUERY), config)
 
-        values = (await graph.aget_state(config)).values
+        values = await research_values(graph, "topo-search-error")
         self.assertIn("rank_and_summarize_courses", visited)
         self.assertTrue(any("search failed" in note for note in values["research_notes"]))
-        self.assertFalse(values.get("error"))
+        self.assertFalse(values.get("discard_reason"))
         self.assertEqual((await graph.aget_state(config)).next, ("await_human_review",))
 
 

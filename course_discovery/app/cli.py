@@ -30,7 +30,7 @@ from course_discovery.observability.tracing import (
 )
 from course_discovery.guardrails import redact_pii
 from course_discovery.persistence.checkpointer import open_checkpointer
-from course_discovery.privacy import authorize_thread, register_thread
+from course_discovery.privacy import IncompatibleThreadError, authorize_thread, register_thread
 from course_discovery.resilience import RECURSION_LIMIT
 from course_discovery.workflows.outer_graph import build_graph
 
@@ -40,28 +40,13 @@ def _initial_state(query: str) -> AgentState:
         "user_query": redact_pii(query) or "",
         "user_id": "cli-user",
         "search_filters": None,
-        "user_memory": None,
-        "cache_candidates": [],
-        "research_plan": None,
-        "tavily_results": [],
-        "extracted_candidates": [],
-        "scraped_courses": [],
-        "deduplicated_courses": [],
         "valid_courses": [],
-        "rejected_courses": [],
-        "uncertain_courses": [],
-        "validation_results": [],
         "digest": None,
+        "metrics": ResearchRunMetrics(),
         "manager_feedback": None,
         "feedback_history": [],
         "rewrite_instructions": None,
         "routing_decision": None,
-        "research_iteration": 0,
-        "completed_queries": [],
-        "research_notes": [],
-        "metrics": ResearchRunMetrics(),
-        "active_search_query": None,
-        "error": None,
         "publish_status": None,
         "discard_reason": None,
         "memory_update": None,
@@ -179,7 +164,7 @@ async def _run(graph) -> None:
             f"Cache hits: {result['metrics'].cache_hits} | "
             f"Tavily calls: {result['metrics'].tavily_calls} | "
             f"Valid: {len(result.get('valid_courses', []))} | "
-            f"Uncertain: {len(result.get('uncertain_courses', []))}"
+            f"Uncertain: {result['metrics'].uncertain_count}"
         )
 
         wait_start = time.perf_counter()
@@ -201,7 +186,11 @@ async def _run(graph) -> None:
             },
         )
 
-        authorize_thread(initial_state["user_id"], run_id)
+        try:
+            authorize_thread(initial_state["user_id"], run_id)
+        except IncompatibleThreadError as exc:
+            print(f"{exc}. Start a new run; this thread cannot be resumed.")
+            raise SystemExit(1) from exc
         await graph.aupdate_state(
             config, {"manager_feedback": redact_pii(pm_feedback)}
         )

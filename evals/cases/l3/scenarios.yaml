@@ -1,0 +1,67 @@
+- id: graph-approve-after-first-digest
+  source: seed
+  origin: Key Constraints, never auto-publish
+  input: {query: "Find free Python courses with certificate for beginners", feedback: ["approve"]}
+  expect: {routes: [PUBLISH], ends: true, published: 1, feedback_rounds: 1}
+  graders: [pauses_before_review, nothing_published_before_approval, routes, outcome, pass_stamp_follows_rounds, digest_present_at_pause]
+  tags: [publish]
+- id: graph-discard-publishes-nothing
+  source: seed
+  origin: Key Constraints, never auto-publish
+  input: {query: "Find free Python courses with certificate for beginners", feedback: ["discard"]}
+  expect: {routes: [DISCARD], ends: true, published: 0, discarded: true}
+  graders: [pauses_before_review, nothing_published_before_approval, routes, outcome]
+  tags: [discard]
+- id: graph-rewrite-then-approve
+  source: seed
+  origin: ARCHITECTURE.md, outer graph
+  input: {query: "Find free Python courses with certificate for beginners", feedback: ["rewrite: make the digest shorter", "approve"]}
+  expect: {routes: [REWRITE, PUBLISH], ends: true, published: 1, feedback_rounds: 2}
+  graders: [pauses_before_review, nothing_published_before_approval, routes, outcome, pass_stamp_follows_rounds, digest_present_at_pause]
+  tags: [rewrite]
+- id: graph-augment-then-approve
+  source: seed
+  origin: notes/01, stale subgraph result on resume
+  input: {query: "Find free Python courses with certificate for beginners", feedback: ["augment: more courses", "approve"]}
+  expect: {routes: [AUGMENT, PUBLISH], ends: true, published: 1, feedback_rounds: 2}
+  graders: [pauses_before_review, nothing_published_before_approval, routes, outcome, pass_stamp_follows_rounds, digest_present_at_pause]
+  tags: [augment, stale-result]
+- id: graph-reset-to-new-topic
+  source: seed
+  origin: DECISIONS.md, begin_pass resets private state on a fresh pass
+  input: {query: "Find free Python courses with certificate for beginners", feedback: ["reset: free JavaScript courses for beginners", "approve"]}
+  expect: {routes: [RESET, PUBLISH], ends: true, published: 1, feedback_rounds: 2}
+  graders: [pauses_before_review, nothing_published_before_approval, routes, outcome, pass_stamp_follows_rounds, digest_present_at_pause]
+  tags: [reset]
+- id: graph-multi-round-then-approve
+  source: seed
+  origin: tests/test_e2e_review_loops_postgres.py
+  input:
+    query: "Find free Python courses with certificate for beginners"
+    feedback: ["augment: more courses", "rewrite: make the digest shorter", "reset: free JavaScript courses for beginners", "approve"]
+  expect: {routes: [AUGMENT, REWRITE, RESET, PUBLISH], ends: true, published: 1, feedback_rounds: 4}
+  graders: [pauses_before_review, nothing_published_before_approval, routes, outcome, pass_stamp_follows_rounds, digest_present_at_pause]
+  tags: [multi-round]
+- id: graph-first-digest-parks-at-gate
+  source: seed
+  origin: Key Constraints, never auto-publish
+  input: {query: "Find free Python courses with certificate for beginners", feedback: []}
+  expect: {ends: false, published: 0, feedback_rounds: 0}
+  graders: [pauses_before_review, nothing_published_before_approval, outcome, digest_present_at_pause]
+  tags: [publish]
+- id: graph-wrong-owner-cannot-resume
+  source: seed
+  origin: DECISIONS.md, thread ownership check before resume
+  requires: [postgres]
+  input: {query: "Find free Python courses with certificate for beginners", user_id: owner, resume_as: intruder, feedback: ["approve"]}
+  expect: {refusal: ThreadAccessError, ends: false, published: 0, feedback_rounds: 0}
+  graders: [pauses_before_review, nothing_published_before_approval, resume_refused, refusal_changes_nothing, digest_present_at_pause]
+  tags: [access]
+- id: graph-stale-thread-refused
+  source: seed
+  origin: DECISIONS.md, state contract changes are versioned
+  requires: [postgres]
+  input: {query: "Find free Python courses with certificate for beginners", user_id: owner, resume_as: owner, stored_schema_version: 1, feedback: ["approve"]}
+  expect: {refusal: IncompatibleThreadError, ends: false, published: 0, feedback_rounds: 0}
+  graders: [pauses_before_review, nothing_published_before_approval, resume_refused, refusal_changes_nothing, digest_present_at_pause]
+  tags: [access, schema-version]

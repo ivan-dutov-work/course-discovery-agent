@@ -54,6 +54,7 @@ NOT_USER_DATA = frozenset(
     {
         "courses",
         "course_evidence",
+        "pending_courses",
         "checkpoints",
         "checkpoint_blobs",
         "checkpoint_writes",

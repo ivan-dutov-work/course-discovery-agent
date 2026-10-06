@@ -30,13 +30,15 @@ would keep the same bounds (`max_research_iterations`, validation before synthes
 ## Outer graph
 
 ```
-parse_user_request ──ok──▶ course_research ──▶ [interrupt] await_human_review ──▶ interpret_review_feedback
-        │                                                                                   │
-        └─error─▶ discard_run ─▶ record_review_outcome ─▶ curate_user_memory ─▶ END          ├─ PUBLISH ─▶ send_approved_courses ─▶ record_review_outcome ─▶ curate_user_memory ─▶ END
-                                                                                            ├─ REWRITE ─▶ course_research
-                                                                                            ├─ AUGMENT ─▶ course_research
+parse_user_request ──ok──▶ start_research_pass ──▶ course_research ──▶ [interrupt] await_human_review ──▶ interpret_review_feedback
+        │                          │                  │ stale result: retry_research_pass ─▶ course_research (once, then error)
+        │                          └──────────────────┤ planning failure: discard_run
+        └─error─▶ discard_run ─▶ drop_pending_courses ─▶ record_review_outcome ─▶ curate_user_memory ─▶ END
+                                                                                            ├─ PUBLISH ─▶ send_approved_courses ─▶ promote_approved_courses ─▶ record_review_outcome ─▶ curate_user_memory ─▶ END
+                                                                                            ├─ REWRITE ─▶ start_research_pass ─▶ course_research
+                                                                                            ├─ AUGMENT ─▶ start_research_pass ─▶ course_research
                                                                                             ├─ RESET   ─▶ parse_user_request
-                                                                                            └─ DISCARD ─▶ discard_run ─▶ record_review_outcome ─▶ curate_user_memory ─▶ END
+                                                                                            └─ DISCARD ─▶ discard_run ─▶ drop_pending_courses ─▶ record_review_outcome ─▶ curate_user_memory ─▶ END
 ```
 
 `interrupt_before=["await_human_review"]` is always compiled in. Nothing publishes
@@ -45,9 +47,9 @@ without passing it.
 ## Research subgraph
 
 ```
-START ──(AUGMENT)───────────────────────────────────────────────────────▶ plan_gap_search
-  │
-  └─▶ load_user_profile ─▶ find_known_courses ─▶ plan_web_search
+START ─▶ begin_pass ──(AUGMENT)───────────────────────────────────────────▶ plan_gap_search
+             │
+             └─▶ load_user_profile ─▶ find_known_courses ─▶ plan_web_search
                                                       │
                  ┌──── no queries needed ─────────────┤
                  ▼                                    ├─ error ─▶ END
@@ -71,10 +73,14 @@ One responsibility each. "Rules" means deterministic code with no model call.
 | Node | Responsibility | Kind |
 |---|---|---|
 | `parse_user_request` | Redact PII from the query and parse it into `SearchFilters`; fill the stored budget and certificate defaults where the query is silent (reads the profile from the repository, not from state); on RESET, re-parse with the latest `feedback_history` entry and merge the new constraints into the old ones; on failure set `discard_reason`, which routes to `discard_run` | LLM, rule fallback |
-| `course_research` | Run the research subgraph | subgraph |
+| `start_research_pass` | Stamp `research_pass = len(feedback_history)`; the subgraph echoes it back, and a mismatch after `course_research` means the stateful subgraph ignored its input on a resumed tick; resets `research_retries` (`article/notes/01`) | rules |
+| `retry_research_pass` | Re-stamp `research_pass` and count the retry; raises `StaleResearchResultError` once `MAX_STALE_RETRIES` (1) is spent, so a result that stays stale fails with a named error instead of looping to the recursion limit | rules |
+| `course_research` | Run the research subgraph; sees five input keys, returns `valid_courses`, `digest`, `metrics`, `discard_reason` and the echoed `research_pass` | subgraph |
 | `await_human_review` | The pause point where the interrupt fires; does nothing itself | anchor |
 | `interpret_review_feedback` | Map reviewer feedback to one routing action, append the redacted feedback to `feedback_history` and clear the `manager_feedback` inbox; rounds already completed are `len(feedback_history)` | LLM, rule fallback |
 | `send_approved_courses` | Submit the publish effect through `EffectGateway` with a key derived from `run_id` | side effect |
+| `promote_approved_courses` | Move this run's staged courses that appear in the approved `valid_courses` into the shared cache (embedding computed here), then clear the run's staging rows; idempotent | DB write |
+| `drop_pending_courses` | Delete this run's staged courses without promoting; runs on every discard path | DB write |
 | `record_review_outcome` | Record accept or reject events for the user, with the whole `feedback_history` as the text; runs after publish and after discard | DB write |
 | `curate_user_memory` | Turn the review feedback into a validated patch to the stored profile (subgraph, below); writes only the `memory_update` status channel | subgraph, LLM |
 | `discard_run` | End the run as discarded, with a reason | terminal |
@@ -83,6 +89,7 @@ One responsibility each. "Rules" means deterministic code with no model call.
 
 | Node | Responsibility | Kind |
 |---|---|---|
+| `begin_pass` | On a fresh pass (`routing_decision` empty: first run or RESET) clear the ledger, notes, accumulated search results and iteration counter; REWRITE and AUGMENT keep them | rules |
 | `load_user_profile` | Load preferences, completed and rejected courses | DB read |
 | `find_known_courses` | Fetch previously validated courses from the cache, ranked by topic similarity | DB read |
 | `plan_web_search` | Decide which queries are needed: none if the cache holds enough candidates | rules |
@@ -92,8 +99,8 @@ One responsibility each. "Rules" means deterministic code with no model call.
 | `remove_duplicate_courses` | Drop duplicates by normalized URL, title+host fingerprint and fuzzy title | pure |
 | `verify_course_claims` | Mark each candidate valid, uncertain or rejected against the filters and the user profile | rules |
 | `plan_gap_search` | Build new queries from missing evidence and increment the iteration counter | rules |
-| `save_verified_courses` | Persist valid and uncertain courses to the cache with the run topic and an embedding | DB write |
-| `rank_and_summarize_courses` | Rank valid courses (preferred provider, level and language first) and write the digest, with the profile's durable and topic-matching notes in the prompt | LLM, template fallback |
+| `save_verified_courses` | Stage valid web-sourced courses in `pending_courses`, keyed by run; the shared cache is not touched until approval | DB write |
+| `rank_and_summarize_courses` | Rank valid courses (preferred provider, level and language first) and write the digest, with the profile's durable and topic-matching notes in the prompt; each course's web text is screened for injection first (below) | LLM, template fallback |
 
 Evidence rule: a missing piece of evidence yields `uncertain`, never `valid`.
 
@@ -130,6 +137,25 @@ parent and the shared reducer channel `feedback_history` is not echoed back and 
   fail the run; a database failure in `commit` raises, and `RetryPolicy` retries it safely
   because of the claim row.
 
+## Injection screen
+
+Course titles, descriptions and evidence quotes come from search snippets and cached rows, so they
+are untrusted text on its way into the synthesizer prompt. Before each course's model call,
+`guardrails/injection.py:screen_untrusted` scores that text through an `InjectionScreen` (the
+adapter calls `typesafe/jev-1.13` on OpenRouter's Decisions API):
+
+| Score | Action |
+|---|---|
+| below 0.35 | model call as before |
+| 0.35 to 0.70 | model call with structured fields only; the digest line says free text was withheld |
+| 0.70 and above | no model call; title and provider only, with the same note |
+| screen error | treated as the middle band |
+
+The rules, not the model, own the decision. The screen is skipped without `OPENROUTER_API_KEY`
+(no prompt to protect) and with `INJECTION_GUARD=off`. Thresholds are the benchmark's, not fitted.
+It covers only this prompt: `parse_user_request` and the curator read no web text, and the
+tagger does not pass through it.
+
 ## Cache lookup
 
 `find_known_courses` embeds `filters.topic` and ranks cached courses by cosine similarity to
@@ -161,11 +187,11 @@ completed, rejected, avoided provider) are unchanged.
 - Score: `0.7 * similarity + 0.2 * validation_confidence + 0.1 * min(use_count, 10) / 10`,
   descending, ties by `id`. The weights were checked, not fitted: ordering quality is flat across
   the range tried on both embedders, with 0.7 / 0.2 / 0.1 at or tied for the best (`DECISIONS.md`).
-- Write side: `upsert_courses` stores the embedding of title, description and the row's stored
+- Write side: `promote_staged_courses` calls `upsert_courses` after approval, which stores the embedding of title, description and the row's stored
   `topics` in the same transaction as the row. `topics` describes the course and is never
   derived from the user's query, so nothing writes it yet and it is left untouched on conflict.
-  An embedder error or a wrong dimension aborts the write; `save_verified_courses` keeps its
-  `RetryPolicy`.
+  An embedder error or a wrong dimension aborts the write; `promote_approved_courses` carries the
+  `RetryPolicy`. `save_verified_courses` only writes JSON into `pending_courses`.
 - Without `DATABASE_URL`, `seed_cache` ranks with the same embedder, floor and score.
 - The planner's threshold on cache hit count (`min_valid = 3`) now counts topical hits.
 - The HNSW index (`migrations/007`) exists for a later nearest-neighbour pre-filter; the
@@ -190,12 +216,19 @@ Three stores, three lifetimes.
   outlives runs. `load_user_profile` reads it at the start; `record_review_outcome`
   writes feedback events after publish or discard. `save_user_memory` is the one writer of
   `user_preferences` (one transaction, row lock, merge); only the curator's `commit` calls it.
+- **Fan-in reducers live on the subgraph's schema only.** `tavily_results`, `completed_queries` and
+  `research_notes` are `operator.add` channels of `ResearchState` and are not in `AgentState`
+  (`domain/state.py`), so the `Send` branches merge inside the subgraph and the parent never adds
+  the subgraph's value to its own.
 - **`feedback_history`** is the one channel that keeps every review round (`manager_feedback`
   is only the inbox the reviewer's text arrives in, cleared once interpreted). It is outer-graph only: the research subgraph runs on
   `ResearchState`, which omits it, because a reducer channel that a subgraph shares is added to
   a second time when the subgraph returns (`article/notes/02`).
 - **Course cache** (`courses`, `course_evidence`) is shared across users and holds
-  only validated courses.
+  only validated, human-approved courses. A run's candidates wait in `pending_courses`
+  (`run_id`, URL, candidate and validation JSON) until `promote_approved_courses`; a discard
+  deletes them. Uncertain courses are no longer persisted: nothing served them. Rows written
+  before migration 010 stay as they are.
 
 The cost of this split: the profile is read at the start of each research pass, and
 feedback is written only after publish, so feedback given during a run reaches the
@@ -203,9 +236,12 @@ next run's profile, not the pass in progress.
 
 ### Top-level state and run configuration
 
-The outer graph owns twelve channels; the research subgraph's channels sit behind
-`course_research` and are not yet slimmed (`BACKLOG.md` S1). A channel is only held if it
-cannot be derived.
+The outer graph owns fifteen channels. The research subgraph runs on `ResearchState` with
+`input_schema=ResearchInput` and `output_schema=ResearchOutput`, so its other fourteen channels
+(plan, queries, candidate lists, validation results, notes, iteration, profile) are private and
+persist across passes only because it is compiled with `checkpointer=True`; they are checkpointed
+under the namespace `course_research` and are not in the outer state. A channel is only held at
+the top level if it cannot be derived.
 
 | Channel | Role | Written by |
 |---|---|---|
@@ -215,7 +251,9 @@ cannot be derived.
 | `feedback_history` | Review ledger (reducer); its length is the number of completed review rounds | `interpret_review_feedback` |
 | `routing_decision` | One-shot control signal, consumed by `parse_user_request` on RESET | `interpret_review_feedback` |
 | `rewrite_instructions` | Router to research hand-off | `interpret_review_feedback` |
+| `research_pass`, `research_retries` | Round stamp the subgraph echoes back, and the count of stale-result retries in this round | `start_research_pass`, `retry_research_pass` |
 | `valid_courses`, `digest` | Research output | `course_research` |
+| `metrics` | Research counters (`ResearchRunMetrics`); the CLI and the run span read cache hits, search calls and the valid, rejected and uncertain counts from here | `course_research` |
 | `publish_status` | Delivery state | `send_approved_courses` |
 | `discard_reason` | Why the run ended discarded; also the gateway-failure signal | `parse_user_request`, `interpret_review_feedback` |
 | `memory_update` | Curator status, read by nothing at the outer level | `curate_user_memory` |
@@ -251,12 +289,41 @@ design.
 5. **Learned preferences are narrow and not yet checked against a live model.** The curator
    writes only fields with a consumer: providers, level, language, budget, certificate,
    rejected and completed URLs, and scoped notes. `career_goals` and `learning_style_notes` have
-   no consumer beyond the profile vector, so feedback about them is dropped, not stored. The stubbed-model tests pin the loop; how a real model behaves on the
-   case list is unmeasured (P6). Cases: `FEEDBACK.md`.
-6. **Reducer channels double-count across review rounds.** `completed_queries` and
-   `research_notes` (and `metrics.tavily_calls`, which is derived from `completed_queries`)
-   are added to again each time `course_research` returns, so a REWRITE or
-   AUGMENT round doubles them (measured 1, 2, 4; `article/notes/02`). Fix: backlog S1.
+   no consumer beyond the profile vector, so feedback about them is dropped, not stored. The stubbed-model tests pin the loop and the next run's behavior for eleven cases; how a real model
+   behaves on the case list is unmeasured (the live layer exists and has not been run). Capitalised provider names (`Udemy`, `Coursera`) are redacted as
+   `<PERSON>` before the curator reads the feedback, so a live model cannot tell which provider
+   was named (`notes/04`, `BACKLOG.md`). Cases: `FEEDBACK.md`.
+7. **The injection screen is one layer, on one prompt.** JEV can be steered by text that argues
+   for its own classification, no deterministic rule or prompt fencing sits beside it, the
+   thresholds are unfitted, and the tagging step is not screened (`BACKLOG.md`).
+
+## Known gaps, research boundary
+
+- **Subgraph storage is wider than its schema.** `input_schema` limits what the subgraph reads, not
+  what its checkpoint holds: the `__start__` channel keeps the full parent state it was started
+  with, and the `Send` payloads in `__pregel_tasks` carry the whole `ResearchState`, `user_memory`
+  included. Encryption covers both (`tests/test_nested_checkpoints_postgres.py`); the PII canary
+  skips these runtime channels.
+- **Candidate lists and plans carry across REWRITE and AUGMENT on purpose,** and are cleared by
+  `begin_pass` only on a first pass or RESET. `metrics` is not reset by `begin_pass`, but it is not a run total either: the validator recomputes `queries_run`, `tavily_calls` and the valid, rejected and uncertain counts from the current ledger and candidate lists, so they describe the digest under review and drop after a RESET. Found by `tests/test_e2e_review_loops_postgres.py`.
+- **Threads paused under an older state schema are refused, not migrated.** `run_threads` stamps
+  `schema_version` (`domain/contract.py:STATE_SCHEMA_VERSION`) when a thread is registered, and
+  `authorize_thread` raises `IncompatibleThreadError` on a mismatch, after the ownership check and
+  before any `update_state`. Without the guard the old thread does not publish: it re-runs the
+  whole research pass (searches, `pending_courses` staging, synthesis call) and parks at the gate
+  again (`notes/02`). Rows from before versioning have a NULL version and count as v1. Changes to
+  channels or nodes are caught by `tests/test_state_contract.py`; each version keeps a stored
+  checkpoint in `tests/fixtures/checkpoints/` marked `resumes` or `refused`
+  (`tests/test_checkpoint_compatibility.py`). Without `DATABASE_URL` there is no registry and no
+  guard, which is fine for the in-memory saver because its threads do not outlive the process.
+  Drain in-flight runs before a deploy that bumps the version.
+
+## Known gaps, cache staging
+
+- **Abandoned runs leave staging rows.** A run that is never resumed or discarded keeps its
+  `pending_courses` rows; nothing prunes them yet (`BACKLOG.md`).
+- **Approval is per digest.** The reviewer approves the digest, and every valid web-sourced
+  course in it is promoted; there is no per-course approval.
 
 ## Naming
 
@@ -264,10 +331,10 @@ Node names are span names, checkpoint interrupt targets and `flow_specs.py` keys
 they appear in traces and in stored checkpoints. Checkpoints written before the
 rename hold the old names, so a run paused at the old `review_gate` should be treated
 as unable to resume against the renamed graph. Not verified for that rename; finish or discard
-in-flight runs before deploying it. The top-level state pass removed six channels from stored
+in-flight runs before deploying it (`STATE_SCHEMA_VERSION` now enforces this at resume). The top-level state pass removed six channels from stored
 checkpoints and is verified to break resume: a run paused under the earlier graph, resumed
 under the new one after `update_state`, only re-yields `__interrupt__` and never publishes
-(memory saver, pickled round trip, found in review; the Postgres path was not run). Finish or
+(memory saver, pickled round trip, found in review; the research-boundary change breaks resume the same way on Postgres, see Known gaps, research boundary). Finish or
 discard in-flight runs before deploying it. Removing the three no-op anchors is different: a run
 paused at `await_human_review` under the earlier graph resumed and published under the
 current one (`notes/02`), because the paused node's name did not change.
@@ -289,7 +356,7 @@ current one (`notes/02`), because the paused node's name did not change.
 | `dedup` | `remove_duplicate_courses` |
 | `evidence_validator` | `verify_course_claims` |
 | `replanner` | `plan_gap_search` |
-| `course_cache_upsert` | `save_verified_courses` |
+| `course_cache_upsert` | `save_verified_courses` (stages; promotion is `promote_approved_courses`) |
 | `synthesizer` | `rank_and_summarize_courses` |
 | `research_done` | removed (edge to `END`) |
 | `review_gate` | `await_human_review` |

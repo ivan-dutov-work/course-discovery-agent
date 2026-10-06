@@ -252,3 +252,94 @@ def upsert_courses(
                 extra={"event": "persistence.course_cache_upsert_error", **sanitize_error(exc)},
             )
             raise
+
+
+def stage_courses(
+    run_id: str,
+    courses: list[CourseCandidate],
+    validations: list[CandidateValidation],
+) -> None:
+    if not courses:
+        return
+    validation_by_url = {item.url: item for item in validations}
+    with connect() as conn:
+        if conn is None:
+            return
+
+        try:
+            with conn.transaction():
+                for course in courses:
+                    validation = validation_by_url.get(course.url)
+                    conn.execute(
+                        """
+                        INSERT INTO pending_courses (run_id, canonical_url, candidate, validation)
+                        VALUES (%s, %s, %s::jsonb, %s::jsonb)
+                        ON CONFLICT (run_id, canonical_url) DO UPDATE SET
+                          candidate = EXCLUDED.candidate,
+                          validation = EXCLUDED.validation
+                        """,
+                        (
+                            run_id,
+                            course.url,
+                            course.model_dump_json(),
+                            validation.model_dump_json() if validation else None,
+                        ),
+                    )
+            conn.commit()
+        except Exception as exc:  # noqa: BLE001
+            record_db_error("course_cache_stage")
+            logger.error(
+                "course_cache_stage_error",
+                extra={"event": "persistence.course_cache_stage_error", **sanitize_error(exc)},
+            )
+            raise
+
+
+def promote_staged_courses(run_id: str, approved_urls: list[str]) -> int:
+    with connect() as conn:
+        if conn is None:
+            return 0
+
+        try:
+            rows = conn.execute(
+                """
+                SELECT candidate, validation FROM pending_courses
+                WHERE run_id = %s AND canonical_url = ANY(%s)
+                ORDER BY canonical_url
+                """,
+                (run_id, approved_urls),
+            ).fetchall()
+        except Exception as exc:  # noqa: BLE001
+            record_db_error("course_cache_promote")
+            logger.error(
+                "course_cache_promote_error",
+                extra={"event": "persistence.course_cache_promote_error", **sanitize_error(exc)},
+            )
+            raise
+
+    candidates = [CourseCandidate.model_validate(_json(row[0])) for row in rows]
+    validations = [CandidateValidation.model_validate(_json(row[1])) for row in rows if row[1]]
+    upsert_courses(candidates, validations)
+    discard_staged_courses(run_id)
+    return len(candidates)
+
+
+def discard_staged_courses(run_id: str) -> None:
+    with connect() as conn:
+        if conn is None:
+            return
+
+        try:
+            conn.execute("DELETE FROM pending_courses WHERE run_id = %s", (run_id,))
+            conn.commit()
+        except Exception as exc:  # noqa: BLE001
+            record_db_error("course_cache_discard")
+            logger.error(
+                "course_cache_discard_error",
+                extra={"event": "persistence.course_cache_discard_error", **sanitize_error(exc)},
+            )
+            raise
+
+
+def _json(value):
+    return value if isinstance(value, dict) else json.loads(value)

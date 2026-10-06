@@ -6,7 +6,7 @@ from course_discovery.domain.models import (
     SearchFilters,
 )
 from course_discovery.domain.run_config import current_run_id
-from course_discovery.domain.state import AgentState
+from course_discovery.domain.state import ResearchState
 from course_discovery.observability.logging import get_logger
 from course_discovery.observability.metrics import record_replan
 
@@ -46,12 +46,12 @@ def _queries(filters: SearchFilters, *, cache_count: int, iteration: int) -> lis
     return list(dict.fromkeys(queries))[:4]
 
 
-def research_planner_node(state: AgentState) -> dict:
+def research_planner_node(state: ResearchState) -> dict:
     filters = state.get("search_filters")
     if filters is None:
         return {
             "research_plan": None,
-            "error": "Research planning failed: search filters missing",
+            "discard_reason": "Research planning failed: search filters missing",
         }
 
     cache_candidates = state.get("cache_candidates", [])
@@ -97,20 +97,20 @@ def research_planner_node(state: AgentState) -> dict:
     return {"research_plan": plan}
 
 
-def need_web_search(state: AgentState):
+def need_web_search(state: ResearchState):
     plan = state.get("research_plan")
-    if state.get("error"):
+    if state.get("discard_reason"):
         return "discard_run"
     if plan and plan.search_queries:
         return "search_web_for_courses"
     return "merge_known_and_found_courses"
 
 
-def replanner_node(state: AgentState) -> dict:
+def replanner_node(state: ResearchState) -> dict:
     iteration = state.get("research_iteration", 0) + 1
     filters = state.get("search_filters")
     if filters is None:
-        return {"error": "Replanning failed: search filters missing"}
+        return {"discard_reason": "Replanning failed: search filters missing"}
 
     missing = sorted(
         {

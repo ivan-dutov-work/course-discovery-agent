@@ -89,3 +89,116 @@ unless marked as documentation.
   in the CLI; unknown and foreign threads raise the same `ThreadAccessError`; re-registering a
   taken id keeps the owner (`tests/test_thread_access.py`, Postgres). Not covered: a second entry
   point that skips the guard, and no-`DATABASE_URL` mode, where there is no registry.
+
+## Prompt-injection screen (§8.5, §10.3)
+
+- **What is wired.** `guardrails/injection.py` is a port (`InjectionScreen.score(text) -> float`) with
+  a switch (`INJECTION_GUARD`); `guardrails/jev.py` implements it with `typesafe/jev-1.13` on
+  OpenRouter. `rank_and_summarize_courses` screens each course's title, description and evidence
+  quotes before the model sees them. Score at or above 0.70: the model is not called and the line
+  carries a withheld note. 0.35 to 0.70: the model gets structured fields only, no description or
+  evidence. Below 0.35: unchanged. Any screen error counts as the middle band, not as a pass
+  (`tests/test_injection_guard.py`, stubbed HTTP and a fake model).
+- **How Jev is reached (observed 2026-10-05).** `typesafe/jev-1.13` is absent from the public
+  `/api/v1/models` list but live on `/api/v1/models/typesafe/jev-1.13/endpoints`: output modality
+  `decisions`, 32k context, provider TypeSafe, $0.042 per million input tokens. It is called on
+  `POST https://openrouter.ai/api/alpha/decisions`, not on chat completions (`typesafe/jev-router` is
+  the chat-completions product and returns text). A `noul` question returns a probability in
+  `answers.<name>.noul`. The endpoint path says `alpha`; treat the contract as unstable.
+- **Live measurement (2026-10-05, 28 samples, one run, `typesafe/jev-1.13-20260917`).** The 15
+  mock-catalog listings scored 0.02 to 0.03. Three hand-written hard negatives scored 0.24
+  (hype copy), 0.44 (a real-sounding "ignore the optional readings" line) and 0.12 (a course about
+  defending against injection). Ten injections, from blunt to buried inside a real description,
+  scored 0.97 to 0.99. Seven more aimed at the screen itself (claims to be benign, addresses the
+  classifier, fakes the JSON answer, polite request, German, instruction in the title, 28k characters
+  with one sentence in the middle) scored 0.95 to 0.99. Median latency 292 ms, slowest 1331 ms.
+  The 0.44 negative lands in the review band, so one of 18 benign samples was withheld.
+- **Reproducing it.** The samples are reconstructed from the original run's descriptions, not the original strings. They live in `tests/injection_samples.py` (10 injections, 7 aimed at the screen, 3 hard negatives); `PYTHONPATH=. uv run python scripts/injection_score_table.py` prints the score table and latency. Reconstructed run (2026-10-05, 35 calls): catalog 0.02 to 0.03; hard negatives 0.07 (hype), 0.31 (optional readings), 0.06 (defending against injection), so none reached the review band here; injections 0.97 to 0.99; screen-targeting 0.97 to 0.99; median 300 ms, max 1426 ms. The live suite passes (4 tests).
+- **How far to trust that.** The samples were written by the author and are easy next to the
+  adversarial cases TypeSafe's own limitations page warns about ("text that argues for its own
+  classification can move the answer"); 28 samples fit no threshold. The 0.35 and 0.70 bands come
+  from an independent benchmark (`jev-sec-bench`, 662 messages from a public corpus that may have
+  leaked into training, one German news assistant) and are not fitted here. That benchmark also
+  found recall fell from 95.1% to 74.9% without a description of the deployment, which is why
+  `jev.py` sends one in the state.
+- **Not exercised.** An adaptive attacker who iterates against the screen, a non-English corpus
+  beyond one sentence, the 12,000-character chunk boundary live (stub only), and the live suite's
+  one unexplained error in the first of about eight runs (error text not captured; not reproduced in
+  six reruns). The live tests need `LIVE_LLM_TESTS=1` and a key (`tests/test_injection_guard_live.py`).
+- **What it does not cover.** Only the synthesis prompt. `parse_user_request` and the memory curator
+  read no web text. The tagger (uncommitted) does and is not screened. Reviewer feedback and
+  reader notes are user text, not web text, and are out of scope.
+
+## Feedback to memory, end to end (P6)
+
+- **Provider names are redacted as people (observed 2026-10-05).** `redact_pii` through Presidio
+  (`presidio-analyzer` 2.2.364, spaCy `en_core_web_sm` 3.8.0) turns capitalised `Udemy` and
+  `Coursera` into `<PERSON>`: `"I'm done with Udemy"` becomes `"I'm done with <PERSON>"`, and `"I prefer
+  Coursera courses"` becomes `"I prefer <PERSON> courses"`. `udemy` in lower case, `edX`, `Udacity`,
+  `Pluralsight` and `freeCodeCamp` pass through. Checked by calling `redact_pii` on twelve feedback
+  strings, one run. The curator reads the redacted `feedback_history`, so a live model cannot
+  see which provider the user named in cases 1, 2, 7 and 8 of `FEEDBACK.md` when it is capitalised.
+  The stubbed layer does not see this, because the scripted curator ignores the text; the case
+  table pins the redacted history instead (`tests/memory_cases.py`, field `history`). Consistent with
+  the instructor-name trade-off in `DECISIONS.md`, but that entry did not expect provider names.
+- **Layer 2 is exact and passes on both stores.** Eleven cases (1, 2, 3, 7, 8, 9, 10, 11, 12, 13,
+  14) through the whole outer graph, with a scripted curator and, for the cases that need a route,
+  a stubbed router, on the fake store and on Postgres: 26 tests, 6 s on Postgres, 2 s without.
+  Each asserts the stored profile, the tool trace, the route, and run two against a baseline run
+  by a user with no profile.
+- **The judge is built and its stubbed tests pass; it has never been called against the real model.**
+  `tests/judge.py`: `google/gemini-3.1-flash-lite` through `build_llm("judge")` with an empty
+  fallback list, three calls, majority per criterion, a tie is `unknown` and does not pass. The
+  live suites (`tests/test_memory_e2e_live.py`, `tests/test_judge_live.py`) need
+  `LIVE_LLM_TESTS=1` and a key; the session that wrote them had none. **Which cases the live
+  model fails, and how often, is therefore not measured**, and so are the judge's agreement with
+  six hand-labelled outputs and the model versions served. The redaction finding predicts that
+  cases 1, 2, 7 and 8 fail live until provider names stop being redacted; that is a prediction.
+
+## Live memory layer and judge calibration (E1 milestone 3, 2026-10-05)
+
+- **Method.** `LIVE_LLM_TESTS=1`, key from `.env`, fake profile store, no database. Model versions served
+  were not captured: `build_llm` returns the alias, and the run did not log OpenRouter's `model` field.
+  Add that before quoting a model name as measured.
+- **The first live run was mostly a harness failure.** 3 trials, 1 hour: 33 failures and 1 error of 14
+  tests. The live class never pointed `memory_curator.graph` at the fake store, so every save returned
+  `None` (`skipped:not_applied`); it lacked `recorded_rejection`; and `case_12` compared digest order
+  across runs, which the live ranking model does not keep stable. Fixed in the harness, not the cases.
+- **After the fixes, 1 trial: 7 of 12 cases fail, 5 for one reason.** Cases 1, 7, 8, 9 and 14 end
+  `skipped:no_changes`. `redact_pii` turns `Udemy`, `Coursera` into `<PERSON>` (checked directly), so the
+  curator sees "I'm done with <PERSON>" and has nothing to store. This confirms the prediction above and the
+  provider-name item in `BACKLOG.md`. One trial per case is not a failure rate.
+- **Two failures are not redaction.** `case_04` stored a `topic:math` note beside the `topic:python` one
+  (the case forbids a note for math): a model failure, one trial. `case_13` expects `committed` because
+  the scripted curator obeys the injected instruction; a live model that ignores it writes nothing, which is
+  the correct outcome, so the expectation is scripted-only and needs a live variant.
+- **Judge against six hand labels (3 calls, majority).** 5 of 6 agree. It passed
+  `topic_stored_as_durable` (a topic-only statement stored as durable), three calls of three, reasoning that
+  durable storage "is acceptable".
+- **Judge against 32 generated outputs, labelled by the generator, not the owner (provisional).**
+  TPR/TNR with failure as the positive class: captured 0.86/0.89, polarity 1.00/0.97, scope 0.67/0.92,
+  no_invention 0.85/1.00, no_loss 1.00/0.97. Polarity and no_loss have 3 failing examples each, so those
+  rates carry little weight. Weakest on scope, and on generalising ("dislikes audio content" from
+  "avoid text-to-speech" passed as reasonable). Owner labels are still to come; replace this paragraph then.
+- **Labelling needs a convention.** The first intended labels listed one criterion per flaw; the judge also
+  failed `captured` and `no_invention` for a flipped note, correctly. Convention: list every criterion a
+  careful reader would fail (`EVALS.md`).
+
+## CI rehearsal (E1 milestone 2)
+
+- **Method (2026-10-05).** A fresh `pgvector/pgvector:pg17` container with no mounted migrations, a fresh
+  virtual environment from `uv sync --locked`, `scripts/apply_migrations.py`, then
+  `python -m unittest discover tests` and `pytest evals -n 4`, as `ci.yml` does. Not run on GitHub Actions:
+  action versions (`actions/checkout@v4`, `astral-sh/setup-uv@v6`) and the service-container health options
+  are unverified until the first run.
+- **The spaCy model installs from its URL.** `en_core_web_sm-3.8.0` is a URL dependency in
+  `pyproject.toml`, hashed in `uv.lock`; the release URL answered 200 and `uv sync --locked` installed it.
+- **A fresh database found a test-order bug.** `tests/test_checkpoint_compatibility.py` inserted fixture rows
+  before anything created LangGraph's checkpoint tables; they existed locally only because a later test calls
+  `setup()` and the local volume is long-lived. Three subtests failed with `relation "checkpoints" does not
+  exist` on the first run against an empty database. Fixed by loading the fixture after `open_checkpointer`.
+  Result afterwards: 481 tests, 24 skipped, about 21 s; 42 evals, about 1.4 s.
+- **The two guards are covered by their scenarios.** Replacing the owner check in `authorize_thread` with
+  `False` fails `graph-wrong-owner-cannot-resume` on three graders; the same for the version check and
+  `graph-stale-thread-refused`. Both reverted.
+

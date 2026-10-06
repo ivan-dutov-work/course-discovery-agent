@@ -4,69 +4,28 @@ Delete an item when it's done. On completion: add a line to `STATUS.md`, put the
 the matching file under `specs/article/notes/`, and record any decision in `DECISIONS.md`.
 Definition of done is in `CLAUDE.md`.
 
-Items are in priority order within each section and across the first two: do them top to
-bottom. Gap numbers refer to "Known gaps" in `ARCHITECTURE.md`. Gaps 3 and 4 are not being
-fixed in this pass.
+Items are in priority order within each section: do them top to bottom. Gap numbers refer to
+"Known gaps" in `ARCHITECTURE.md`. Gaps 3 and 4 are not being fixed in this pass.
 
-## This pass: gap 5
+## Next
 
-Every item ends with tests (success and failure modes) and the doc updates named in `CLAUDE.md`.
-Before starting P6 read `specs/FEEDBACK.md`; it holds the case list the tests come from.
+### E1. Eval harness and CI
 
-### P6. End-to-end feedback tests with a judge
-
-Spec: `specs/FEEDBACK.md`, "Test layers".
-
-- `tests/test_memory_e2e.py` already holds the run-one/run-two scenario (feedback to curator to
-  profile to run two, in-memory and Postgres) with a scripted curator model. Extend it to the
-  cases as parametrized fixtures; case 6 waits for its consumer. Layer 2 (stubbed model, CI)
-  asserts run two's results exactly. Layer 3 (live model plus judge) skips without
-  `OPENROUTER_API_KEY`.
-- `tests/judge.py`: Pydantic verdict, the five-point rubric, three calls and majority, through
-  `build_llm("judge")`. Free-text fields only; structured fields stay exact assertions.
-- Record in notes/04 which cases the live model fails and how often, with the model versions.
-
-### S1. State hygiene
-
-The top-level pass is done: the outer graph owns 12 of what were 34 flat channels (table in
-`ARCHITECTURE.md`, "Top-level state and run configuration"; decision in `DECISIONS.md`). What is
-left is the research subgraph's channels. The P5 curator subgraph was the pilot for private
-schemas: `input_schema`/`output_schema` kept its channels private and returned only a status
-string, so the reducer echo did not occur. Apply that to the research subgraph here.
-
-0. Fix the reducer double-count: `completed_queries` and `research_notes` (and so
-   `metrics.tavily_calls`, derived from `completed_queries`) grow 1, 2, 4 across REWRITE and
-   AUGMENT rounds because the subgraph returns its channel value and the parent's `operator.add`
-   adds it again (`article/notes/02`). They cannot simply leave the subgraph schema, since the
-   parent needs them for AUGMENT; use reducers that are idempotent over the echo, and add a
-   regression test over two rounds.
-1. Verify whether the search-loop channels (`research_plan`, `active_search_query`,
-   `tavily_results`, `completed_queries`) can be private to `course_research` with an
-   `output_schema`. AUGMENT re-enters at `plan_gap_search` and reads `completed_queries`,
-   `research_plan` and `validation_results` from the previous pass, so this only works if they
-   persist across invocations; test that on LangGraph 1.1.2 before changing anything. The
-   boundary to aim for: in `search_filters`, `user_id`, `routing_decision`,
-   `rewrite_instructions`; out `valid_courses`, `digest` and a small summary for the CLI and
-   tracing (today they read `metrics`, `rejected_courses` and `uncertain_courses`).
-2. Keep the intermediate candidate lists (`extracted_candidates`, `scraped_courses`,
-   `deduplicated_courses`) as they are: they are the checkpoint history the article shows.
-3. Check that `flow_specs.py` and `Pii` markers still see every channel after any regrouping;
-   nested fields are invisible to a channel-level check.
-4. Checkpoints written before the top-level pass do not resume (verified on the memory saver,
-   not on Postgres; see "Naming" in `ARCHITECTURE.md`).
-
-Closes the state-size item under Optional and gives the article's §2.3 (`input_schema`,
-`output_schema`) an honest use.
-
-## Next, not this pass
+Spec: `specs/EVALS.md` (levels L0 to L5, case format, judge, statistics, CI, build order).
+The judge exists (`tests/judge.py`, built in P6) and is reused by milestone 3, not rewritten. Six
+milestones in the spec's "Build order". Seed cases come from observed failures and
+`FEEDBACK.md`, tagged `source: seed`, and are replaced by `review` and `prod` cases as they exist.
+Milestones 1 and 2 are built (`STATUS.md`, "Evals"): the existing `tests/` checks are not yet moved onto cases and L1a has no extractor or ranking rows. `ci.yml` is not yet seen green on GitHub, and the PR-gate is not branch-protected. Milestone 3 is partly built: the 32-output label set exists and awaits the owner's labels; next is the real TPR and TNR, then L1b live for router and synthesizer.
+Closes the "OpenRouter fallback never triggered live" item under Verify (L4 fault injection).
 
 ### N1. Promotion cascade for the shared cache
 
 Decision and rationale are in `DECISIONS.md` ("Shared-cache promotion is a cascade"). Build as a
 separate graph off the request path (gap 4), triggered through the outbox.
 
-1. `promotion_status` column: `pending | promoted | rejected | needs_human`; the request-path
-   lookup reads `promoted` only; `upsert_courses` writes `pending`.
+1. Staging exists as `pending_courses` (per run; `DECISIONS.md`), promoted by `promote_approved_courses`
+   after the human gate. The cascade replaces that gate with tiers; add `rejected | needs_human`
+   states to the staging rows then, and a TTL prune for runs that are never resolved.
 2. `TypedVerifier` port (label, probability, confidence) with a stub and a JEV adapter; treat
    JEV vendor claims as unverified until measured.
 3. LLM reviewer node (structured verdict plus written critique) for items below threshold.
@@ -84,30 +43,45 @@ Until that is decided, `CLAUDE.md`'s "Never auto-publish" stands and nothing her
 
 ## Verify
 
-- **`research_iteration` is never reset between review rounds** (only `plan_gap_search`
-  increments it), so a REWRITE or AUGMENT round after a pass that spent the replan budget may get
-  no replans. Run two rounds on an all-rejected query to confirm; if it is a bug, reset it where
-  `course_research` is re-entered.
-- **`extracted_candidates` has no reducer** but is written by every parallel `Send` branch.
-  Add a regression test with a plan of two or more queries. If it raises `InvalidUpdateError`,
-  add the reducer and make it the §2.2 example; if it doesn't, record why in the notes.
+- **Live memory layer, rerun after the provider-name fix.** First measurement is in `notes/04`
+  (1 trial: 7 of 12 fail, 5 from `<PERSON>` redaction). Then run with `LIVE_TRIALS=3` (about an hour),
+  log the model id OpenRouter served, give `case_13` a live expectation, and judge `case_04`'s
+  extra math note. Closes gap 5 once recorded.
 - **OpenRouter fallback was never triggered live,** only asserted in the outgoing payload.
   Either exercise it (force a primary failure) or keep the article's "not exercised" wording.
   OpenRouter data-retention and ZDR controls are also unverified. Feeds §8.2.
 
 ## Code
 
+- **Provider names are redacted as `<PERSON>`.** `redact_pii` rewrites capitalised `Udemy` and
+  `Coursera` in review feedback, so the curator cannot see which provider the user named (`notes/04`).
+  Options: an allowlist of provider names ahead of Presidio, or a recogniser score threshold for
+  `PERSON`. Either changes the redaction decision in `DECISIONS.md` ("instructor names are redacted as a
+  known trade-off"), so decide it first. When fixed, drop `history` from the four cases in
+  `tests/memory_cases.py`.
 - **Course topic tagging.** Fill `courses.topics` from the course's own title, description and
   evidence, never from the user's query (`DECISIONS.md`). Probably a fifth LLM node through
   `build_llm()` with a rule fallback (keyword extraction), run before `save_verified_courses`.
-  The input is untrusted search text, so do it with the prompt-injection item below. Then
+  The input is untrusted search text, so route it through `screen_untrusted` (see the injection
+  follow-ups below). Then
   re-embed with `python -m course_discovery.research_agent.embeddings backfill` (extend it to
   `--all`), rerun `scripts/calibrate_topic_floor.py` and refit the floor. Expected gain on the
   mock catalog: recall 0.75 to 0.81 on the hashing embedder.
-- **Prompt-injection check for untrusted search content.** The old plan named
-  `extract_courses_from_results` and `verify_course_claims` as the insertion points, but both
-  are rules, not LLM nodes. Re-derive the real surface (search snippets reaching the
-  `rank_and_summarize_courses` prompt) before building. Feeds §8.5 and §10.3.
+- **`Command` in the replan node (§3.4).** `verify_course_claims` returns
+  `Command(update=..., goto="plan_gap_search" | "save_verified_courses")` in place of its
+  conditional edge. Leave the gateway failure on `discard_reason` (`DECISIONS.md`). Update
+  `test_graph_topology.py`, `ARCHITECTURE.md` and `STATUS.md` ("Not in the code"), then draft §3.4.
+- **Injection screen follow-ups.** The JEV screen on the synthesis prompt is built (`STATUS.md`).
+  Left:
+  1. A deterministic layer beside it (control-pattern stripping, fencing the untrusted text as data
+     in `SYNTHESIZER_SYSTEM_PROMPT`), because JEV is steerable by the text it screens.
+  2. Label real data and fit the 0.35 and 0.70 thresholds; add adaptive attacks that iterate
+     against the screen. The first live run was 28 author-written samples.
+  3. Screen the tagger's input (and anything else that sends web text to a model), and decide
+     whether cached rows are screened at write time instead of at every read.
+  4. Find the cause of the one unexplained live-test error (log the response on failure) and
+     confirm the 12,000-character chunk boundary against the live endpoint.
+  5. The Decisions API path is `alpha`; recheck the contract before relying on it.
 
 ## Article drafting
 
@@ -115,9 +89,7 @@ Placeholders marked `[NOT DRAFTED]` in `specs/article/DRAFT.md`:
 
 - §0 TL;DR, §1 Agents vs. workflows, §2.1 state as the single channel, §3.1 conditional
   edges, §13 What's next, and the demo appendix.
-- §2.3 `input_schema`/`output_schema` now has an honest use (the curator subgraph, `memory_curator/graph.py`); §3.4 `Command` is not used by the code, so either
-  add a small honest use or label it doc-only.
-- §8.5 guardrails and §10.3 security primitives: depend on the prompt-injection item above.
+- §3.4 `Command` waits for the replan-node item under Code.
 - §13, prose only, no code: the many-user reframing (self-serve runs, human review at
   shared-cache promotion, N1) and implicit feedback (weighted counters with decay, an embedding
   moving average, batched LLM personas; collaborative filtering only at a scale this domain
@@ -128,9 +100,14 @@ New sections proposed, not yet in the outline:
 - **Deployment shape:** self-hosting the library versus LangGraph Server, `langgraph.json`
   and Studio; who owns the queue, workers and checkpointer. One short section; label
   platform semantics unverified until checked against current docs.
-- **Evals and regression for the LLM nodes:** "did the parse, route or summary get worse after
-  a model swap or fallback." Ties to §8.2 and to counting validation failures (§8.4). P6 is the
-  first working example. The old metrics and testing proposals are in `archive/`.
+- **Evals for a LangGraph agent in production** (a section; decided to add, drafted after E1):
+  the level split (contract, component, subgraph, graph scenarios, reliability), trace grading
+  over `get_state_history` with first-failing-node attribution, trials and pass^k, a judge from
+  another model family, cassette replay as the PR gate and live runs nightly. Ties to §8.2
+  (fallback) and §8.4 (validation counts). Say plainly that the cases are seeds on a 14-course
+  mock catalog and measure plumbing, not generalization, and that no production traffic backs
+  it. Needs an outline entry with a word budget first. P6 is the first working example. The old
+  metrics and testing proposals are in `archive/`.
 
 ## Freshness
 

@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 
 from course_discovery.domain.models import CourseCandidate, EvidenceItem
 from course_discovery.domain.run_config import current_run_id
-from course_discovery.domain.state import AgentState
+from course_discovery.domain.state import ResearchState
 from course_discovery.observability.logging import get_logger
 
 
@@ -76,7 +76,7 @@ def _extract_result(result) -> CourseCandidate | None:
     )
 
 
-def candidate_extractor_node(state: AgentState) -> dict:
+def candidate_extractor_node(state: ResearchState) -> dict:
     candidates = []
     for result in state.get("tavily_results", []):
         candidate = _extract_result(result)

@@ -15,12 +15,21 @@ from course_discovery.effects.factory import set_gateway
 from course_discovery.effects.gateway import InlineGateway
 from course_discovery.effects.memory_store import InMemoryOutboxStore
 from course_discovery.effects.worker import OutboxWorker
+from course_discovery.domain.models import DeliveryStatus, MemoryPatch
 from course_discovery.research_agent.memory import nodes as memory_nodes
-from course_discovery.research_agent.memory.repository import load_user_memory
+from course_discovery.research_agent.memory.repository import load_user_memory, save_user_memory
+from course_discovery.review import router as router_module
 from course_discovery.workflows.outer_graph import build_graph
 from tests.curator_stubs import FakeProfiles, ScriptedModel, call, install_curator, reply
+from tests.memory_cases import (
+    CASES,
+    curator,
+    OTHER_USER_AVOIDS_UDEMY,
+    QUERY,
+    MemoryCase,
+    StubRouter,
+)
 
-QUERY = "python courses"
 AVOIDED = "udemy"
 
 
@@ -47,6 +56,10 @@ def digest_urls(digest: str) -> list[str]:
 def provider_of(url: str) -> str:
     host = re.sub(r"^https?://(www\.)?", "", url).split("/")[0]
     return host.split(".")[0]
+
+
+def providers_of(state: dict) -> set[str]:
+    return {course.provider.lower() for course in state["valid_courses"]}
 
 
 class FeedbackToNextRunScenario:
@@ -111,7 +124,116 @@ class CourseLengthScenario(FeedbackToNextRunScenario):
         self.assertLessEqual(first_course.duration_hours, 10)
 
 
-class FakeStoreE2E(CourseLengthScenario, unittest.IsolatedAsyncioTestCase):
+def install_fake_profiles(test) -> FakeProfiles:
+    profiles = FakeProfiles()
+    for target, name, replacement in (
+        (memory_nodes, "load_user_memory", profiles.load),
+        (gateway_module, "load_user_memory", profiles.load),
+        (memory_nodes, "record_feedback", profiles.record_feedback),
+    ):
+        patcher = patch.object(target, name, replacement)
+        patcher.start()
+        test.addCleanup(patcher.stop)
+    return profiles
+
+
+class MemoryCaseScenario(CourseLengthScenario):
+    scripted = True
+
+    def same_digest(self, first, second):
+        self.assertEqual(first, second)
+
+    def _install_case(self, case: MemoryCase) -> tuple[ScriptedModel | None, list[str]]:
+        names: list[str] = []
+        script = case.steps
+
+        def recording(messages, turn):
+            message = curator(*script)(messages, turn)
+            names.extend(c["name"] for c in message.tool_calls)
+            return message
+
+        model = ScriptedModel(recording)
+        if self.scripted:
+            self.use_curator(model)
+        if self.scripted and case.router:
+            for name, value in (
+                ("llm_enabled", lambda: True),
+                ("build_llm", lambda *a, **k: StubRouter(case.router)),
+            ):
+                patcher = patch.object(router_module, name, value)
+                patcher.start()
+                self.addCleanup(patcher.stop)
+        return model, names
+
+    def check_notes(self, case: MemoryCase, before, after, feedback: str) -> None:
+        added = after.notes[len(before.notes) :]
+        self.assertEqual([n.scope for n in added], [case.note_scope])
+        text = added[0].text.lower()
+        self.assertFalse([word for word in case.no_note_mentions if word in text], text)
+
+    async def check_case(self, case: MemoryCase) -> None:
+        user = self.user("case")
+        other = self.user("other")
+        self.seed(other, OTHER_USER_AVOIDS_UDEMY)
+        if case.stored:
+            self.seed(user, case.stored)
+        before = self.profile(user)
+        baseline = await self._run(self.user("baseline"), ["approve"])
+        baseline_urls = digest_urls(baseline["digest"])
+        model, trace = self._install_case(case)
+
+        first = await self._run(user, case.feedbacks)
+        after = self.profile(user)
+
+        self.assertEqual(first["memory_update"], case.memory_update)
+        if self.scripted:
+            self.assertEqual(trace, case.trace)
+        published = first["publish_status"] in {DeliveryStatus.QUEUED, DeliveryStatus.DELIVERED}
+        self.assertEqual(published, case.published)
+        for name, value in case.profile.items():
+            self.assertEqual(getattr(after, name), value, name)
+        if case.unchanged:
+            self.assertEqual(after, before)
+        if case.no_pii:
+            seen = [m.content for messages in model.seen for m in messages] if self.scripted else []
+            stored = [*first["feedback_history"], *self.recorded_texts(user), after.model_dump_json(), *seen]
+            self.assertTrue(all(case.no_pii not in text for text in stored))
+        else:
+            self.assertEqual(first["feedback_history"], case.history or case.feedbacks)
+        if case.note_scope:
+            self.check_notes(case, before, after, first["feedback_history"][0])
+        if case.other_user_keeps:
+            self.assertEqual(self.profile(other).avoided_providers, list(case.other_user_keeps))
+
+        second = await self._run(user, ["approve"])
+        second_urls = digest_urls(second["digest"])
+        second_providers = providers_of(second)
+        self.assertTrue(second_urls)
+        if case.unchanged:
+            self.same_digest(second_urls, baseline_urls)
+        for provider in case.drops_providers:
+            self.assertIn(provider, providers_of(baseline))
+            self.assertNotIn(provider, second_providers)
+        if case.drops_first_udemy_url:
+            (rejected,) = after.rejected_course_urls
+            self.assertIn(rejected, baseline_urls)
+            self.assertNotIn(rejected, second_urls)
+        if case.keeps_other_udemy:
+            self.assertIn(AVOIDED, second_providers)
+
+
+def _case_test(case: MemoryCase):
+    async def test(self):
+        await self.check_case(case)
+
+    return test
+
+
+for _case in (c for c in CASES if not c.live_only):
+    setattr(MemoryCaseScenario, f"test_{_case.id}", _case_test(_case))
+
+
+class FakeStoreE2E(MemoryCaseScenario, unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         env = patch.dict(os.environ, {}, clear=False)
         env.start()
@@ -122,16 +244,8 @@ class FakeStoreE2E(CourseLengthScenario, unittest.IsolatedAsyncioTestCase):
         store = InMemoryOutboxStore()
         set_gateway(InlineGateway(store, OutboxWorker(store, {"publish_digest": lambda _: None})))
 
-        self.profiles = FakeProfiles()
+        self.profiles = install_fake_profiles(self)
         install_curator(self, ScriptedModel(history_curator), self.profiles)
-        for target, name, replacement in (
-            (memory_nodes, "load_user_memory", self.profiles.load),
-            (gateway_module, "load_user_memory", self.profiles.load),
-            (memory_nodes, "record_feedback", self.profiles.record_feedback),
-        ):
-            patcher = patch.object(target, name, replacement)
-            patcher.start()
-            self.addCleanup(patcher.stop)
 
     def user(self, label: str) -> str:
         return f"{label}-{uuid.uuid4().hex[:6]}"
@@ -143,10 +257,18 @@ class FakeStoreE2E(CourseLengthScenario, unittest.IsolatedAsyncioTestCase):
         (call,) = [c for c in self.profiles.feedback_calls if c["user_id"] == user_id]
         return (not call["accepted"], call["feedback_text"])
 
+    def use_curator(self, model):
+        install_curator(self, model, self.profiles)
+
+    def seed(self, user_id, patch_: MemoryPatch):
+        self.profiles.save(user_id, patch_)
+
+    def recorded_texts(self, user_id):
+        return [c["feedback_text"] for c in self.profiles.feedback_calls if c["user_id"] == user_id]
 
 
 @unittest.skipUnless(os.getenv("TEST_DATABASE_URL"), "TEST_DATABASE_URL not set")
-class PostgresE2E(CourseLengthScenario, unittest.IsolatedAsyncioTestCase):
+class PostgresE2E(MemoryCaseScenario, unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.url = os.environ["TEST_DATABASE_URL"]
         env = patch.dict(os.environ, {"DATABASE_URL": self.url})
@@ -183,3 +305,15 @@ class PostgresE2E(CourseLengthScenario, unittest.IsolatedAsyncioTestCase):
         ).fetchall()
         self.assertEqual(len(rows), 1)
         return rows[0]
+
+    def use_curator(self, model):
+        install_curator(self, model)
+
+    def seed(self, user_id, patch_: MemoryPatch):
+        save_user_memory(user_id, patch_)
+
+    def recorded_texts(self, user_id):
+        rows = self.conn.execute(
+            "SELECT DISTINCT feedback_text FROM recommendation_events WHERE user_id = %s", (user_id,)
+        ).fetchall()
+        return [row[0] for row in rows]

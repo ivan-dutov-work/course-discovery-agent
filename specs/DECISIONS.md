@@ -124,11 +124,43 @@ leave it and append a new one that says which it replaces and what changed.
   user-derived text; storing it in the shared cache reaches a table erasure cannot cover (the
   flow-rule check flags it) and lets loosely matched courses pollute later lookups. Topics come
   from the course's own content, by a tagging step that is not built. (notes: 05-scale-and-scope.md)
-- **Do not restructure `AgentState` wholesale.** It is wide (34 channels, 28 after the top-level pass below) but the width is mostly
+- **Do not restructure `AgentState` wholesale** (superseded for the research subgraph by the entries below; applies to the rest). It was wide (34 channels, 28 after the top-level pass below) but the width is mostly
   the article's subject: per-stage candidate lists are checkpoint history, and reducers and `Pii`
   markers are per channel, so nesting channels hides both from `flow_specs.py`. Fix the real
   redundancy (duplicate counters, budgets held as state) and try private schemas on new code
-  first (the P5 curator). Backlog S1.
+  first (the P5 curator). Backlog S1. Done for the research subgraph: see the next entries.
+- **The research subgraph has a five-key input and a five-key output, and keeps its state with
+  `checkpointer=True`.** AUGMENT re-enters mid-pipeline and needs the previous pass's plan, ledger
+  and validation results, which a private channel only keeps when the subgraph is stateful
+  (`article/notes/01`). Ruled out: keeping those channels in the outer state (the outer state would
+  stay at 28 channels and the boundary would be decoration), and re-running AUGMENT from
+  `load_user_profile` (changes what AUGMENT means). The intermediate candidate lists stay channels
+  of the subgraph and so stay in its checkpoint history. The counters and the valid, rejected and
+  uncertain counts leave through `metrics`, which already held them, so there is no separate
+  summary channel.
+- **A pass counter, not a no-op anchor, guards the stateful subgraph.** A subgraph with
+  `checkpointer=True` resumes from its saved checkpoint, ignoring new input, whenever it is the
+  first task of a resumed tick (`langgraph/pregel/_loop.py`, `CONFIG_KEY_RESUMING`). The earlier
+  no-op node `start_research_pass` only moved that tick and left a window after it committed.
+  Now `start_research_pass` stamps `research_pass = len(feedback_history)` and the subgraph echoes
+  it; if the echo differs, `course_research` has returned a previous pass's result and the edge
+  re-enters `start_research_pass`, where the flag is spent. Ruled out: making the subgraph
+  stateless (AUGMENT needs the plan, ledger and validation results) and putting those channels in
+  the outer state. (notes: 01-state-and-control-flow.md, 02-durability-replay-effects.md)
+- **`begin_pass` resets the subgraph's private state on a fresh pass.** `routing_decision` is empty
+  on a first run and after RESET (the gateway clears it); REWRITE and AUGMENT keep the ledger and
+  results on purpose. The reducer channels are cleared with `Overwrite`, since `operator.add`
+  cannot subtract. Without it a RESET to a new topic planned no new queries and re-extracted the
+  old topic's results, and the replan budget was spent for the rest of the thread.
+- **A planning failure leaves the subgraph through `discard_reason`,** an outer channel, so the
+  outer graph routes to `discard_run` instead of offering an empty digest for review. The private
+  `error` channel is gone.
+- **A fan-in reducer is declared on the schema where the branches meet, not on the parent's.**
+  `tavily_results`, `completed_queries` and `research_notes` are `operator.add` in `ResearchState`
+  and not in `AgentState`. The alternative, a reducer on the parent that is idempotent over the
+  echo (prefix test or dedup), was ruled out: it cannot tell an echo from a repeated query, and
+  `metrics.tavily_calls` is a count of calls. A REWRITE round therefore adds no queries, because
+  the planner skips every `completed_queries` entry. (notes: 02-durability-replay-effects.md)
 - **Top-level state holds only what cannot be derived.** The run id is the `thread_id`; the two
   budgets are optional `configurable` keys with in-code defaults; the review round is
   `len(feedback_history)`; `manager_feedback` is an inbox cleared once interpreted;
@@ -140,6 +172,17 @@ leave it and append a new one that says which it replaces and what changed.
   for the gateway failure stays out (`STATUS.md`, "Not in the code"). In-flight runs must be finished
   or discarded before deploying it: a thread paused under the old channel set does not resume
   (`ARCHITECTURE.md`, "Naming"). (notes: 02-durability-replay-effects.md)
+- **The shared cache is written after approval, through a staging table, not a status column.**
+  `save_verified_courses` writes valid web-sourced courses to `pending_courses` keyed by run;
+  `promote_approved_courses` upserts the ones in the approved digest into `courses` and
+  `drop_pending_courses` deletes the staging on discard. A status column on `courses` would let a
+  re-seen, already-served row be overwritten in place before anyone approved the new text
+  (`upsert_courses` replaces title and description on conflict), and a second run could replace a
+  pending row another run's reviewer was about to approve. Keying staging by run keeps both
+  apart. Only valid courses are promoted; uncertain ones are no longer persisted (the lookup never
+  served them). Rows already in `courses` are left alone, not re-screened. This is the interim
+  human tier for backlog N1 and does not settle N2; N1's `promotion_status` column is replaced by
+  this table, so N1 item 1 is amended.
 - **The curator writes only fields a next-run consumer reads.** `career_goals`,
   `learning_style_notes` and `preferred_course_length` are refused by `propose_patch`; free-text
   preferences go into scoped notes, which the ranking prompt reads. Cases 5 and 6 of
@@ -181,6 +224,77 @@ leave it and append a new one that says which it replaces and what changed.
   (transport, 429, 5xx) propagates unwrapped so `RetryPolicy` fires; anything else becomes
   `EmbeddingError`. Vectors from different embedders are not comparable, so switching needs a
   backfill.
+- **The injection screen is a port with JEV as one adapter, and it is not a chat model.**
+  `typesafe/jev-1.13` is reached on OpenRouter's Decisions API (`/api/alpha/decisions`, `noul`
+  question), a different endpoint from chat completions, so it lives in `guardrails/` beside the PII
+  port and not behind `build_llm()`. The article's LLM-provider rule (code and article change
+  together) is unchanged. JEV is itself steerable by the text it screens (TypeSafe's limitations
+  page), so it is one layer, not the defense. (notes: 04-observability-and-compliance.md)
+- **A screen failure withholds free text instead of passing it or failing the run.** An error,
+  timeout or malformed reply is treated as the review band: the model still gets structured fields,
+  never description or evidence. Failing the run would let one provider outage stop every
+  digest; passing would turn the outage into a bypass. Counted as a degradation
+  (`injection_guard`, `screen_failed`). Differs from PII redaction, which raises, because a missed
+  redaction is a leak that cannot be undone and a withheld description is not.
+- **Screen thresholds are the independent benchmark's (0.35 review, 0.70 block), not ours.** Our
+  28 hand-written samples separate cleanly and fit nothing. Refit on labelled data before
+  trusting them. (notes: 04-observability-and-compliance.md)
+- **Screen the text per course, not per run.** One call per course keeps a poisoned listing from
+  steering the verdict on its neighbours, since questions in one call share one state. Cost is one
+  small request per course (about 300 ms median, $0.042 per million input tokens, vendor price).
+- **The screen's flow is declared as its own step (`step:screen_course_text`).** The synthesizer
+  reads channels that carry subject data, so a sink declared on the node is flagged; the screen
+  receives catalog text only, and the check cannot see which read feeds which sink.
+
+- **State contract changes are versioned, and an old thread is refused, not migrated.** The
+  checkpoint schema is a contract with every paused thread. Any change to the outer or research
+  channels, or to a node name that can hold a pause, bumps `STATE_SCHEMA_VERSION`
+  (`domain/contract.py`). Resuming a thread written under another version raises
+  `IncompatibleThreadError` in `authorize_thread` (version stored in `run_threads.schema_version`,
+  never upgraded in place; NULL is v1). Why refuse: without the guard, an old thread re-runs the
+  research pass with real searches, staging writes and a model call, then parks again with a
+  different digest (`notes/02`); and the pre-change shape cannot be rebuilt safely, since the
+  dropped channels are exactly the ones whose values would have to be reconstructed. A migration is
+  worth building only when drain-before-deploy is not possible, and then as an `aupdate_state`
+  backfill that has its own fixture. Runbook for a contract change: (1) change the channels or
+  nodes; (2) bump the version; (3) `uv run python -m tests.contract_snapshot`; (4) capture a fixture
+  for the new version with `scripts/dump_checkpoint_fixture.py` (thread id `fixture-*`) and add it
+  to `tests/fixtures/checkpoints/manifest.json`, flipping the previous one to `refused` unless a
+  migration exists; (5) drain or discard in-flight runs before deploy. A change that does not touch
+  channels or nodes (a reducer, a type, a function body) needs none of this; the snapshot does not
+  see it, and `notes/02` lists which of those changes still break a resume. Applied once already:
+  the stale-result retry got its own counter (`research_retries`) and node (`retry_research_pass`),
+  which bumped the version to 3, so that a result that stays stale raises
+  `StaleResearchResultError` after one retry instead of looping until `GraphRecursionError`.
+  Raising, not discarding, because a stale echo after a spent resume flag means the guard's
+  assumption about LangGraph no longer holds, and that should stop the run visibly.
+  (notes: 02-durability-replay-effects.md)
+
+- **Evals are layered, and cases start as labelled seeds.** Six levels (contract, deterministic
+  component, model-node component, subgraph, graph scenarios, reliability), each owning one
+  failure class, with the online level as prose only. Without traffic the first cases are
+  representative seeds taken from observed failures and `FEEDBACK.md`, tagged `source: seed`,
+  and are swapped for `review` and `prod` cases as they appear; the swap is a data change.
+  Ruled out: inventing a large synthetic set up front, and waiting for production data.
+  (`EVALS.md`)
+- **Path is graded where the topology is code, outcome where the model chooses.** Asserting the
+  node sequence of the outer and research graphs is a correctness check, since control flow is
+  fixed at compile time; the curator tool loop is graded on outcome and invariants, because
+  checking its steps would punish valid alternatives. (`EVALS.md`)
+- **Trace grading is not LLM-as-judge.** The trace is the checkpoint history of a trial; graders
+  are mostly code over it, and the judge sees free text only. Every failing trial is attributed
+  to its first failing node. (`EVALS.md`)
+- **The judge is `google/gemini-3.1-flash-lite`, with no fallback list.** A different family from
+  the generator (`deepseek-v4.1-flash`) against self-preference; $0.25 per million input tokens
+  and $1.50 output, input-dominated because the verdict is a line. Under the one-dollar budget
+  on input, not on output; the only model under it on both is `google/gemini-2.5-flash-lite`,
+  which is the generator's own fallback, so it would share a family exactly when the fallback
+  fires. Trials where the generator fell back to Gemini are tagged and reported apart.
+  Recalibrate (TPR and TNR on labelled outputs) after any judge change. (`EVALS.md`)
+- **PR gates are deterministic or replayed; live-model evals run nightly.** A live model on every
+  PR makes the gate flaky and costs money. Replay from cassettes keyed by a hash of model,
+  parameters and prompt; a missing cassette fails the job. LangSmith is not adopted for the
+  harness (see the OpenTelemetry entry above).
 
 ## Compliance
 
@@ -194,5 +308,7 @@ leave it and append a new one that says which it replaces and what changed.
 - **Not built, on purpose:** per-user keys (crypto-shredding), reducer-based redaction,
   selective sealing (seal-everything fails closed), AST-derived reads and writes for the
   data-flow check, boundary-observed sinks.
+- **Checkpoints from an older state schema are refused, not migrated.** See "State contract
+  changes are versioned" under Design.
 - **OpenRouter "PII filtering"** is not cited as a feature: it is unconfirmed and would be a
   different guarantee from data-retention controls. Don't conflate them.

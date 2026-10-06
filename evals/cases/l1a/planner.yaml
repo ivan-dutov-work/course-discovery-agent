@@ -1,0 +1,96 @@
+- id: planner-empty-cache-searches
+  source: seed
+  origin: planner threshold (ARCHITECTURE.md)
+  input:
+    node: planner
+    cache_count: 0
+  expect:
+    queries:
+    - python course beginner free certificate
+    - python course beginner free certificate official course page
+    use_cache_first: true
+  graders:
+  - exact
+  tags:
+  - planner
+- id: planner-full-cache-skips-web
+  source: seed
+  origin: planner threshold (ARCHITECTURE.md)
+  input:
+    node: planner
+    cache_count: 3
+  expect:
+    queries: []
+  graders:
+  - exact
+  tags:
+  - planner
+- id: planner-skips-completed-queries
+  source: seed
+  origin: planner threshold (ARCHITECTURE.md)
+  input:
+    node: planner
+    cache_count: 0
+    completed_queries:
+    - python course beginner free certificate
+  expect:
+    queries:
+    - python course beginner free certificate official course page
+  graders:
+  - exact
+  tags:
+  - planner
+- id: planner-later-iteration-adds-freshness
+  source: seed
+  origin: planner threshold (ARCHITECTURE.md)
+  input:
+    node: planner
+    cache_count: 0
+    research_iteration: 1
+  expect:
+    queries:
+    - python course beginner free certificate
+    - python course beginner free certificate official course page
+    - python course beginner free certificate updated recent
+  graders:
+  - exact
+  tags:
+  - planner
+- id: route-enough-valid-saves
+  source: seed
+  origin: planner threshold (ARCHITECTURE.md)
+  input:
+    node: route
+    valid_count: 3
+  expect:
+    route: save_verified_courses
+  graders:
+  - exact
+  tags:
+  - planner
+- id: route-too-few-replans
+  source: seed
+  origin: planner threshold (ARCHITECTURE.md)
+  input:
+    node: route
+    valid_count: 1
+    research_iteration: 0
+  expect:
+    route: plan_gap_search
+  graders:
+  - exact
+  tags:
+  - planner
+- id: route-budget-spent-saves
+  source: seed
+  origin: planner threshold (ARCHITECTURE.md)
+  input:
+    node: route
+    valid_count: 1
+    research_iteration: 2
+  expect:
+    route: save_verified_courses
+  graders:
+  - exact
+  tags:
+  - planner

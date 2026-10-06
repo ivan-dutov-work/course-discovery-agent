@@ -26,6 +26,22 @@ REMOVED_CHANNELS = {
     "cache_hits",
     "tavily_calls",
 }
+RESEARCH_PRIVATE_CHANNELS = {
+    "user_memory",
+    "cache_candidates",
+    "research_plan",
+    "tavily_results",
+    "extracted_candidates",
+    "scraped_courses",
+    "deduplicated_courses",
+    "rejected_courses",
+    "uncertain_courses",
+    "validation_results",
+    "research_iteration",
+    "completed_queries",
+    "research_notes",
+    "active_search_query",
+}
 TOP_LEVEL_CHANNELS = {
     "user_id",
     "user_query",
@@ -36,9 +52,12 @@ TOP_LEVEL_CHANNELS = {
     "rewrite_instructions",
     "valid_courses",
     "digest",
+    "metrics",
     "publish_status",
     "discard_reason",
     "memory_update",
+    "research_pass",
+    "research_retries",
 }
 
 
@@ -77,9 +96,11 @@ class TopLevelStateTests(unittest.IsolatedAsyncioTestCase):
     def test_removed_channels_are_gone_and_the_top_level_is_exactly_the_declared_set(self):
         self.assertFalse(REMOVED_CHANNELS & set(AgentState.__annotations__))
         self.assertFalse(REMOVED_CHANNELS & set(_initial_state(QUERY)))
-        self.assertLessEqual(TOP_LEVEL_CHANNELS, set(AgentState.__annotations__))
-        self.assertEqual(len(AgentState.__annotations__), 28)
-        self.assertEqual(set(AgentState.__annotations__) - set(ResearchState.__annotations__), {"feedback_history"})
+        self.assertEqual(set(AgentState.__annotations__), TOP_LEVEL_CHANNELS)
+        self.assertFalse(RESEARCH_PRIVATE_CHANNELS & set(AgentState.__annotations__))
+        self.assertFalse(RESEARCH_PRIVATE_CHANNELS & set(_initial_state(QUERY)))
+        self.assertLessEqual(RESEARCH_PRIVATE_CHANNELS, set(ResearchState.__annotations__))
+        self.assertNotIn("feedback_history", ResearchState.__annotations__)
 
     async def test_publish_path_visits_every_node_and_every_channel_has_its_value(self):
         config = _config("tls-publish")
@@ -87,7 +108,7 @@ class TopLevelStateTests(unittest.IsolatedAsyncioTestCase):
         first = await self._top_level(_initial_state(QUERY), config)
         paused = await self._values(config)
 
-        self.assertEqual(first, ["parse_user_request", "course_research"])
+        self.assertEqual(first, ["parse_user_request", "start_research_pass", "course_research"])
         self.assertTrue(await self._is_paused(config))
         self.assertEqual(paused["user_id"], "cli-user")
         self.assertEqual(paused["user_query"], QUERY)
@@ -109,6 +130,7 @@ class TopLevelStateTests(unittest.IsolatedAsyncioTestCase):
                 "await_human_review",
                 "interpret_review_feedback",
                 "send_approved_courses",
+                "promote_approved_courses",
                 "record_review_outcome",
                 "curate_user_memory",
             ],
@@ -162,7 +184,8 @@ class TopLevelStateTests(unittest.IsolatedAsyncioTestCase):
         values = await self._values(config)
 
         self.assertEqual(
-            visited[:3], ["await_human_review", "interpret_review_feedback", "plan_gap_search"]
+            visited[:5],
+            ["await_human_review", "interpret_review_feedback", "start_research_pass", "begin_pass", "plan_gap_search"],
         )
         self.assertEqual(values["routing_decision"], RoutingAction.AUGMENT)
         self.assertIsNone(values["manager_feedback"])
@@ -204,6 +227,7 @@ class TopLevelStateTests(unittest.IsolatedAsyncioTestCase):
                 "await_human_review",
                 "interpret_review_feedback",
                 "discard_run",
+                "drop_pending_courses",
                 "record_review_outcome",
                 "curate_user_memory",
             ],
@@ -223,11 +247,10 @@ class TopLevelStateTests(unittest.IsolatedAsyncioTestCase):
         final = await self._values(config)
 
         self.assertEqual(
-            visited, ["parse_user_request", "discard_run", "record_review_outcome", "curate_user_memory"]
+            visited, ["parse_user_request", "discard_run", "drop_pending_courses", "record_review_outcome", "curate_user_memory"]
         )
         self.assertIn("Gateway failed (KeyError)", final["discard_reason"])
         self.assertIsNone(final["routing_decision"])
-        self.assertIsNone(final["error"])
         self.assertIsNone(final["publish_status"])
         self.assertEqual((await self.graph.aget_state(config)).next, ())
 
@@ -271,6 +294,7 @@ class TopLevelStateTests(unittest.IsolatedAsyncioTestCase):
                 "interpret_review_feedback",
                 "parse_user_request",
                 "discard_run",
+                "drop_pending_courses",
                 "record_review_outcome",
                 "curate_user_memory",
             ],

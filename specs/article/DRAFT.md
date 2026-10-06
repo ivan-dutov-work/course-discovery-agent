@@ -49,6 +49,15 @@ into the shared key, or sums it for a counter. Three workers in the same
 superstep each return their own slice of the results, and the graph appends all
 three rather than keeping one.
 
+A reducer belongs on the schema where the branches meet, and only there. The research
+subgraph is a node of the outer graph, and when it returns, the outer graph merges its
+channels with the outer graph's own reducer. A channel declared `operator.add` on both sides
+is therefore appended to itself on every pass: the subgraph starts from the outer value, adds
+its branches, and the outer reducer adds the whole result again. After two review rounds the
+query ledger read 2, 4, 8. The fix is to keep the reducer on the subgraph's schema and leave the
+outer field a plain list, so the outer graph overwrites with a result that already contains
+the old value.
+
 Worth being precise about what *isn't* reduced. A field written once per branch,
 where each branch produces a self-contained value, needs no reducer: there is no
 cross-branch merge to protect. A list of extracted candidates produced by a
@@ -59,7 +68,26 @@ ones shared across branches.
 
 ### 2.3 `input_schema`/`output_schema` separation
 
-[NOT DRAFTED] — see outline §2.3.
+A graph that is also a node needs a public contract narrower than its working state. By
+default a compiled subgraph takes its whole schema as input and hands the whole of it back, so
+every internal channel becomes the parent's business, and every reducer channel a second write.
+`input_schema` and `output_schema` split the two: the subgraph reads only the keys the parent
+passes in and returns only the keys declared as output.
+
+```python
+StateGraph(ResearchState, input_schema=ResearchInput, output_schema=ResearchOutput)
+```
+
+Five keys go in, five come out (two of them bookkeeping), and the other channels (plans, ledgers, candidate
+lists) stay behind the boundary. The boundary limits what the subgraph reads and returns, not what its checkpoint stores: the full parent state is still in its start channel, which is one more reason to encrypt checkpoints (§10.1). The parent's state shrinks to what the rest of the graph
+reads, and the caller of `invoke()` sees the output schema, not the internals.
+
+Private does not mean persistent. A subgraph's channels start empty on every call unless it is
+compiled with `checkpointer=True`, and a loop that re-enters it with the previous pass's plan
+needs exactly that. The stateful form has a sharp edge: when the subgraph is the first task of
+a resumed step, after a crash or an `update_state(as_node=...)`, LangGraph resumes it instead of
+starting it with the new input, and the round silently does not run. A no-op node in front of
+the subgraph looks like the fix and is not: a crash after the node commits reaches the same window. What works is a counter the parent stamps and the subgraph echoes back; if the echo is stale, the parent sends the work through again, and the resume flag is spent by then. The retry needs its own bound, or a result that stays stale loops until the recursion limit and fails with an error that says nothing about why. State that outlives a pass needs the opposite care: the subgraph clears its own ledger on a fresh pass, with `Overwrite`, because a reducer can add but not subtract.
 
 ---
 
@@ -112,17 +140,17 @@ completely different reliability guarantees.
 ### 3.3 Subgraphs for encapsulation
 
 A subgraph is the unit of encapsulation. Compile a multi-step pipeline into its
-own `StateGraph`, bare, without a checkpointer or interrupt config, because
-those are the parent's concerns, and mount it as one node:
+own `StateGraph` without interrupt config, because that is the parent's concern,
+and mount it as one node:
 
 ```python
-builder.add_node("research_agent", build_research_graph())
+builder.add_node("course_research", build_research_graph(checkpointer=True))
 ```
 
 From the parent's perspective the pipeline is just another node, one that
 happens to run many steps internally. This pays off wherever the parent routes:
 every outcome that means "do the work again" (a rewrite, an augmentation, a
-reset) points at one edge target, and the parent never needs to know which
+reset) points at one entry node, `start_research_pass`, and the parent never needs to know which
 internal step should resume. Adding a validation pass or an extraction step
 inside the pipeline never touches the parent's wiring. The encapsulation
 boundary is real, not a naming convention.
@@ -194,7 +222,7 @@ graph = builder.compile(
 result = await graph.ainvoke(input, {"configurable": {"thread_id": "..."}})
 ```
 
-A subgraph without its own checkpointer inherits the parent's, so its internal steps are persisted too, under a runtime namespace you must discover, not construct from the thread ID.
+A subgraph without its own checkpointer inherits the parent's, so its internal steps are persisted too, under a runtime namespace you must discover, not construct from the thread ID. Compiled with `checkpointer=True`, it keeps its state across calls and uses a fixed namespace, the node's name.
 
 ### 5.2 Durability modes
 
@@ -460,8 +488,6 @@ Worth naming as a design choice: a framework cache for same-input reruns and a d
 
 ## 8. Provider-Level Resilience and Spend Control
 
-[NOT DRAFTED] — §8.5 (guardrails) is pending; see outline §8. It starts from the limit §8.4 leaves open: schema validation catches malformed output, not well-formed output that an attacker shaped.
-
 ### 8.1 Where call-level resilience lives
 
 The graph decides which node runs next. What happens when the model behind a node is down is not a graph concern: the node calls a Runnable, and resilience is a property of that Runnable. `Runnable.with_fallbacks()` (`langchain_core`, not LangGraph-specific) tries a list of runnables in order, and `ModelFallbackMiddleware` is the newer multi-model version. Either way it is "wrap the chain, call it like any other Runnable", with no LangGraph glue. A third option moves the fallback out of the process to a gateway (§8.2), so the LangChain side still sees one chat model.
@@ -481,6 +507,8 @@ ChatOpenRouter(
 ```
 
 Two behaviours are easy to get wrong. An invalid model ID is not a fallback trigger: the gateway rejects the request with a 400 before any routing, so the list protects against provider failures, not configuration mistakes. And because the fallback is invisible to the caller, you have to ask which model answered: log the response's `model_name` on every call and flag it when it differs from the primary. Otherwise a week of silent fallbacks looks identical to a week of healthy calls.
+
+The factory also takes a per-node model. The course tagger asks for `openai/gpt-6-luna` and carries no fallback list, so it is a second provider behind the same gateway, and `ServedModelLogger` compares the served model against the one that node requested, not against the global primary. Not yet wired into the graph.
 
 The argument for a gateway isn't fallback, which `.with_fallbacks()` gives you in-process. It is one bill, one rate-limit surface, and per-key spend caps across providers. The cost is a hop through a third party: every prompt now transits it, which matters for §10.1.
 
@@ -577,6 +605,38 @@ custom layer decides *whether* to fall back and to *what kind* of path; the
 gateway still handles the provider-level retry underneath. Two layers, two
 different failure classes, the same distinction as retry versus replanning
 (§7.1).
+
+### 8.5 Guardrails: the same wrap, aimed at the input
+
+Schema validation, which §8.4 leans on, catches malformed output. It does not
+catch well-formed output that an attacker shaped. Any node that builds a prompt
+from text it did not write (search snippets, scraped descriptions, cached rows
+that came from them) has that exposure, and neither LangChain nor LangGraph core
+ships a guard for it. The shape is the same as fallback: a check around the
+call, owned by the node. In a graph the placement is the decision. The screen
+runs inside the node that assembles the prompt, once per untrusted item, so one
+poisoned listing cannot steer the verdict on its neighbours.
+
+The useful property of a typed-decision model here is that it returns a
+probability, not prose. Control flow stays in code: the node maps the score to
+three actions (pass, send the model structured fields only, skip the model for
+that item) and the thresholds live in the node, not in a prompt. The digest line
+says when free text was withheld, which makes the substitution visible at the
+interrupt, the same rule as §8.4.
+
+Worth being precise about what this is not. The screen reads the same hostile
+text it judges, and its vendor says as much: content that argues for its own
+classification can move the answer. Observed here: a small live set (28
+author-written samples, one run) separated cleanly, including seven injections
+aimed at the screen itself, but that set is easy next to an adaptive attacker,
+and the thresholds are borrowed from an independent benchmark, not fitted. So it
+is one layer, to sit beside deterministic checks, not a boundary.
+
+Two costs follow from the placement. A screen error is treated as the middle
+band, so an outage withholds free text instead of passing it or failing the
+run, which is the opposite trade from PII redaction (§10.1), where a miss cannot
+be undone. And the screen runs again on every execution of the node, so a replay
+(§5.3) can land a borderline item in a different band; not tested here.
 
 ---
 
@@ -703,13 +763,22 @@ Two failure modes, named separately.
 
 **State schema versioning.** If `AgentState` changes shape (a field renamed, a type changed), checkpoints persisted under the old shape may not deserialize under the new one. This is LangGraph-specific risk, because the checkpointer serializes the state object directly rather than through a migration-aware layer. It shows up first as a serializer complaint, not a crash: `langgraph-checkpoint` 4.2.0 logs a "Deserializing unregistered type" warning per Pydantic model in state, and enum-typed fields log a separate "Blocked deserialization" message when the allowlist is built from model classes alone. The fix is an explicit allowlist covering models and enums, plus a round-trip test that asserts type and value on read-back. It is also a deserialization-safety control: without one, anyone who can write to the checkpoint database can cause arbitrary type construction on read.
 
-**Graph structural versioning.** Adding, removing or renaming a node between deploys can break an in-flight thread even when `AgentState` didn't change, because the checkpoint records *where* execution was parked and that position may no longer exist. This half is described, not observed.
+**Graph structural versioning.** Adding, removing or renaming a node between deploys can break an in-flight thread even when `AgentState` didn't change, because the checkpoint records *where* execution was parked and that position may no longer exist. A structural change is observable, though: a thread paused at the review gate under an earlier graph still reads back on Postgres, but approval after `update_state` does not publish. The resumed thread re-enters the research pass, repeating its searches, staging writes and model call, and parks at the gate again with a different digest. Nothing raises, which is what makes it expensive.
+
+The place to catch it is before the resume. Stamp a schema version beside the thread's owner record when the run starts, compare it when the thread is resumed, and refuse a mismatch with an error that names both versions. Two tests keep the stamp honest: a snapshot of channel and node names that fails until the version is bumped, and one stored checkpoint per released version, each marked as resumable or refused. The cost is that a refused thread is lost work. The practical decision rule: drain in-flight runs before a deploy that bumps the version, and build a migration only when draining is not possible.
 
 Drift at the model boundary, a provider returning a different shape, is a separate failure with a separate answer: a failure rate rather than a migration (§8.4).
 
 ### 10.3 Security/guardrail primitives
 
-[NOT DRAFTED] — see outline §10.3 (cross-references §8.5 once drafted).
+LangGraph ships no security primitives, so what the graph decides is placement.
+Two controls share the wrap-and-own-it shape and differ in where they must sit.
+PII redaction belongs at the boundary that builds initial state, before the
+first checkpoint, because the checkpointer persists whatever state holds (§10.1).
+The injection screen belongs in the node that builds a prompt from web text,
+before the model call, and its verdict does not need to persist (§8.5). Neither
+covers the other, and neither stops a caller from resuming someone else's thread,
+which is the third control (§10.4).
 
 ### 10.4 Access control on `thread_id`
 

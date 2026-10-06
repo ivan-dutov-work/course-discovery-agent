@@ -1,20 +1,24 @@
 from __future__ import annotations
 
+from langchain_core.runnables import RunnableConfig
+
 from course_discovery.domain.models import ResearchRunMetrics, UserMemory
-from course_discovery.domain.run_config import current_run_id
-from course_discovery.domain.state import AgentState
+from course_discovery.domain.run_config import current_run_id, run_id_of
+from course_discovery.domain.state import AgentState, ResearchState
 from course_discovery.observability.logging import get_logger
 from course_discovery.observability.metrics import record_cache_lookup
 from course_discovery.research_agent.cache.repository import (
+    discard_staged_courses,
+    promote_staged_courses,
     search_course_cache,
-    upsert_courses,
+    stage_courses,
 )
 
 
 logger = get_logger(__name__)
 
 
-def course_cache_lookup_node(state: AgentState) -> dict:
+def course_cache_lookup_node(state: ResearchState) -> dict:
     filters = state.get("search_filters")
     if filters is None:
         return {
@@ -43,15 +47,36 @@ def course_cache_lookup_node(state: AgentState) -> dict:
     }
 
 
-def course_cache_upsert_node(state: AgentState) -> dict:
-    useful_courses = state.get("valid_courses", []) + state.get("uncertain_courses", [])
-    upsert_courses(useful_courses, state.get("validation_results", []))
+def course_cache_upsert_node(state: ResearchState) -> dict:
+    staged = [course for course in state.get("valid_courses", []) if course.source != "cache"]
+    stage_courses(current_run_id(), staged, state.get("validation_results", []))
     logger.info(
-        "course_cache_upsert_complete",
+        "course_cache_stage_complete",
         extra={
-            "event": "cache.upsert_complete",
+            "event": "cache.stage_complete",
             "run_id": current_run_id(),
-            "course_count": len(useful_courses),
+            "course_count": len(staged),
         },
+    )
+    return {}
+
+
+def promote_approved_courses_node(state: AgentState, config: RunnableConfig) -> dict:
+    run_id = run_id_of(config)
+    approved = [course.url for course in state.get("valid_courses", []) if course.source != "cache"]
+    promoted = promote_staged_courses(run_id, approved)
+    logger.info(
+        "course_cache_promote_complete",
+        extra={"event": "cache.promote_complete", "run_id": run_id, "promoted": promoted},
+    )
+    return {}
+
+
+def drop_pending_courses_node(state: AgentState, config: RunnableConfig) -> dict:
+    run_id = run_id_of(config)
+    discard_staged_courses(run_id)
+    logger.info(
+        "course_cache_drop_complete",
+        extra={"event": "cache.drop_complete", "run_id": run_id},
     )
     return {}

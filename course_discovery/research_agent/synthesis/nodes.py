@@ -17,8 +17,8 @@ from course_discovery.domain.models import (
     length_bucket,
 )
 from course_discovery.domain.run_config import current_run_id
-from course_discovery.domain.state import AgentState
-from course_discovery.guardrails import redact_pii
+from course_discovery.domain.state import ResearchState
+from course_discovery.guardrails import InjectionAction, redact_pii, screen_untrusted
 from course_discovery.observability.logging import get_logger, preview, sanitize_error
 from course_discovery.observability.metrics import (
     record_degradation,
@@ -89,6 +89,14 @@ def _rank_courses(
     )
 
 
+WITHHELD_NOTE = " Free text withheld: flagged by the injection screen."
+
+
+def _untrusted_text(course: CourseCandidate) -> str:
+    parts = [course.title, course.description or "", *(e.quote_or_summary for e in course.evidence)]
+    return "\n".join(part for part in parts if part)
+
+
 def _highlight_with_retry(
     llm: ChatOpenRouter,
     course: CourseCandidate,
@@ -98,6 +106,11 @@ def _highlight_with_retry(
     run_id: str,
     course_idx: int,
 ) -> str:
+    action = screen_untrusted(_untrusted_text(course)) if llm_enabled() else InjectionAction.PASS
+    if action is InjectionAction.BLOCK:
+        return f"{course.title} by {course.provider or 'unknown provider'}.{WITHHELD_NOTE}"
+
+    flagged = action is InjectionAction.REVIEW
     payload = {
         "title": course.title,
         "provider": course.provider,
@@ -105,10 +118,10 @@ def _highlight_with_retry(
         "price": course.price,
         "is_free": course.is_free,
         "has_certificate": course.has_certificate,
-        "description": course.description,
+        "description": None if flagged else course.description,
         "language": course.language,
         "published_or_updated": course.published_or_updated,
-        "evidence": [item.model_dump() for item in course.evidence],
+        "evidence": [] if flagged else [item.model_dump() for item in course.evidence],
     }
 
     rewrite_clause = ""
@@ -149,7 +162,7 @@ def _highlight_with_retry(
                 "rewrite_present": bool(rewrite_instructions),
             },
         )
-        return result
+        return result + (WITHHELD_NOTE if flagged else "")
     except Exception as first_exc:  # noqa: BLE001
         logger.warning(
             "synthesizer_retry",
@@ -177,7 +190,7 @@ def _highlight_with_retry(
                     "rewrite_present": bool(rewrite_instructions),
                 },
             )
-            return result
+            return result + (WITHHELD_NOTE if flagged else "")
         except Exception as retry_exc:  # noqa: BLE001
             record_degradation("synthesizer", "template_fallback")
             logger.error(
@@ -196,7 +209,7 @@ def _highlight_with_retry(
             )
 
 
-def synthesizer_node(state: AgentState) -> dict:
+def synthesizer_node(state: ResearchState) -> dict:
     start_ts = time.perf_counter()
     run_id = current_run_id()
     memory = state.get("user_memory")
@@ -280,11 +293,4 @@ def synthesizer_node(state: AgentState) -> dict:
         },
     )
 
-    return {
-        "digest": digest,
-        "rewrite_instructions": (
-            None
-            if state.get("routing_decision") != RoutingAction.REWRITE
-            else rewrite_instructions
-        ),
-    }
+    return {"digest": digest}

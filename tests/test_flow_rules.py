@@ -9,7 +9,7 @@ from langchain_core.runnables import RunnableConfig
 
 from course_discovery.app.cli import _initial_state
 from course_discovery.domain.models import UserMemory
-from course_discovery.domain.state import AgentState
+from course_discovery.domain.state import AgentState, ResearchState
 from course_discovery.effects.factory import set_gateway
 from course_discovery.effects.gateway import InlineGateway
 from course_discovery.effects.memory_store import InMemoryOutboxStore
@@ -23,7 +23,8 @@ from course_discovery.workflows.outer_graph import build_graph
 from course_discovery.workflows.research_graph import build_research_graph
 
 QUERY = "Find free Python courses with certificate for beginners"
-CHANNELS = set(AgentState.__annotations__)
+SCHEMAS = (AgentState, ResearchState)
+CHANNELS = {name for schema in SCHEMAS for name in schema.__annotations__}
 
 
 def _graph_nodes() -> set[str]:
@@ -38,7 +39,7 @@ def _graph_nodes() -> set[str]:
 def _check(flows: dict[str, NodeFlow]) -> list[Violation]:
     return check_flows(
         flows,
-        pii_seeds(AgentState),
+        pii_seeds(*SCHEMAS),
         graph_nodes=_graph_nodes(),
         channels=CHANNELS,
         erasable_stores={source.table for source in USER_DATA_SOURCES},
@@ -53,7 +54,7 @@ def _with(node: str, **changes) -> dict[str, NodeFlow]:
 class FlowRuleTests(unittest.TestCase):
     def test_seeds_come_from_state_annotations(self):
         self.assertEqual(
-            set(pii_seeds(AgentState)),
+            set(pii_seeds(*SCHEMAS)),
             {"user_query", "user_memory", "manager_feedback", "feedback_history"},
         )
 
@@ -61,7 +62,7 @@ class FlowRuleTests(unittest.TestCase):
         self.assertEqual(_check(FLOWS), [])
 
     def test_taint_reaches_digest_through_research_notes(self):
-        labels, origins = propagate(FLOWS, pii_seeds(AgentState))
+        labels, origins = propagate(FLOWS, pii_seeds(*SCHEMAS))
         self.assertIn("subject", labels["digest"])
         self.assertNotIn("raw", labels["digest"])
         self.assertIn("subject", labels["active_search_query"])
@@ -165,14 +166,15 @@ class CanaryTests(unittest.IsolatedAsyncioTestCase):
             graph.update_state(config, {"manager_feedback": "approve"})
             await graph.ainvoke(None, config)
         seen: dict[str, str] = {}
-        async for snapshot in graph.aget_state_history(config):
-            for channel, value in snapshot.values.items():
-                seen[channel] = seen.get(channel, "") + repr(value)
+        async for stored in graph.checkpointer.alist(config):
+            for channel, value in stored.checkpoint["channel_values"].items():
+                if not channel.startswith("__"):
+                    seen[channel] = seen.get(channel, "") + repr(value)
         return seen
 
     async def test_canaries_stay_inside_labelled_channels(self):
         seen = await self._run()
-        labels, _ = propagate(FLOWS, pii_seeds(AgentState))
+        labels, _ = propagate(FLOWS, pii_seeds(*SCHEMAS))
 
         holding_subject = {c for c, text in seen.items() if SUBJECT_CANARY in text}
         holding_raw = {c for c, text in seen.items() if RAW_CANARY in text}

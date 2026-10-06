@@ -16,6 +16,9 @@ Integration tests need `docker compose up -d` and
   budgets are `configurable` keys, the review round is `len(feedback_history)`, counters live in
   `metrics` only, the gateway failure signals through `discard_reason`: `domain/run_config.py`,
   `tests/test_top_level_state.py` (§2.1).
+- State contract is versioned: `STATE_SCHEMA_VERSION` stamped in `run_threads` (migration 011), `authorize_thread` refuses a thread from another version with `IncompatibleThreadError`, the CLI exits non-zero; channel and node names snapshotted, one stored checkpoint per version marked `resumes` or `refused`: `domain/contract.py`, `privacy/registry.py`, `tests/test_state_contract.py`, `tests/test_checkpoint_compatibility.py`, `tests/fixtures/checkpoints/`, `scripts/dump_checkpoint_fixture.py` (§10.2).
+- Multi-round review loop against Postgres, local only (skips without `TEST_DATABASE_URL`): augment, rewrite, reset, approve with a fresh saver and graph per segment, encryption on, registry guard on; plus the discard and wrong-owner and wrong-version paths: `tests/test_e2e_review_loops_postgres.py` (§2.3, §4).
+- Router classification failure writes the exception type into `discard_reason`, not its text: `review/router.py`, `tests/test_user_profile.py`. `langgraph` is pinned to the tested `>=1.1.2,<1.2`.
 - Plan-driven `Send` fan-out: `workflows/research_graph.py` (§3.2).
 - Only `await_human_review` remains as a no-op anchor; the research entry is a conditional
   entry point: `workflows/`, `tests/test_graph_topology.py` (§3.1, §4.1).
@@ -64,7 +67,8 @@ Integration tests need `docker compose up -d` and
 - Course duration: `CourseCandidate.duration_hours` from listing metadata or snippet text (`extraction/nodes.py`), stored in `courses.duration_hours` (migration 009). `preferred_course_length` is `short` (up to 10 h), `medium` (up to 40 h) or `long`, validated in `MemoryPatch`, writable by the curator, and counted as one match in `_preference_score`: `tests/test_profile_and_duration.py`, `tests/test_memory_e2e.py` (case 5).
 
 - Memory curator subgraph `curate_user_memory` after `record_review_outcome`: bounded tool loop (`read_profile`, `read_run_events`, `propose_patch`, `finish`), 4-step cap, fail-closed commit, idempotent per `run_id` through `memory_updates` (migration 008, erasable); uses `input_schema`/`output_schema`: `memory_curator/`, `tests/test_memory_curator.py` (cases 1, 2, 3, 7, 10 to 18 with a scripted model, plus Postgres), `tests/test_curator_checkpoint.py` (private channels through the encrypted Postgres checkpointer). `tests/test_memory_e2e.py` now runs the real curator between run one and run two.
-- Not built yet: case 6 of `FEEDBACK.md` (no consumer for career goals), cases 4 and 8 need a live model and the judge (P6).
+- End-to-end feedback tests (P6): eleven cases of `FEEDBACK.md` (1, 2, 3, 7, 8, 9, 10, 11, 12, 13, 14) as a table through the whole outer graph with a scripted curator and a stubbed router, on the fake store and Postgres, asserting the profile, the tool trace, the route and run two; case 4 and the live layer (real models, repeated trials, judge for free text) are written and skip without `OPENROUTER_API_KEY` and `LIVE_LLM_TESTS=1`, never run live: `tests/memory_cases.py`, `tests/test_memory_e2e.py`, `tests/test_memory_e2e_live.py`. Judge (`google/gemini-3.1-flash-lite`, five criteria, three calls, majority) with stubbed tests and a labelled live check: `tests/judge.py`, `tests/test_judge.py`, `tests/test_judge_live.py`.
+- Not built yet: case 6 of `FEEDBACK.md` (no consumer for career goals).
 
 ## Observability
 
@@ -80,12 +84,23 @@ Integration tests need `docker compose up -d` and
 - `run_threads` registry, per-user erasure, checkpoint pruning: `privacy/`,
   `tests/test_erasure.py` (§10.1).
 - Thread ownership check before resume: `privacy/registry.py`, `tests/test_thread_access.py` (§10.4).
+- Prompt-injection screen on the synthesis prompt: `InjectionScreen` port, `typesafe/jev-1.13` adapter over OpenRouter's Decisions API, three bands (pass, structured fields only, model skipped), screen errors withhold free text, `INJECTION_GUARD` switch: `guardrails/injection.py`, `guardrails/jev.py`, `tests/test_injection_guard.py`; live suite `tests/test_injection_guard_live.py` (samples in `tests/injection_samples.py`, score table via `scripts/injection_score_table.py`) needs `LIVE_LLM_TESTS=1`. Thresholds are the independent benchmark's, not fitted (§8.5, §10.3).
+- Shared-cache writes wait for approval: `save_verified_courses` stages valid web courses in `pending_courses` (migration 010), `promote_approved_courses` upserts the approved ones into `courses`, `drop_pending_courses` clears a discarded run; uncertain courses are not persisted, existing rows untouched: `research_agent/cache/`, `tests/test_pending_courses.py`, `tests/test_integration_postgres.py`.
+- User-text injection probes (live, `LIVE_LLM_TESTS=1`): five payloads through the gateway, router and curator tool loop; outputs stay in schema, no system-prompt leak, proposals stay inside `WRITABLE_FIELDS`: `tests/test_user_text_injection_live.py`. Passed once (2026-10-05).
+- Reducer echo fixed: fan-in reducers only on `ResearchState`, parent channels plain; REWRITE and AUGMENT rounds no longer re-add `completed_queries`, `research_notes` or `tavily_results`: `domain/state.py`, `tests/test_state_hygiene.py`.
+- Research subgraph behind `input_schema`/`output_schema` (five keys in; `valid_courses`, `digest`, `metrics`, `discard_reason`, `research_pass` out), stateful via `checkpointer=True`; outer `AgentState` is 15 channels (13 plus `research_pass` and `research_retries`); the subgraph schema has 23, nine shared with the outer state and fourteen private; `start_research_pass` stamps a pass counter, and a stale result goes through `retry_research_pass` once, then raises `StaleResearchResultError` (schema v3); `begin_pass` resets private state on a fresh pass; planning failures route to `discard_run`: `domain/state.py`, `workflows/`, `tests/test_top_level_state.py`, `tests/test_graph_topology.py`, `tests/test_nested_checkpoints_postgres.py` (§2.3).
 - Declared PII data-flow check: `domain/pii.py`, `privacy/flow.py`, `privacy/flow_specs.py`,
   `tests/test_flow_rules.py` (§10.1).
+
+## Evals
+
+- Eval harness skeleton (E1 milestone 1): YAML cases per level, grader registry, `run.py`, pytest parametrization. 33 L1a rows (validator evidence rule, dedup, planner, replan route) and 7 L3 scenarios (approve, discard, rewrite, augment, reset, multi-round, parked at gate) on `MemorySaver`, no key, no network. Mutating the evidence rule fails 10 rows: `evals/`, `uv run python -m evals.run`, `uv run pytest evals -n 4`.
+- E1 milestone 2: two Postgres-backed L3 scenarios (`requires: [postgres]`, skipped without `TEST_DATABASE_URL`): a wrong owner and a thread stored under another schema version are refused and leave the parked thread untouched; skipping either check in `privacy/registry.py` fails its case. `.github/workflows/ci.yml` runs the unittest suite and the evals on every push and pull request against a pgvector service container, migrations applied by `scripts/apply_migrations.py`. Rehearsed locally on a fresh pgvector container with a fresh venv (`uv sync --locked`, 481 tests, 42 evals); the workflow has not run on GitHub: `evals/runners.py`, `evals/graders/l3.py`, `evals/cases/l3/scenarios.yaml`, `.github/workflows/ci.yml`.
 
 ## Not in the code
 
 Each of these is covered in the article as prose only, and the reason is in `DECISIONS.md`:
 `CachePolicy`, node-level `timeout=`, `Command` routing,
-dynamic `interrupt()`, `durability=` set explicitly, prompt-injection check, circuit
+dynamic `interrupt()`, `durability=` set explicitly, circuit
 breaker, cross-worker coordination.
+- E1 milestone 3, partly: `evals/labels/judge_notes.yaml` (32 generated outputs awaiting the owner's labels), `python -m evals.calibrate_judge` (TPR and TNR per criterion, failure positive), and the first live memory run. Three harness bugs in `tests/test_memory_e2e_live.py` fixed; 7 of 12 cases fail live at one trial, 5 from provider names redacted as `<PERSON>`. Judge numbers are against generator labels, not yet the owner's; L1b live for router and synthesizer not built: `evals/calibrate_judge.py`, `evals/labels/`, `notes/04`.

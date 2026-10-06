@@ -18,7 +18,7 @@ def _die(*args, **kwargs):
 
 
 async def main(mode: str, thread_id: str) -> None:
-    cache_nodes.upsert_courses = _die
+    cache_nodes.stage_courses = _die
     async with open_checkpointer() as saver:
         graph = build_graph(checkpointer=saver)
         await graph.ainvoke(
