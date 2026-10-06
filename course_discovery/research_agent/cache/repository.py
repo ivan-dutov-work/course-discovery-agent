@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 
 from course_discovery.domain.models import (
     CandidateValidation,
@@ -339,6 +340,35 @@ def discard_staged_courses(run_id: str) -> None:
                 extra={"event": "persistence.course_cache_discard_error", **sanitize_error(exc)},
             )
             raise
+
+
+def prune_staged_courses(older_than_days: float, now: datetime | None = None) -> int:
+    cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=older_than_days)
+    with connect() as conn:
+        if conn is None:
+            return 0
+
+        try:
+            deleted = conn.execute(
+                """
+                DELETE FROM pending_courses p
+                WHERE p.created_at < %s
+                  AND NOT EXISTS (
+                    SELECT 1 FROM run_threads t
+                    WHERE t.thread_id = p.run_id AND t.last_activity_at >= %s
+                  )
+                """,
+                (cutoff, cutoff),
+            ).rowcount
+            conn.commit()
+        except Exception as exc:  # noqa: BLE001
+            record_db_error("course_cache_prune")
+            logger.error(
+                "course_cache_prune_error",
+                extra={"event": "persistence.course_cache_prune_error", **sanitize_error(exc)},
+            )
+            raise
+    return deleted
 
 
 def _json(value):

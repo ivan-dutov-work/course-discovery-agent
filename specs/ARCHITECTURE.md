@@ -55,8 +55,8 @@ START ─▶ begin_pass ──(AUGMENT)─────────────�
                  ▼                                    ├─ error ─▶ END
        merge_known_and_found_courses ◀─ extract_courses_from_results ◀─ search_web_for_courses (×N, Send)
                      │
-        remove_duplicate_courses ─▶ verify_course_claims ──┬─ enough valid, or budget spent ─▶ save_verified_courses ─▶ rank_and_summarize_courses ─▶ END
-                                                           └─ too few, budget left ─────────▶ plan_gap_search ─▶ (fan-out again, or merge)
+        remove_duplicate_courses ─▶ verify_course_claims ──┬─ Command: enough valid, or budget spent ─▶ save_verified_courses ─▶ rank_and_summarize_courses ─▶ END
+                                                           └─ Command: too few, budget left ─▶ plan_gap_search ─▶ (fan-out again, or merge)
 ```
 
 The basic valid version is the spine: parse the request, load what is already known,
@@ -97,7 +97,7 @@ One responsibility each. "Rules" means deterministic code with no model call.
 | `extract_courses_from_results` | Turn raw search results into `CourseCandidate`s with evidence | rules |
 | `merge_known_and_found_courses` | Combine cache and web candidates into one list | pure |
 | `remove_duplicate_courses` | Drop duplicates by normalized URL, title+host fingerprint and fuzzy title | pure |
-| `verify_course_claims` | Mark each candidate valid, uncertain or rejected against the filters and the user profile | rules |
+| `verify_course_claims` | Mark each candidate valid, uncertain or rejected against the filters and the user profile, then route: returns `Command(update=..., goto=...)`, with the decision taken by `enough_valid` over the update it just built | rules |
 | `plan_gap_search` | Build new queries from missing evidence and increment the iteration counter | rules |
 | `save_verified_courses` | Stage valid web-sourced courses in `pending_courses`, keyed by run; the shared cache is not touched until approval | DB write |
 | `rank_and_summarize_courses` | Rank valid courses (preferred provider, level and language first) and write the digest, with the profile's durable and topic-matching notes in the prompt; each course's web text is screened for injection first (below) | LLM, template fallback |
@@ -320,8 +320,9 @@ design.
 
 ## Known gaps, cache staging
 
-- **Abandoned runs leave staging rows.** A run that is never resumed or discarded keeps its
-  `pending_courses` rows; nothing prunes them yet (`BACKLOG.md`).
+- **Abandoned runs leave staging rows until `prune` runs.** `python -m course_discovery.effects prune`
+  deletes `pending_courses` rows older than the cutoff whose thread has had no activity since
+  (`prune_staged_courses`); nothing runs it on a schedule.
 - **Approval is per digest.** The reviewer approves the digest, and every valid web-sourced
   course in it is promoted; there is no per-course approval.
 

@@ -100,6 +100,11 @@ class TopologyTests(unittest.TestCase):
         self.assertIn(("begin_pass", "load_user_profile"), edges)
         self.assertIn(("begin_pass", "plan_gap_search"), edges)
 
+    def test_validator_routes_through_command(self):
+        edges = _edges(build_research_graph())
+        self.assertIn(("verify_course_claims", "plan_gap_search"), edges)
+        self.assertIn(("verify_course_claims", "save_verified_courses"), edges)
+
 
 class TopologyRunTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):

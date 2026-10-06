@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from typing import Literal
+
+from langgraph.types import Command
+
 from course_discovery.domain.models import (
     CandidateValidation,
     CourseCandidate,
@@ -75,7 +79,9 @@ def _validate_candidate(state: ResearchState, candidate: CourseCandidate) -> Can
     )
 
 
-def evidence_validator_node(state: ResearchState) -> dict:
+def evidence_validator_node(
+    state: ResearchState,
+) -> Command[Literal["save_verified_courses", "plan_gap_search"]]:
     validations = [_validate_candidate(state, item) for item in state.get("deduplicated_courses", [])]
     by_url = {item.url: item for item in validations}
     valid = [
@@ -114,13 +120,14 @@ def evidence_validator_node(state: ResearchState) -> dict:
             "uncertain_count": len(uncertain),
         },
     )
-    return {
+    update = {
         "validation_results": validations,
         "valid_courses": valid,
         "rejected_courses": rejected,
         "uncertain_courses": uncertain,
         "metrics": metrics,
     }
+    return Command(update=update, goto=enough_valid({**state, **update}))
 
 
 def enough_valid(state: ResearchState):
