@@ -38,7 +38,7 @@ def _config(run_id: str) -> RunnableConfig:
 
 
 async def _run_to_publish(graph, run_id: str) -> dict:
-    await graph.ainvoke(_initial_state(QUERY, run_id), _config(run_id))
+    await graph.ainvoke(_initial_state(QUERY), _config(run_id))
     graph.update_state(_config(run_id), {"manager_feedback": "approve"})
     return await graph.ainvoke(None, _config(run_id))
 
@@ -119,7 +119,7 @@ class PublishEffectTests(unittest.IsolatedAsyncioTestCase):
 
         set_gateway(Unavailable())
         graph = build_graph()
-        await graph.ainvoke(_initial_state(QUERY, "run-down"), _config("run-down"))
+        await graph.ainvoke(_initial_state(QUERY), _config("run-down"))
         graph.update_state(_config("run-down"), {"manager_feedback": "approve"})
 
         with self.assertRaises(ConnectionError):
@@ -133,7 +133,7 @@ class PublishEffectTests(unittest.IsolatedAsyncioTestCase):
     async def test_discard_submits_nothing(self):
         set_gateway(OutboxGateway(self.store))
         graph = build_graph()
-        await graph.ainvoke(_initial_state(QUERY, "run-discard"), _config("run-discard"))
+        await graph.ainvoke(_initial_state(QUERY), _config("run-discard"))
         graph.update_state(_config("run-discard"), {"manager_feedback": "discard"})
 
         result = await graph.ainvoke(None, _config("run-discard"))
@@ -149,16 +149,17 @@ class PublishNodeTests(unittest.TestCase):
     def test_key_is_derived_from_run_id_and_stable_across_calls(self):
         store = InMemoryOutboxStore()
         set_gateway(OutboxGateway(store))
-        state = {"run_id": "r1", "digest": "d", "valid_courses": [], "user_query": "q"}
+        state = {"digest": "d", "valid_courses": [], "user_query": "q"}
+        config = {"configurable": {"thread_id": "r1"}}
 
-        first = publish_node(state)
-        second = publish_node(state)
+        first = publish_node(state, config)
+        second = publish_node(state, config)
 
         self.assertEqual(first, second)
         self.assertEqual(store.get("publish:r1").effect.payload["digest"], "d")
 
-    def test_discard_node_clears_publish_status(self):
-        self.assertEqual(discard_node({"run_id": "r1"}), {"publish_status": None})
+    def test_discard_node_writes_nothing(self):
+        self.assertEqual(discard_node({"discard_reason": "no"}), {})
 
 
 class DeliverDigestTests(unittest.TestCase):

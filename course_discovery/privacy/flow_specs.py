@@ -8,42 +8,40 @@ EMBED = external("embeddings:openrouter", accepts=frozenset({SUBJECT}))
 
 OUTER: dict[str, NodeFlow] = {
     "parse_user_request": flow(
-        reads={"user_query", "manager_feedback", "search_filters", "routing_decision", "user_id"},
-        writes={"search_filters", "routing_decision", "manager_feedback", "error", "discard_reason"},
+        reads={"user_query", "feedback_history", "search_filters", "routing_decision", "user_id"},
+        writes={"search_filters", "routing_decision", "discard_reason"},
         sinks=(LLM,),
-        redacts={"user_query", "manager_feedback"},
+        redacts={"user_query", "feedback_history"},
     ),
     "course_research": flow(),
     "curate_user_memory": flow(),
     "await_human_review": flow(),
     "interpret_review_feedback": flow(
-        reads={"manager_feedback", "iteration_count", "max_iterations"},
+        reads={"manager_feedback", "feedback_history"},
         writes={
             "routing_decision",
             "rewrite_instructions",
-            "iteration_count",
             "discard_reason",
             "feedback_history",
+            "manager_feedback",
         },
         sinks=(LLM,),
         redacts={"manager_feedback"},
     ),
     "send_approved_courses": flow(
-        reads={"user_id", "user_query", "digest", "valid_courses", "run_id"},
+        reads={"user_id", "user_query", "digest", "valid_courses"},
         writes={"publish_status"},
         sinks=(store("outbox"),),
         declassifies={"publish_status": "delivery state only"},
     ),
-    "discard_run": flow(reads={"discard_reason", "run_id"}, writes={"publish_status"}),
+    "discard_run": flow(reads={"discard_reason"}),
     "record_review_outcome": flow(
         reads={
             "user_id",
             "valid_courses",
             "user_query",
-            "manager_feedback",
             "feedback_history",
             "publish_status",
-            "run_id",
         },
         sinks=(store("users"), store("recommendation_events")),
     ),
@@ -53,12 +51,11 @@ RESEARCH: dict[str, NodeFlow] = {
     "load_user_profile": flow(reads={"user_id"}, writes={"user_memory"}),
     "find_known_courses": flow(
         reads={"search_filters", "user_memory", "metrics", "user_id"},
-        writes={"cache_candidates", "cache_hits", "metrics", "research_notes"},
+        writes={"cache_candidates", "metrics", "research_notes"},
         sinks=(EMBED,),
         redacts={"user_memory"},
         declassifies={
             "cache_candidates": "catalog rows; memory only filters them",
-            "cache_hits": "counter",
             "metrics": "counters",
             "research_notes": "fixed message",
         },
@@ -68,10 +65,9 @@ RESEARCH: dict[str, NodeFlow] = {
         writes={"research_plan", "error"},
     ),
     "search_web_for_courses": flow(
-        reads={"active_search_query", "run_id"},
-        writes={"tavily_results", "completed_queries", "tavily_calls", "research_notes"},
+        reads={"active_search_query"},
+        writes={"tavily_results", "completed_queries", "research_notes"},
         sinks=(SEARCH,),
-        declassifies={"tavily_calls": "counter"},
     ),
     "extract_courses_from_results": flow(
         reads={"tavily_results"},
@@ -87,7 +83,6 @@ RESEARCH: dict[str, NodeFlow] = {
             "deduplicated_courses",
             "metrics",
             "completed_queries",
-            "tavily_calls",
         },
         writes={"validation_results", "valid_courses", "rejected_courses", "uncertain_courses", "metrics"},
         declassifies={
@@ -124,7 +119,6 @@ RESEARCH: dict[str, NodeFlow] = {
             "metrics",
             "research_plan",
             "routing_decision",
-            "run_id",
             "user_memory",
             "search_filters",
         },
@@ -137,7 +131,7 @@ RESEARCH: dict[str, NodeFlow] = {
 
 CURATOR: dict[str, NodeFlow] = {
     "load_context": flow(
-        reads={"user_id", "run_id", "feedback_history"},
+        reads={"user_id", "feedback_history"},
         writes={"memory_update"},
         redacts={"feedback_history"},
         declassifies={"memory_update": "status string only"},
@@ -148,7 +142,7 @@ CURATOR: dict[str, NodeFlow] = {
     ),
     "run_tools": flow(reads={"user_id", "valid_courses", "publish_status"}),
     "commit": flow(
-        reads={"user_id", "run_id", "feedback_history"},
+        reads={"user_id", "feedback_history"},
         writes={"memory_update"},
         sinks=(store("user_preferences"), store("memory_updates"), EMBED),
         declassifies={"memory_update": "status string only"},

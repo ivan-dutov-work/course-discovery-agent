@@ -7,6 +7,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from course_discovery.app.llm import build_llm, llm_enabled
 from course_discovery.app.prompts import GATEWAY_SYSTEM_PROMPT
 from course_discovery.domain.models import RoutingAction, SearchFilters
+from course_discovery.domain.run_config import current_run_id
 from course_discovery.domain.state import AgentState
 from course_discovery.guardrails import redact_pii
 from course_discovery.observability.logging import (
@@ -57,7 +58,7 @@ def _parse_filters(query: str) -> SearchFilters:
 
 def gateway_node(state: AgentState) -> dict:
     start_ts = time.perf_counter()
-    run_id = state.get("run_id", "unknown")
+    run_id = current_run_id()
 
     try:
         query_for_parsing = redact_pii(state["user_query"]) or ""
@@ -73,12 +74,10 @@ def gateway_node(state: AgentState) -> dict:
             },
         )
 
-        if state.get("routing_decision") == RoutingAction.RESET and state.get(
-            "manager_feedback"
-        ):
+        history = state.get("feedback_history") or []
+        if state.get("routing_decision") == RoutingAction.RESET and history:
             query_for_parsing = (
-                f"{query_for_parsing}\n\nReset overrides: "
-                f"{redact_pii(state['manager_feedback'])}"
+                f"{query_for_parsing}\n\nReset overrides: {redact_pii(history[-1])}"
             )
 
         parsed_filters = apply_profile_defaults(
@@ -125,8 +124,6 @@ def gateway_node(state: AgentState) -> dict:
         return {
             "search_filters": parsed_filters,
             "routing_decision": None,
-            "manager_feedback": None,
-            "error": None,
         }
     except Exception as exc:  # noqa: BLE001
         if is_transient(exc):
@@ -143,7 +140,5 @@ def gateway_node(state: AgentState) -> dict:
             },
         )
         return {
-            "error": f"Gateway parsing failed: {exc}",
-            "routing_decision": RoutingAction.DISCARD,
             "discard_reason": f"Gateway failed ({err['error_type']}). Check logs.",
         }

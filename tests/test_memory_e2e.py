@@ -56,7 +56,7 @@ class FeedbackToNextRunScenario:
         thread_id = f"e2e-{uuid.uuid4()}"
         graph = build_graph()
         config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
-        await graph.ainvoke({**_initial_state(QUERY, thread_id), "user_id": user_id}, config)
+        await graph.ainvoke({**_initial_state(QUERY), "user_id": user_id}, config)
         for feedback in feedbacks:
             graph.update_state(config, {"manager_feedback": feedback})
             await graph.ainvoke(None, config)
@@ -78,7 +78,7 @@ class FeedbackToNextRunScenario:
         first = await self._run(user, [round_one, round_two])
 
         self.assertEqual(first["feedback_history"], [round_one, round_two])
-        self.assertEqual(first["manager_feedback"], round_two)
+        self.assertIsNone(first["manager_feedback"])
         self.assertIsNone(first["publish_status"])
         self.assertEqual(self.recorded_rejection(user), (True, f"{round_one}\n{round_two}"))
 

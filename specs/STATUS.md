@@ -11,7 +11,11 @@ Integration tests need `docker compose up -d` and
 
 - Bounded workflow with four LLM nodes through `build_llm()`: `app/llm.py` (§1, §8.2).
 - Reducers on parallel-written channels (`tavily_results`, `completed_queries`,
-  `research_notes`, `tavily_calls`); `extracted_candidates` is a plain list (§2.2; open question in BACKLOG).
+  `research_notes`); `extracted_candidates` is a plain list (§2.2; open question in BACKLOG).
+- Top-level state slimmed from 34 to 28 channels: run id is the `thread_id`, review and research
+  budgets are `configurable` keys, the review round is `len(feedback_history)`, counters live in
+  `metrics` only, the gateway failure signals through `discard_reason`: `domain/run_config.py`,
+  `tests/test_top_level_state.py` (§2.1).
 - Plan-driven `Send` fan-out: `workflows/research_graph.py` (§3.2).
 - Only `await_human_review` remains as a no-op anchor; the research entry is a conditional
   entry point: `workflows/`, `tests/test_graph_topology.py` (§3.1, §4.1).

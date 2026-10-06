@@ -46,16 +46,10 @@ def _state(**updates):
         "manager_feedback": None,
         "rewrite_instructions": None,
         "routing_decision": None,
-        "iteration_count": 0,
-        "max_iterations": 3,
         "research_iteration": 0,
-        "max_research_iterations": 2,
         "completed_queries": [],
         "research_notes": [],
-        "cache_hits": 0,
-        "tavily_calls": 0,
         "metrics": ResearchRunMetrics(),
-        "run_id": "test-run",
         "active_search_query": None,
         "error": None,
         "publish_status": None,
@@ -69,7 +63,7 @@ class ResearchNodeTests(unittest.TestCase):
     def test_cache_lookup_uses_seed_fallback(self) -> None:
         update = course_cache_lookup_node(_state())
         self.assertGreaterEqual(len(update["cache_candidates"]), 1)
-        self.assertEqual(update["cache_hits"], len(update["cache_candidates"]))
+        self.assertEqual(update["metrics"].cache_hits, len(update["cache_candidates"]))
 
     def test_planner_searches_when_cache_is_below_target(self) -> None:
         update = research_planner_node(_state(cache_candidates=[]))

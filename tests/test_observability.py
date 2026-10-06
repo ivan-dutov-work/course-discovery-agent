@@ -92,7 +92,7 @@ class TracingTestCase(unittest.IsolatedAsyncioTestCase):
         config = _config(run_id)
         with contextlib.redirect_stdout(io.StringIO()):
             paused = await _stream_until_pause(
-                graph, _initial_state(QUERY, run_id), config, resume=False
+                graph, _initial_state(QUERY), config, resume=False
             )
             self.paused = paused
             self.pending = (await graph.aget_state(config)).next
@@ -206,7 +206,7 @@ class FailOpenTests(unittest.IsolatedAsyncioTestCase):
 
             with contextlib.redirect_stdout(io.StringIO()), self.assertLogs("opentelemetry", "ERROR"):
                 await _stream_until_pause(
-                    graph, _initial_state(QUERY, "run-dead"), _config("run-dead"), resume=False
+                    graph, _initial_state(QUERY), _config("run-dead"), resume=False
                 )
                 await graph.aupdate_state(_config("run-dead"), {"manager_feedback": "approve"})
                 result = await _stream_until_pause(graph, None, _config("run-dead"), resume=True)
@@ -310,7 +310,7 @@ class MetricsTests(MetricsTestCase):
         graph = build_graph()
         config = _config("run-degraded")
         with contextlib.redirect_stdout(io.StringIO()):
-            await _stream_until_pause(graph, _initial_state(QUERY, "run-degraded"), config, resume=False)
+            await _stream_until_pause(graph, _initial_state(QUERY), config, resume=False)
             await graph.aupdate_state(config, {"manager_feedback": ""})
             await _stream_until_pause(graph, None, config, resume=True)
 

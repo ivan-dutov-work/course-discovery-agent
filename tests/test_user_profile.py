@@ -180,6 +180,9 @@ class ReaderNotesTests(unittest.TestCase):
         self.assertNotIn("theory is fine", system)
 
 
+CONFIG = {"configurable": {"thread_id": "r"}}
+
+
 class FeedbackHistoryNodeTests(unittest.TestCase):
     def setUp(self):
         env = patch.dict(os.environ, {}, clear=False)
@@ -189,21 +192,14 @@ class FeedbackHistoryNodeTests(unittest.TestCase):
 
     def test_each_round_is_appended_redacted(self):
         update = router_node(
-            {
-                "manager_feedback": "rewrite: too basic, mail me at jane.doe@example.com",
-                "iteration_count": 0,
-                "max_iterations": 3,
-                "run_id": "r",
-            }
+            {"manager_feedback": "rewrite: too basic, mail me at jane.doe@example.com"}, CONFIG
         )
         (entry,) = update["feedback_history"]
         self.assertIn("too basic", entry)
         self.assertNotIn("jane.doe@example.com", entry)
 
     def test_empty_feedback_adds_nothing(self):
-        update = router_node(
-            {"manager_feedback": "  ", "iteration_count": 0, "max_iterations": 3, "run_id": "r"}
-        )
+        update = router_node({"manager_feedback": "  "}, CONFIG)
         self.assertNotIn("feedback_history", update)
 
 

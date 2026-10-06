@@ -126,7 +126,7 @@ class DeclaredWritesMatchRunTests(unittest.IsolatedAsyncioTestCase):
                         continue
                     seen.setdefault(node, set()).update(update)
 
-        await drain(graph.astream(_initial_state(QUERY, "flow-run"), config, stream_mode="updates", subgraphs=True))
+        await drain(graph.astream(_initial_state(QUERY), config, stream_mode="updates", subgraphs=True))
         graph.update_state(config, {"manager_feedback": "approve"})
         await drain(graph.astream(None, config, stream_mode="updates", subgraphs=True))
 
@@ -161,7 +161,7 @@ class CanaryTests(unittest.IsolatedAsyncioTestCase):
         graph = build_graph()
         config: RunnableConfig = {"configurable": {"thread_id": "canary-run"}}
         with patch.object(memory_nodes, "load_user_memory", return_value=memory):
-            await graph.ainvoke(_initial_state(f"{QUERY} {SUBJECT_CANARY}", "canary-run"), config)
+            await graph.ainvoke(_initial_state(f"{QUERY} {SUBJECT_CANARY}"), config)
             graph.update_state(config, {"manager_feedback": "approve"})
             await graph.ainvoke(None, config)
         seen: dict[str, str] = {}

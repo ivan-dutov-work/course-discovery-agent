@@ -37,16 +37,10 @@ class AgentState(TypedDict):
     feedback_history: Annotated[list[str], Pii(subject="user_id"), operator.add]
     rewrite_instructions: str | None
     routing_decision: RoutingAction | None
-    iteration_count: int
-    max_iterations: int
     research_iteration: int
-    max_research_iterations: int
     completed_queries: Annotated[list[str], operator.add]
     research_notes: Annotated[list[str], operator.add]
-    cache_hits: int
-    tavily_calls: Annotated[int, operator.add]
     metrics: ResearchRunMetrics
-    run_id: str
     active_search_query: str | None
     error: str | None
     publish_status: DeliveryStatus | None

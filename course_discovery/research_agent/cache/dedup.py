@@ -7,6 +7,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from rapidfuzz import fuzz
 
 from course_discovery.domain.models import CourseCandidate
+from course_discovery.domain.run_config import current_run_id
 from course_discovery.domain.state import AgentState
 from course_discovery.observability.logging import get_logger
 
@@ -32,7 +33,7 @@ def _fingerprint(title: str, url: str) -> str:
 
 def dedup_node(state: AgentState) -> dict:
     start_ts = time.perf_counter()
-    run_id = state.get("run_id", "unknown")
+    run_id = current_run_id()
     deduplicated: list[CourseCandidate] = []
     seen_urls: set[str] = set()
     seen_fingerprints: set[str] = set()

@@ -5,10 +5,12 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.rate_limiters import InMemoryRateLimiter
+from langchain_core.runnables import RunnableConfig
 
 from course_discovery.app.llm import build_llm, llm_enabled
 from course_discovery.app.prompts import ROUTER_SYSTEM_PROMPT
 from course_discovery.domain.models import RoutingAction, RoutingDecision
+from course_discovery.domain.run_config import current_run_id, max_review_rounds, run_id_of
 from course_discovery.domain.state import AgentState
 from course_discovery.effects.factory import get_gateway
 from course_discovery.effects.handlers import PUBLISH_DIGEST
@@ -37,8 +39,9 @@ def _coerce_routing_decision(value: Any) -> RoutingDecision:
     return RoutingDecision.model_validate(getattr(value, "model_dump", lambda: value)())
 
 
-def router_node(state: AgentState) -> dict:
-    update = _route(state)
+def router_node(state: AgentState, config: RunnableConfig) -> dict:
+    update = _route(state, config)
+    update["manager_feedback"] = None
     feedback = redact_pii((state.get("manager_feedback") or "").strip())
     if feedback:
         update["feedback_history"] = [feedback]
@@ -48,22 +51,23 @@ def router_node(state: AgentState) -> dict:
     return update
 
 
-def _route(state: AgentState) -> dict:
-    run_id = state.get("run_id", "unknown")
+def _route(state: AgentState, config: RunnableConfig) -> dict:
+    run_id = run_id_of(config)
+    review_round = len(state.get("feedback_history") or []) + 1
     feedback = (state.get("manager_feedback") or "").strip()
     logger.info(
         "router_decision_start",
         extra={
             "event": "router.decision_start",
             "run_id": run_id,
-            "iteration_count": state.get("iteration_count", 0),
-            "max_iterations": state.get("max_iterations", 3),
+            "review_round": review_round,
+            "max_review_rounds": max_review_rounds(config),
             "feedback_len": len(feedback),
             "feedback_preview": preview(feedback, max_len=80),
         },
     )
 
-    if state.get("iteration_count", 0) >= state.get("max_iterations", 3):
+    if review_round > max_review_rounds(config):
         record_degradation("router", "max_iterations_reached")
         logger.warning(
             "router_early_exit",
@@ -91,7 +95,6 @@ def _route(state: AgentState) -> dict:
         return {
             "routing_decision": RoutingAction.DISCARD,
             "discard_reason": "No manager feedback provided",
-            "iteration_count": state.get("iteration_count", 0) + 1,
         }
 
     lower_feedback = feedback.lower()
@@ -102,12 +105,11 @@ def _route(state: AgentState) -> dict:
                 "event": "router.decision_complete",
                 "run_id": run_id,
                 "routing_decision": RoutingAction.PUBLISH,
-                "iteration_count": state.get("iteration_count", 0) + 1,
+                "review_round": review_round,
             },
         )
         return {
             "routing_decision": RoutingAction.PUBLISH,
-            "iteration_count": state.get("iteration_count", 0) + 1,
             "rewrite_instructions": None,
         }
     if not llm_enabled():
@@ -126,7 +128,6 @@ def _route(state: AgentState) -> dict:
         return {
             "routing_decision": action,
             "rewrite_instructions": rewrite_instructions,
-            "iteration_count": state.get("iteration_count", 0) + 1,
             "discard_reason": "Discarded by manager" if action == RoutingAction.DISCARD else None,
         }
 
@@ -159,13 +160,12 @@ def _route(state: AgentState) -> dict:
                 "event": "router.decision_complete",
                 "run_id": run_id,
                 "routing_decision": decision.action,
-                "iteration_count": state.get("iteration_count", 0) + 1,
+                "review_round": review_round,
             },
         )
         return {
             "routing_decision": decision.action,
             "rewrite_instructions": rewrite_instructions,
-            "iteration_count": state.get("iteration_count", 0) + 1,
         }
     except Exception as exc:  # noqa: BLE001
         record_degradation("router", "classification_failed")
@@ -180,12 +180,11 @@ def _route(state: AgentState) -> dict:
         return {
             "routing_decision": RoutingAction.DISCARD,
             "discard_reason": f"Router classification failed: {exc}",
-            "iteration_count": state.get("iteration_count", 0) + 1,
         }
 
 
-def publish_node(state: AgentState) -> dict:
-    run_id = state["run_id"]
+def publish_node(state: AgentState, config: RunnableConfig) -> dict:
+    run_id = run_id_of(config)
     effect = Effect(
         key=f"publish:{run_id}",
         kind=PUBLISH_DIGEST,
@@ -217,9 +216,9 @@ def discard_node(state: AgentState) -> dict:
         "discard",
         extra={
             "event": "discard.complete",
-            "run_id": state.get("run_id", "unknown"),
+            "run_id": current_run_id(),
             "reason": preview(reason, max_len=160),
         },
     )
     print(f"\n[DISCARD] {reason}\n")
-    return {"publish_status": None}
+    return {}

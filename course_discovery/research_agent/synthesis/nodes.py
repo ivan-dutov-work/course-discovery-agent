@@ -16,6 +16,7 @@ from course_discovery.domain.models import (
     UserMemory,
     length_bucket,
 )
+from course_discovery.domain.run_config import current_run_id
 from course_discovery.domain.state import AgentState
 from course_discovery.guardrails import redact_pii
 from course_discovery.observability.logging import get_logger, preview, sanitize_error
@@ -197,7 +198,7 @@ def _highlight_with_retry(
 
 def synthesizer_node(state: AgentState) -> dict:
     start_ts = time.perf_counter()
-    run_id = state.get("run_id", "unknown")
+    run_id = current_run_id()
     memory = state.get("user_memory")
     courses = _rank_courses(state.get("valid_courses", []), memory)
     filters = state.get("search_filters")

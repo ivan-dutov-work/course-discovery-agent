@@ -70,10 +70,10 @@ One responsibility each. "Rules" means deterministic code with no model call.
 
 | Node | Responsibility | Kind |
 |---|---|---|
-| `parse_user_request` | Redact PII from the query and parse it into `SearchFilters`; fill the stored budget and certificate defaults where the query is silent (reads the profile from the repository, not from state); on RESET, merge the new constraints into the old ones | LLM, rule fallback |
+| `parse_user_request` | Redact PII from the query and parse it into `SearchFilters`; fill the stored budget and certificate defaults where the query is silent (reads the profile from the repository, not from state); on RESET, re-parse with the latest `feedback_history` entry and merge the new constraints into the old ones; on failure set `discard_reason`, which routes to `discard_run` | LLM, rule fallback |
 | `course_research` | Run the research subgraph | subgraph |
 | `await_human_review` | The pause point where the interrupt fires; does nothing itself | anchor |
-| `interpret_review_feedback` | Map reviewer feedback to one routing action and append the redacted feedback to `feedback_history` | LLM, rule fallback |
+| `interpret_review_feedback` | Map reviewer feedback to one routing action, append the redacted feedback to `feedback_history` and clear the `manager_feedback` inbox; rounds already completed are `len(feedback_history)` | LLM, rule fallback |
 | `send_approved_courses` | Submit the publish effect through `EffectGateway` with a key derived from `run_id` | side effect |
 | `record_review_outcome` | Record accept or reject events for the user, with the whole `feedback_history` as the text; runs after publish and after discard | DB write |
 | `curate_user_memory` | Turn the review feedback into a validated patch to the stored profile (subgraph, below); writes only the `memory_update` status channel | subgraph, LLM |
@@ -106,7 +106,7 @@ load_context ─┬─ nothing to learn ─▶ END
                       └─────────────── more steps ───────────┘
 ```
 
-Compiled with its own `input_schema` (five shared channels) and `output_schema` (only
+Compiled with its own `input_schema` (four shared channels) and `output_schema` (only
 `memory_update`), so its private channels (`messages`, `steps`, `proposals`, ...) never reach the
 parent and the shared reducer channel `feedback_history` is not echoed back and double-counted.
 
@@ -191,7 +191,7 @@ Three stores, three lifetimes.
   writes feedback events after publish or discard. `save_user_memory` is the one writer of
   `user_preferences` (one transaction, row lock, merge); only the curator's `commit` calls it.
 - **`feedback_history`** is the one channel that keeps every review round (`manager_feedback`
-  holds only the latest). It is outer-graph only: the research subgraph runs on
+  is only the inbox the reviewer's text arrives in, cleared once interpreted). It is outer-graph only: the research subgraph runs on
   `ResearchState`, which omits it, because a reducer channel that a subgraph shares is added to
   a second time when the subgraph returns (`article/notes/02`).
 - **Course cache** (`courses`, `course_evidence`) is shared across users and holds
@@ -200,6 +200,35 @@ Three stores, three lifetimes.
 The cost of this split: the profile is read at the start of each research pass, and
 feedback is written only after publish, so feedback given during a run reaches the
 next run's profile, not the pass in progress.
+
+### Top-level state and run configuration
+
+The outer graph owns twelve channels; the research subgraph's channels sit behind
+`course_research` and are not yet slimmed (`BACKLOG.md` S1). A channel is only held if it
+cannot be derived.
+
+| Channel | Role | Written by |
+|---|---|---|
+| `user_id`, `user_query` | Run inputs; `user_id` is the PII subject anchor | initial state |
+| `search_filters` | Parsed constraints | `parse_user_request` |
+| `manager_feedback` | Inbox for the reviewer's text (`update_state` at the pause) | caller, cleared by `interpret_review_feedback` |
+| `feedback_history` | Review ledger (reducer); its length is the number of completed review rounds | `interpret_review_feedback` |
+| `routing_decision` | One-shot control signal, consumed by `parse_user_request` on RESET | `interpret_review_feedback` |
+| `rewrite_instructions` | Router to research hand-off | `interpret_review_feedback` |
+| `valid_courses`, `digest` | Research output | `course_research` |
+| `publish_status` | Delivery state | `send_approved_courses` |
+| `discard_reason` | Why the run ended discarded; also the gateway-failure signal | `parse_user_request`, `interpret_review_feedback` |
+| `memory_update` | Curator status, read by nothing at the outer level | `curate_user_memory` |
+
+Run identity and budgets are not state. The run id is the `thread_id` in the invocation
+config (`domain/run_config.py`: `run_id_of`, `current_run_id`). `max_review_rounds` (default 3)
+and `max_research_iterations` (default 2) are optional `configurable` keys with the same
+defaults. LangGraph does not persist them with the checkpoint: the caller supplies them on
+every invocation, and a resume that omits a key falls back to the default
+(`tests/test_top_level_state.py`). The CLI passes none, so it always runs on the defaults.
+
+`discard_run` and `record_review_outcome` write no channel; `send_approved_courses` writes
+only `publish_status`.
 
 ## Known gaps
 
@@ -224,8 +253,9 @@ design.
    rejected and completed URLs, and scoped notes. `career_goals` and `learning_style_notes` have
    no consumer beyond the profile vector, so feedback about them is dropped, not stored. The stubbed-model tests pin the loop; how a real model behaves on the
    case list is unmeasured (P6). Cases: `FEEDBACK.md`.
-6. **Reducer channels double-count across review rounds.** `tavily_calls`, `completed_queries`
-   and `research_notes` are added to again each time `course_research` returns, so a REWRITE or
+6. **Reducer channels double-count across review rounds.** `completed_queries` and
+   `research_notes` (and `metrics.tavily_calls`, which is derived from `completed_queries`)
+   are added to again each time `course_research` returns, so a REWRITE or
    AUGMENT round doubles them (measured 1, 2, 4; `article/notes/02`). Fix: backlog S1.
 
 ## Naming
@@ -234,7 +264,11 @@ Node names are span names, checkpoint interrupt targets and `flow_specs.py` keys
 they appear in traces and in stored checkpoints. Checkpoints written before the
 rename hold the old names, so a run paused at the old `review_gate` should be treated
 as unable to resume against the renamed graph. Not verified for that rename; finish or discard
-in-flight runs before deploying it. Removing the three no-op anchors is different: a run
+in-flight runs before deploying it. The top-level state pass removed six channels from stored
+checkpoints and is verified to break resume: a run paused under the earlier graph, resumed
+under the new one after `update_state`, only re-yields `__interrupt__` and never publishes
+(memory saver, pickled round trip, found in review; the Postgres path was not run). Finish or
+discard in-flight runs before deploying it. Removing the three no-op anchors is different: a run
 paused at `await_human_review` under the earlier graph resumed and published under the
 current one (`notes/02`), because the paused node's name did not change.
 
