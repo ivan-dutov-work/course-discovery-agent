@@ -1,0 +1,366 @@
+{
+  "model": "typesafe/jev-1.13",
+  "date": "2026-10-07",
+  "scores": {
+    "pair-01": {
+      "signal": 0.03,
+      "continue": 0.86
+    },
+    "pair-02": {
+      "signal": 0.03,
+      "continue": 0.95
+    },
+    "pair-03": {
+      "signal": 0.02,
+      "continue": 0.07
+    },
+    "pair-04": {
+      "signal": 0.02,
+      "continue": 0.97
+    },
+    "pair-05": {
+      "signal": 0.03,
+      "continue": 0.97
+    },
+    "pair-06": {
+      "signal": 0.02,
+      "continue": 0.05
+    },
+    "pair-07": {
+      "signal": 0.04,
+      "continue": 0.92
+    },
+    "pair-08": {
+      "signal": 0.02,
+      "continue": 0.06
+    },
+    "pair-09": {
+      "signal": 0.03,
+      "continue": 0.06
+    },
+    "pair-10": {
+      "signal": 0.02,
+      "continue": 0.02
+    },
+    "pair-11": {
+      "signal": 0.02,
+      "continue": 0.04
+    },
+    "pair-12": {
+      "signal": 0.04,
+      "continue": 0.49
+    },
+    "pair-13": {
+      "signal": 0.95,
+      "continue": 0.3
+    },
+    "pair-14": {
+      "signal": 0.04,
+      "continue": 0.03
+    },
+    "pair-15": {
+      "signal": 0.04,
+      "continue": 0.04
+    },
+    "pair-16": {
+      "signal": 0.04,
+      "continue": 0.94
+    },
+    "pair-17": {
+      "signal": 0.16,
+      "continue": 0.1
+    },
+    "pair-18": {
+      "signal": 0.03,
+      "continue": 0.94
+    },
+    "pair-19": {
+      "signal": 0.02,
+      "continue": 0.96
+    },
+    "pair-20": {
+      "signal": 0.03,
+      "continue": 0.97
+    },
+    "pair-21": {
+      "signal": 0.97,
+      "continue": 0.3
+    },
+    "pair-22": {
+      "signal": 0.02,
+      "continue": 0.96
+    },
+    "pair-23": {
+      "signal": 0.03,
+      "continue": 0.05
+    },
+    "pair-24": {
+      "signal": 0.02,
+      "continue": 0.96
+    },
+    "pair-25": {
+      "signal": 0.02,
+      "continue": 0.06
+    },
+    "pair-26": {
+      "signal": 0.08,
+      "continue": 0.85
+    },
+    "pair-27": {
+      "signal": 0.02,
+      "continue": 0.25
+    },
+    "pair-28": {
+      "signal": 0.08,
+      "continue": 0.82
+    },
+    "pair-29": {
+      "signal": 0.98,
+      "continue": 0.22
+    },
+    "pair-30": {
+      "signal": 0.98,
+      "continue": 0.17
+    },
+    "pair-31": {
+      "signal": 0.02,
+      "continue": 0.06
+    },
+    "pair-32": {
+      "signal": 0.03,
+      "continue": 0.94
+    },
+    "pair-33": {
+      "signal": 0.02,
+      "continue": 0.02
+    },
+    "pair-34": {
+      "signal": 0.04,
+      "continue": 0.97
+    },
+    "pair-35": {
+      "signal": 0.02,
+      "continue": 0.04
+    },
+    "pair-36": {
+      "signal": 0.02,
+      "continue": 0.96
+    },
+    "pair-37": {
+      "signal": 0.02,
+      "continue": 0.96
+    },
+    "pair-38": {
+      "signal": 0.02,
+      "continue": 0.04
+    },
+    "pair-39": {
+      "signal": 0.03,
+      "continue": 0.9
+    },
+    "pair-40": {
+      "signal": 0.02,
+      "continue": 0.96
+    },
+    "pair-41": {
+      "signal": 0.97,
+      "continue": 0.31
+    },
+    "pair-42": {
+      "signal": 0.04,
+      "continue": 0.24
+    },
+    "pair-43": {
+      "signal": 0.02,
+      "continue": 0.08
+    },
+    "pair-44": {
+      "signal": 0.02,
+      "continue": 0.02
+    },
+    "pair-45": {
+      "signal": 0.02,
+      "continue": 0.06
+    },
+    "pair-46": {
+      "signal": 0.02,
+      "continue": 0.85
+    },
+    "pair-47": {
+      "signal": 0.98,
+      "continue": 0.21
+    },
+    "pair-48": {
+      "signal": 0.02,
+      "continue": 0.94
+    },
+    "pair-49": {
+      "signal": 0.05,
+      "continue": 0.95
+    },
+    "pair-50": {
+      "signal": 0.02,
+      "continue": 0.96
+    },
+    "pair-51": {
+      "signal": 0.03,
+      "continue": 0.94
+    },
+    "pair-52": {
+      "signal": 0.02,
+      "continue": 0.08
+    },
+    "pair-53": {
+      "signal": 0.95,
+      "continue": 0.35
+    },
+    "pair-54": {
+      "signal": 0.03,
+      "continue": 0.82
+    },
+    "pair-55": {
+      "signal": 0.02,
+      "continue": 0.04
+    },
+    "pair-56": {
+      "signal": 0.98,
+      "continue": 0.15
+    },
+    "pair-57": {
+      "signal": 0.02,
+      "continue": 0.95
+    },
+    "pair-58": {
+      "signal": 0.02,
+      "continue": 0.03
+    },
+    "pair-59": {
+      "signal": 0.04,
+      "continue": 0.95
+    },
+    "pair-60": {
+      "signal": 0.29,
+      "continue": 0.71
+    },
+    "pair-61": {
+      "signal": 0.02,
+      "continue": 0.96
+    },
+    "pair-62": {
+      "signal": 0.02,
+      "continue": 0.03
+    },
+    "pair-63": {
+      "signal": 0.02,
+      "continue": 0.04
+    },
+    "pair-64": {
+      "signal": 0.03,
+      "continue": 0.04
+    },
+    "pair-65": {
+      "signal": 0.03,
+      "continue": 0.96
+    },
+    "pair-66": {
+      "signal": 0.02,
+      "continue": 0.97
+    },
+    "pair-67": {
+      "signal": 0.02,
+      "continue": 0.97
+    },
+    "pair-68": {
+      "signal": 0.02,
+      "continue": 0.18
+    },
+    "pair-69": {
+      "signal": 0.02,
+      "continue": 0.04
+    },
+    "pair-70": {
+      "signal": 0.04,
+      "continue": 0.91
+    },
+    "pair-71": {
+      "signal": 0.04,
+      "continue": 0.96
+    },
+    "pair-72": {
+      "signal": 0.02,
+      "continue": 0.07
+    },
+    "pair-73": {
+      "signal": 0.03,
+      "continue": 0.94
+    },
+    "pair-74": {
+      "signal": 0.02,
+      "continue": 0.06
+    },
+    "pair-75": {
+      "signal": 0.03,
+      "continue": 0.91
+    },
+    "pair-76": {
+      "signal": 0.02,
+      "continue": 0.07
+    },
+    "pair-77": {
+      "signal": 0.03,
+      "continue": 0.96
+    },
+    "pair-78": {
+      "signal": 0.04,
+      "continue": 0.92
+    },
+    "pair-79": {
+      "signal": 0.03,
+      "continue": 0.97
+    },
+    "pair-80": {
+      "signal": 0.04,
+      "continue": 0.73
+    },
+    "pair-81": {
+      "signal": 0.97,
+      "continue": 0.2
+    },
+    "pair-82": {
+      "signal": 0.98,
+      "continue": 0.11
+    },
+    "pair-83": {
+      "signal": 0.96,
+      "continue": 0.17
+    },
+    "pair-84": {
+      "signal": 0.96,
+      "continue": 0.07
+    },
+    "pair-85": {
+      "signal": 0.96,
+      "continue": 0.04
+    },
+    "pair-86": {
+      "signal": 0.97,
+      "continue": 0.14
+    },
+    "pair-87": {
+      "signal": 0.96,
+      "continue": 0.23
+    },
+    "pair-88": {
+      "signal": 0.95,
+      "continue": 0.31
+    },
+    "pair-89": {
+      "signal": 0.95,
+      "continue": 0.27
+    },
+    "pair-90": {
+      "signal": 0.98,
+      "continue": 0.17
+    }
+  }
+}

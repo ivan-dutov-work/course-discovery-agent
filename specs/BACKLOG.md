@@ -96,22 +96,17 @@ enters the shared catalogue (N1). Two automated job shapes sit beside the chat: 
 Branch from `main`. Owns a new `course_discovery/conversation/` package, `evals/cases/` rows for
 it, and tests. Does not touch the graphs.
 
-Ask first: does the age of the latest thread alone force a new topic (a message the next day), or
-only feed the classifier as a feature? Do not decide it silently.
+Built and measured (`STATUS.md`, `notes/04`): the port, the JEV adapter with three outcomes
+(`NO_SIGNAL`, `CONTINUE`, `NEW_TOPIC`), the stub, the scripted table, fault injection, the PII canary,
+the ownership test, the probe and the calibration. What remains:
 
-1. `ThreadSelector` port: input is the redacted message, the sender's latest parked thread (filters,
-   topic, age) and nothing else; output is `CONTINUE` or `NEW_TOPIC` with a score. It only ever
-   sees the sender's own threads.
-2. JEV adapter, reusing the transport and score bands of `guardrails/jev.py` (JEV alone, no
-   fallback model, `DECISIONS.md`). Any error, timeout, malformed answer or middle score returns
-   `NEW_TOPIC` and calls `record_degradation("thread_selector", reason)`. The input is passed
-   through `redact_pii` first.
-3. Stub selector for tests; a `live` probe of the Decisions API contract (`alpha`, per the injection
-   follow-ups) recorded in `notes/04`.
-4. Labelled conversation pairs and the measurement. Reuse the labelling UI in
-   `evals/labels/label_ui.py`; the owner labels. At least enough pairs for per-class TPR and TNR with a
-   train, dev and test split, and the test split is never used to tune the prompt or the bands.
-   Nothing about accuracy goes in the article until this is measured (`DECISIONS.md`).
+1. Decide whether to adopt the fitted continue threshold (0.45 in `evals/baselines/thread_selector_bands.json`;
+   `CONTINUE_THRESHOLD` is 0.70 and the 0.35 to 0.70 middle band that degrades to `NEW_TOPIC` is still
+   in force; a fitted value inside that band means the band needs rethinking too). Re-fitting after
+   reading test is not allowed.
+2. A held-out check of the reworded prompt needs new test pairs written after this change; the
+   current test split was read once under the old prompt.
+3. Nothing about accuracy goes in the article beyond "rough, on a small author-written set".
 
 Verify end to end:
 - A scripted table of at least twelve conversations (refinement, unrelated query, same topic after a
@@ -127,7 +122,7 @@ Verify end to end:
 - `live` (needs `OPENROUTER_API_KEY`): the probe runs against the real endpoint and records latency
   and the score for the twelve scripted rows. Without a key, say "not run".
 - Measurement: `uv run python -m evals.calibrate_thread_selector` (new, modelled on
-  `evals.calibrate_judge`) prints TPR and TNR for both classes with the item counts per split, and
+  `evals.calibrate_judge`) prints TPR and TNR for the three classes with the item counts per split, and
   fails if a test-split id appears in the tuning inputs.
 
 ### W6. `wt/batch-jobs`: digest job, one run per user and period
