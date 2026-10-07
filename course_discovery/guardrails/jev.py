@@ -38,8 +38,45 @@ CRITERIA = {
 
 class JevHTTPError(RuntimeError):
     def __init__(self, status_code: int) -> None:
-        super().__init__(f"injection screen request failed with HTTP {status_code}")
+        super().__init__(f"decision request failed with HTTP {status_code}")
         self.status_code = status_code
+
+
+class JevResponseError(RuntimeError):
+    pass
+
+
+def ask_decision(
+    client: httpx.Client,
+    url: str,
+    api_key: str,
+    model: str,
+    *,
+    state: dict[str, str],
+    question: str,
+    instructions: str,
+    criteria: dict[str, str],
+) -> float:
+    response = client.post(
+        url,
+        headers={"Authorization": f"Bearer {api_key}"},
+        json={
+            "model": model,
+            "state": state,
+            "questions": {
+                question: {"type": "noul", "instructions": instructions, "criteria": criteria}
+            },
+        },
+    )
+    if response.status_code != 200:
+        raise JevHTTPError(response.status_code)
+    try:
+        value = float(response.json()["answers"][question]["noul"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise JevResponseError("response was malformed") from exc
+    if not 0.0 <= value <= 1.0:
+        raise JevResponseError("returned a probability outside 0 to 1")
+    return value
 
 
 class JevInjectionScreen:
@@ -66,27 +103,16 @@ class JevInjectionScreen:
         return max(self._score_chunk(chunk) for chunk in chunks)
 
     def _score_chunk(self, chunk: str) -> float:
-        response = self._client.post(
-            self._url,
-            headers={"Authorization": f"Bearer {self._api_key}"},
-            json={
-                "model": self.model,
-                "state": {"deployment": DEPLOYMENT, "untrusted_text": chunk},
-                "questions": {
-                    QUESTION: {
-                        "type": "noul",
-                        "instructions": INSTRUCTIONS,
-                        "criteria": CRITERIA,
-                    }
-                },
-            },
-        )
-        if response.status_code != 200:
-            raise JevHTTPError(response.status_code)
         try:
-            value = float(response.json()["answers"][QUESTION]["noul"])
-        except (KeyError, TypeError, ValueError) as exc:
-            raise InjectionGuardError("Injection screen response was malformed") from exc
-        if not 0.0 <= value <= 1.0:
-            raise InjectionGuardError("Injection screen returned a probability outside 0 to 1")
-        return value
+            return ask_decision(
+                self._client,
+                self._url,
+                self._api_key,
+                self.model,
+                state={"deployment": DEPLOYMENT, "untrusted_text": chunk},
+                question=QUESTION,
+                instructions=INSTRUCTIONS,
+                criteria=CRITERIA,
+            )
+        except JevResponseError as exc:
+            raise InjectionGuardError(f"Injection screen {exc}") from exc

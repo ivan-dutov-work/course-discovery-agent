@@ -202,3 +202,38 @@ unless marked as documentation.
   `False` fails `graph-wrong-owner-cannot-resume` on three graders; the same for the version check and
   `graph-stale-thread-refused`. Both reverted.
 
+
+## Thread selector (2026-10-07, measured on a small author-written set)
+
+- **What was checked against a stub.** `course_discovery/conversation/` against a stub HTTP transport
+  (`httpx.MockTransport`): scripted rows map stub scores to the expected class, faults on either
+  question (500, timeout, malformed JSON, missing answer, out-of-range, middle score) each return
+  `NEW_TOPIC` and increment the degradation counter, and an email and a phone number are absent from
+  both outgoing bodies. These tests check the code around the model, not its accuracy.
+- **Live contract.** `typesafe/jev-1.13` through OpenRouter accepts both `continues_parked_thread`
+  and `is_acknowledgement_only` as `noul` questions. `scripts/thread_selector_probe.py`: all 14
+  scripted rows get the expected class; latency per message (two calls) median 663 ms, max 1173 ms
+  over 14 messages.
+- **Why a third class.** The owner could not label "ok", "cool" and "thanks" as either continue or
+  new topic; `NO_SIGNAL` was added (`DECISIONS.md`).
+- **Calibration** (`python -m evals.calibrate_thread_selector --fit`, 90 pairs the author wrote, labelled
+  by the owner; 17 no_signal pairs include 10 added after the first labelling to fill the test split).
+  First run, original prompt, continue threshold fitted on train and dev at 0.65: test 28 pairs, every
+  class TPR and TNR 1.00; train continue TPR 0.90, dev 0.75 (0.82 after one label fix). The misses
+  were "not Udemy", "and what about the same for google sheets?" and "something for my 8 year old",
+  all of which depend on the parked search. The owner's rule (`DECISIONS.md`): a topic or audience
+  change that inherits the other constraints is `CONTINUE`. Labels corrected by the owner or
+  by that rule: "thanks, will take a look" became no_signal, "intro to philosophy" under a rust
+  search became new_topic, and "also show Portuguese" became continue.
+  Second run, continue question reworded around dependence, train and dev re-scored, fit again
+  (threshold 0.45):
+
+  | split | pairs | continue TPR | new_topic TPR | no_signal TPR |
+  |---|---|---|---|---|
+  | train | 40 | 1.00 (20/20) | 1.00 (17/17) | 1.00 (3/3) |
+  | dev | 22 | 1.00 (11/11) | 1.00 (6/6) | 1.00 (5/5) |
+
+  Train and dev were tuned on, so these are fit numbers, not held-out ones. The test split has
+  only the first-run scores (old prompt, all 1.00) and was not re-scored: the test split was read
+  after the first run, so a re-score would no longer be held-out. Ten items per class on
+  author-written text: treat the rates as rough, not as generalisation.

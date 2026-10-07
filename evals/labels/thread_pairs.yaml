@@ -1,0 +1,823 @@
+# Label each pair: set `label` to `continue`, `new_topic` or `no_signal`.
+#   continue   the message refines, adjusts or asks about the parked search
+#   new_topic  it asks about something else, or is not about the search at all
+#   no_signal  it only acknowledges or thanks (ok, cool, thanks) and says nothing about which courses are wanted
+# Age is not a rule: judge the message, with the age as context.
+- id: pair-01
+  split: train
+  parked:
+    topic: excel data analysis
+    filters:
+      include_certificate: true
+    age_hours: 20
+  message: and what about the same for google sheets?
+  label: continue
+- id: pair-02
+  split: dev
+  parked:
+    topic: project management
+    filters:
+      max_price: 0
+    age_hours: 2
+  message: I am fine with paid ones
+  label: continue
+- id: pair-03
+  split: train
+  parked:
+    topic: project management
+    filters:
+      max_price: 0
+    age_hours: 0.1
+  message: react native tutorials
+  label: new_topic
+- id: pair-04
+  split: dev
+  parked:
+    topic: python
+    filters:
+      level: beginner
+      max_price: 20
+    age_hours: 0.5
+  message: only ones with exercises
+  label: continue
+- id: pair-05
+  split: test
+  parked:
+    topic: python
+    filters:
+      level: beginner
+      max_price: 20
+    age_hours: 0.1
+  message: cheaper please
+  label: continue
+- id: pair-06
+  split: train
+  parked:
+    topic: photography
+    filters:
+      providers: &id001
+      - udemy
+    age_hours: 150
+  message: aws certification prep
+  label: new_topic
+- id: pair-07
+  split: train
+  parked:
+    topic: ux design
+    filters:
+      min_rating: 4.5
+    age_hours: 2
+  message: not so theoretical
+  label: continue
+- id: pair-08
+  split: train
+  parked:
+    topic: spanish for travel
+    filters:
+      max_price: 0
+    age_hours: 6
+  message: python for finance
+  label: new_topic
+- id: pair-09
+  split: dev
+  parked:
+    topic: excel data analysis
+    filters:
+      include_certificate: true
+    age_hours: 0.1
+  message: something on mindfulness
+  label: new_topic
+- id: pair-10
+  split: test
+  parked:
+    topic: excel data analysis
+    filters:
+      include_certificate: true
+    age_hours: 30
+  message: how do I learn drawing portraits
+  label: new_topic
+- id: pair-11
+  split: dev
+  parked:
+    topic: ux design
+    filters:
+      min_rating: 4.5
+    age_hours: 150
+  message: learn rust for embedded systems
+  label: new_topic
+- id: pair-12
+  split: dev
+  parked:
+    topic: ux design
+    filters:
+      min_rating: 4.5
+    age_hours: 0.5
+  message: something for my 8 year old
+  label: continue
+- id: pair-13
+  split: train
+  parked:
+    topic: machine learning
+    filters:
+      level: advanced
+    age_hours: 20
+  message: ok
+  label: no_signal
+- id: pair-14
+  split: train
+  parked:
+    topic: ux design
+    filters:
+      min_rating: 4.5
+    age_hours: 6
+  message: how do I get started with sourdough?
+  label: new_topic
+- id: pair-15
+  split: test
+  parked:
+    topic: machine learning
+    filters:
+      level: advanced
+    age_hours: 2
+  message: intro to public speaking
+  label: new_topic
+- id: pair-16
+  split: train
+  parked:
+    topic: excel data analysis
+    filters:
+      include_certificate: true
+    age_hours: 0.5
+  message: shorter ones
+  label: continue
+- id: pair-17
+  split: test
+  parked:
+    topic: python
+    filters:
+      level: beginner
+      max_price: 20
+    age_hours: 0.1
+  message: Ich suche einen Kurs über Gartenbau
+  label: new_topic
+- id: pair-18
+  split: test
+  parked:
+    topic: rust
+    filters:
+      level: intermediate
+    age_hours: 30
+  message: with projects
+  label: continue
+- id: pair-19
+  split: train
+  parked:
+    topic: project management
+    filters:
+      max_price: 0
+    age_hours: 72
+  message: make it intermediate
+  label: continue
+- id: pair-20
+  split: test
+  parked:
+    topic: photography
+    filters:
+      providers: *id001
+    age_hours: 150
+  message: include other platforms too
+  label: continue
+- id: pair-21
+  split: dev
+  parked:
+    topic: rust
+    filters:
+      level: intermediate
+    age_hours: 6
+  message: cool
+  label: no_signal
+- id: pair-22
+  split: test
+  parked:
+    topic: python
+    filters:
+      level: beginner
+      max_price: 20
+    age_hours: 2
+  message: something shorter, under 10 hours
+  label: continue
+- id: pair-23
+  split: train
+  parked:
+    topic: rust
+    filters:
+      level: intermediate
+    age_hours: 20
+  message: ielts preparation
+  label: new_topic
+- id: pair-24
+  split: train
+  parked:
+    topic: rust
+    filters:
+      level: intermediate
+    age_hours: 150
+  message: skip the ones from 2021
+  label: continue
+- id: pair-25
+  split: train
+  parked:
+    topic: python
+    filters:
+      level: beginner
+      max_price: 20
+    age_hours: 0.5
+  message: what is a good course on negotiation?
+  label: new_topic
+- id: pair-26
+  split: dev
+  parked:
+    topic: ux design
+    filters:
+      min_rating: 4.5
+    age_hours: 20
+  message: only on Coursera
+  label: continue
+- id: pair-27
+  split: train
+  parked:
+    topic: project management
+    filters:
+      max_price: 0
+    age_hours: 6
+  message: what about creative writing?
+  label: new_topic
+- id: pair-28
+  split: test
+  parked:
+    topic: rust
+    filters:
+      level: intermediate
+    age_hours: 72
+  message: up to 15 hours
+  label: continue
+- id: pair-29
+  split: test
+  parked:
+    topic: photography
+    filters:
+      providers: *id001
+    age_hours: 30
+  message: perfect, thanks
+  label: no_signal
+- id: pair-30
+  split: train
+  parked:
+    topic: excel data analysis
+    filters:
+      include_certificate: true
+    age_hours: 150
+  message: that is all, thanks
+  label: no_signal
+- id: pair-31
+  split: train
+  parked:
+    topic: machine learning
+    filters:
+      level: advanced
+    age_hours: 6
+  message: what about spanish for travel?
+  label: new_topic
+- id: pair-32
+  split: test
+  parked:
+    topic: ux design
+    filters:
+      min_rating: 4.5
+    age_hours: 6
+  message: with a certificate
+  label: continue
+- id: pair-33
+  split: test
+  parked:
+    topic: machine learning
+    filters:
+      level: advanced
+    age_hours: 0.5
+  message: yoga for back pain
+  label: new_topic
+- id: pair-34
+  split: train
+  parked:
+    topic: machine learning
+    filters:
+      level: advanced
+    age_hours: 0.1
+  message: same but in Spanish
+  label: continue
+- id: pair-35
+  split: train
+  parked:
+    topic: project management
+    filters:
+      max_price: 0
+    age_hours: 150
+  message: learn to play chess
+  label: new_topic
+- id: pair-36
+  split: dev
+  parked:
+    topic: project management
+    filters:
+      max_price: 0
+    age_hours: 6
+  message: agile specifically
+  label: continue
+- id: pair-37
+  split: train
+  parked:
+    topic: machine learning
+    filters:
+      level: advanced
+    age_hours: 72
+  message: newer than 2023 only
+  label: continue
+- id: pair-38
+  split: train
+  parked:
+    topic: python
+    filters:
+      level: beginner
+      max_price: 20
+    age_hours: 72
+  message: best guitar lessons for adults
+  label: new_topic
+- id: pair-39
+  split: dev
+  parked:
+    topic: spanish for travel
+    filters:
+      max_price: 0
+    age_hours: 2
+  message: any of them on YouTube?
+  label: continue
+- id: pair-40
+  split: train
+  parked:
+    topic: python
+    filters:
+      level: beginner
+      max_price: 20
+    age_hours: 6
+  message: I meant for data analysis in python
+  label: continue
+- id: pair-41
+  split: test
+  parked:
+    topic: python
+    filters:
+      level: beginner
+      max_price: 20
+    age_hours: 150
+  message: thanks, that works
+  label: no_signal
+- id: pair-42
+  split: train
+  parked:
+    topic: rust
+    filters:
+      level: intermediate
+    age_hours: 2
+  message: intro to philosophy
+  label: new_topic
+- id: pair-43
+  split: dev
+  parked:
+    topic: spanish for travel
+    filters:
+      max_price: 0
+    age_hours: 150
+  message: cursos de cocina italiana
+  label: new_topic
+- id: pair-44
+  split: test
+  parked:
+    topic: machine learning
+    filters:
+      level: advanced
+    age_hours: 30
+  message: tax preparation for freelancers
+  label: new_topic
+- id: pair-45
+  split: train
+  parked:
+    topic: photography
+    filters:
+      providers: *id001
+    age_hours: 72
+  message: learn accounting
+  label: new_topic
+- id: pair-46
+  split: train
+  parked:
+    topic: photography
+    filters:
+      providers: *id001
+    age_hours: 0.5
+  message: which of these covers lighting?
+  label: continue
+- id: pair-47
+  split: dev
+  parked:
+    topic: spanish for travel
+    filters:
+      max_price: 0
+    age_hours: 30
+  message: great, thanks a lot
+  label: no_signal
+- id: pair-48
+  split: test
+  parked:
+    topic: project management
+    filters:
+      max_price: 0
+    age_hours: 20
+  message: ones that prepare for the PMP
+  label: continue
+- id: pair-49
+  split: train
+  parked:
+    topic: machine learning
+    filters:
+      level: advanced
+    age_hours: 20
+  message: easier, I overestimated myself
+  label: continue
+- id: pair-50
+  split: test
+  parked:
+    topic: excel data analysis
+    filters:
+      include_certificate: true
+    age_hours: 6
+  message: only recent, 2025 or later
+  label: continue
+- id: pair-51
+  split: train
+  parked:
+    topic: photography
+    filters:
+      providers: *id001
+    age_hours: 72
+  message: landscape focus
+  label: continue
+- id: pair-52
+  split: train
+  parked:
+    topic: photography
+    filters:
+      providers: *id001
+    age_hours: 20
+  message: stand up comedy
+  label: new_topic
+- id: pair-53
+  split: dev
+  parked:
+    topic: project management
+    filters:
+      max_price: 0
+    age_hours: 0.5
+  message: thanks, will take a look
+  label: no_signal
+- id: pair-54
+  split: train
+  parked:
+    topic: spanish for travel
+    filters:
+      max_price: 0
+    age_hours: 0.5
+  message: also show Portuguese
+  label: continue
+- id: pair-55
+  split: dev
+  parked:
+    topic: rust
+    filters:
+      level: intermediate
+    age_hours: 0.5
+  message: gardening in small spaces
+  label: new_topic
+- id: pair-56
+  split: train
+  parked:
+    topic: ux design
+    filters:
+      min_rating: 4.5
+    age_hours: 2
+  message: thank you!
+  label: no_signal
+- id: pair-57
+  split: dev
+  parked:
+    topic: machine learning
+    filters:
+      level: advanced
+    age_hours: 150
+  message: drop the video-only ones
+  label: continue
+- id: pair-58
+  split: test
+  parked:
+    topic: project management
+    filters:
+      max_price: 0
+    age_hours: 2
+  message: electric vehicle maintenance
+  label: new_topic
+- id: pair-59
+  split: train
+  parked:
+    topic: spanish for travel
+    filters:
+      max_price: 0
+    age_hours: 72
+  message: I can pay up to 30 dollars
+  label: continue
+- id: pair-60
+  split: dev
+  parked:
+    topic: project management
+    filters:
+      max_price: 0
+    age_hours: 30
+  message: not Udemy
+  label: continue
+- id: pair-61
+  split: dev
+  parked:
+    topic: machine learning
+    filters:
+      level: advanced
+    age_hours: 30
+  message: ones that use pytorch
+  label: continue
+- id: pair-62
+  split: test
+  parked:
+    topic: excel data analysis
+    filters:
+      include_certificate: true
+    age_hours: 72
+  message: kubernetes for beginners
+  label: new_topic
+- id: pair-63
+  split: dev
+  parked:
+    topic: spanish for travel
+    filters:
+      max_price: 0
+    age_hours: 72
+  message: learn blender for animation
+  label: new_topic
+- id: pair-64
+  split: train
+  parked:
+    topic: spanish for travel
+    filters:
+      max_price: 0
+    age_hours: 20
+  message: how to start running
+  label: new_topic
+- id: pair-65
+  split: train
+  parked:
+    topic: excel data analysis
+    filters:
+      include_certificate: true
+    age_hours: 0.1
+  message: with power query
+  label: continue
+- id: pair-66
+  split: train
+  parked:
+    topic: photography
+    filters:
+      providers: *id001
+    age_hours: 2
+  message: only beginner friendly
+  label: continue
+- id: pair-67
+  split: train
+  parked:
+    topic: spanish for travel
+    filters:
+      max_price: 0
+    age_hours: 0.1
+  message: beginner only
+  label: continue
+- id: pair-68
+  split: dev
+  parked:
+    topic: excel data analysis
+    filters:
+      include_certificate: true
+    age_hours: 0.5
+  message: marketing analytics with tableau
+  label: new_topic
+- id: pair-69
+  split: test
+  parked:
+    topic: rust
+    filters:
+      level: intermediate
+    age_hours: 30
+  message: how to learn go instead?
+  label: new_topic
+- id: pair-70
+  split: train
+  parked:
+    topic: spanish for travel
+    filters:
+      max_price: 0
+    age_hours: 150
+  message: more speaking practice
+  label: continue
+- id: pair-71
+  split: train
+  parked:
+    topic: rust
+    filters:
+      level: intermediate
+    age_hours: 0.1
+  message: and for beginners too
+  label: continue
+- id: pair-72
+  split: train
+  parked:
+    topic: python
+    filters:
+      level: beginner
+      max_price: 20
+    age_hours: 30
+  message: I need a course on beekeeping
+  label: new_topic
+- id: pair-73
+  split: dev
+  parked:
+    topic: ux design
+    filters:
+      min_rating: 4.5
+    age_hours: 30
+  message: fewer results, just the top three
+  label: continue
+- id: pair-74
+  split: train
+  parked:
+    topic: ux design
+    filters:
+      min_rating: 4.5
+    age_hours: 0.1
+  message: courses about personal finance
+  label: new_topic
+- id: pair-75
+  split: test
+  parked:
+    topic: rust
+    filters:
+      level: intermediate
+    age_hours: 20
+  message: more about async
+  label: continue
+- id: pair-76
+  split: train
+  parked:
+    topic: photography
+    filters:
+      providers: *id001
+    age_hours: 6
+  message: quantum computing basics
+  label: new_topic
+- id: pair-77
+  split: train
+  parked:
+    topic: photography
+    filters:
+      providers: *id001
+    age_hours: 0.1
+  message: cheaper
+  label: continue
+- id: pair-78
+  split: train
+  parked:
+    topic: ux design
+    filters:
+      min_rating: 4.5
+    age_hours: 72
+  message: дешевше, будь ласка
+  label: continue
+- id: pair-79
+  split: dev
+  parked:
+    topic: excel data analysis
+    filters:
+      include_certificate: true
+    age_hours: 2
+  message: no certificate needed actually
+  label: continue
+- id: pair-80
+  split: test
+  parked:
+    topic: python
+    filters:
+      level: beginner
+      max_price: 20
+    age_hours: 20
+  message: can you show me the second one in more detail?
+  label: continue
+- id: pair-81
+  split: test
+  parked:
+    topic: excel data analysis
+    filters:
+      include_certificate: true
+    age_hours: 3
+  message: ok, got it
+  label: no_signal
+- id: pair-82
+  split: test
+  parked:
+    topic: project management
+    filters:
+      max_price: 0
+    age_hours: 0.2
+  message: thanks!!
+  label: no_signal
+- id: pair-83
+  split: test
+  parked:
+    topic: python
+    filters:
+      level: beginner
+    age_hours: 26
+  message: nice
+  label: no_signal
+- id: pair-84
+  split: test
+  parked:
+    topic: ux design
+    filters:
+      min_rating: 4.5
+    age_hours: 1
+  message: alright, that is enough for now
+  label: no_signal
+- id: pair-85
+  split: test
+  parked:
+    topic: spanish
+    filters: {}
+    age_hours: 48
+  message: дякую
+  label: no_signal
+- id: pair-86
+  split: test
+  parked:
+    topic: machine learning
+    filters:
+      level: advanced
+    age_hours: 0.5
+  message: danke, das reicht
+  label: no_signal
+- id: pair-87
+  split: test
+  parked:
+    topic: data science
+    filters:
+      max_price: 50
+    age_hours: 5
+  message: great
+  label: no_signal
+- id: pair-88
+  split: test
+  parked:
+    topic: accounting
+    filters: {}
+    age_hours: 2
+  message: sounds good
+  label: no_signal
+- id: pair-89
+  split: dev
+  parked:
+    topic: python
+    filters:
+      max_price: 20
+    age_hours: 0.3
+  message: okay
+  label: no_signal
+- id: pair-90
+  split: dev
+  parked:
+    topic: public speaking
+    filters: {}
+    age_hours: 10
+  message: got it, thank you
+  label: no_signal

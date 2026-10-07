@@ -376,7 +376,27 @@ leave it and append a new one that says which it replaces and what changed.
   pick it again until the text changes. Courses that already have topics and were never tagged are
   left alone. The outbox lease makes delivery at-least-once, so a worker killed mid-run costs at
   most the runs in flight. Ruled out: one `Send` over all courses (`notes/05`) and a
-  `sha256` hash computed in Python (two sources of truth for what changed).
+  `sha256` hash computed in Python (two sources of truth for what changed).- **An acknowledgement is its own outcome.** "ok", "cool", "thanks" say nothing about which
+  courses are wanted, so the selector returns `NO_SIGNAL` for them instead of forcing `CONTINUE` or
+  `NEW_TOPIC` (a forced `NEW_TOPIC` would start a search for "thanks"). A separate JEV question,
+  `is_acknowledgement_only`, runs first; a high score returns `NO_SIGNAL` without the second call,
+  anything else goes on to the continue question. What the worker says back is W8's decision.
+  Ruled out: one three-way question (JEV's `noul` type scores one yes/no question), and dropping
+  such pairs from the labelled set (the selector still has to answer them).
+- **`CONTINUE` means the message depends on the parked search, not that the topic is unchanged.**
+  "Same for Google Sheets" or "something for my 8 year old" change the topic or audience but inherit
+  the other constraints, and merging them into the parked search as feedback is the right action;
+  `NEW_TOPIC` drops the filters. Ruled out: a fourth "pivot" class (the worker would do the same as
+  for `CONTINUE`). The continue question is worded around dependence; its examples are
+  paraphrases, never labelled pairs. The prompt was changed after the first live calibration using
+  train and dev misses only; the test split was not re-scored with the new prompt.
+- **Thread age is a classifier input, not a rule.** The selector passes how long ago the parked
+  thread was active to JEV with the topic and filters, and the model decides, so a refinement a
+  day later can still continue. Ruled out: a hard cutoff, because it makes a refinement after a gap
+  impossible and no data yet says where the line is. Revisit after the labelled pairs are scored
+  (backlog W3). The selector's upper band is fitted on the train and dev splits only; the
+  calibration script refuses to report if a test id appears in the tuning record.
+
 ## Compliance
 
 - **The privacy controls are justified by many users' stored data,** not by a single

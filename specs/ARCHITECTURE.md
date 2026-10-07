@@ -53,7 +53,7 @@ the person's next message, which arrives as `manager_feedback` and routes as abo
 `interpret_review_feedback` straight to `record_review_outcome`, skipping `send_approved_courses`
 and `promote_approved_courses`: nothing from a chat run reaches the shared catalogue, and its
 staged rows stay in `pending_courses` for staff review. Chat mode is built in the graph; the
-thread selector and staff review are not. The Telegram surface (`chat/`) is built apart from the graph and is described under "Chat surface".
+thread selector (`conversation/`, a component beside the graph, not yet called by the worker) is built and measured on a small author-written set (`notes/04`); staff review is not. The Telegram surface (`chat/`) is built apart from the graph and is described under "Chat surface".
 
 ## Research subgraph
 
@@ -259,7 +259,7 @@ the texts and runs the graph once on thread `chat-{batch_id}`. A batch left behi
 worker is claimed again with the same id, so the graph resumes from its checkpoint and the digest
 effect keeps its key. Replies are the graph's own effects (`send_digest_message`,
 `send_feedback_prompt`), delivered by `chat/handlers.py` through the transport. Every batch starts a
-new thread: continuing a parked thread is the thread selector's job and is not built.
+new thread: `conversation/` can decide between continuing a parked thread and starting a new topic (`ThreadSelector`, JEV adapter, any failure or middle score means a new topic), but the worker does not call it yet.
 
 ### Tagging job
 
